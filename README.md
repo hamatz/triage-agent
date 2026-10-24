@@ -103,8 +103,17 @@ GITHUB_TOKEN=""
 ## 3. 使い方
 
 ### 3.1 Syft によるSBOM生成
+> 💡 **推奨スキャン手法（コンテナイメージ単位）:**
+> `syft scan dir:.` でソースディレクトリのみをスキャンした場合、**Node.js本体、PHPランタイム、OS共有ライブラリ（OpenSSL, Brotli等）** といった基盤層がSBOMに含まれません（例: Brotli脆弱性 CVE-2026-111497 の見落としリスク）。
+> 本番環境にデプロイするコンテナイメージ全体をスキャンすることを強く推奨します。
+
 ```bash
-# 対象プロジェクトやDockerイメージからCycloneDX JSONを出力
+# 【推奨】コンテナイメージ全体をスキャン (OSパッケージ + ランタイム + アプリ依存を全網羅)
+syft scan docker:my-org/my-app:latest -o cyclonedx-json > my_sbom.json
+# またはレジストリ直接
+syft scan registry:my-org/my-app:latest -o cyclonedx-json > my_sbom.json
+
+# 【簡易】ソースコードディレクトリのみのスキャン (言語ライブラリのみ)
 syft scan dir:. -o cyclonedx-json > my_sbom.json
 ```
 

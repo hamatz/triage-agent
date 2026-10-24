@@ -5,8 +5,6 @@ from dotenv import load_dotenv
 # Load .env file if present
 load_dotenv()
 
-DEFAULT_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
-
 def get_model_name(role: str = "default") -> str:
     """Get Gemini model name by agent role, falling back to GEMINI_MODEL.
     
@@ -16,8 +14,11 @@ def get_model_name(role: str = "default") -> str:
       - 'researcher'
       - 'triage'
     """
+    default_model = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
+    if role == "default":
+        return default_model
     env_key = f"GEMINI_MODEL_{role.upper()}"
-    return os.getenv(env_key, DEFAULT_MODEL)
+    return os.getenv(env_key, default_model)
 
 def get_gemini_api_key() -> Optional[str]:
     """Get Gemini API Key from environment."""

@@ -116,6 +116,11 @@ class TriageNotice(BaseModel):
 
 class TriageReport(BaseModel):
     report_title: str = Field(description="Title of the triage report")
+    is_dry_run: bool = Field(default=False, description="True if generated in offline / dry-run simulation mode")
+    unscanned_or_failed_components: List[str] = Field(
+        default_factory=list,
+        description="List of components or dependencies that could not be investigated due to network/API errors"
+    )
     notices: List[TriageNotice] = Field(
         default_factory=list,
         description="List of structured triage notices formatted in the user's action-oriented standard"

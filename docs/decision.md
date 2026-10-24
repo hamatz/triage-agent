@@ -58,3 +58,14 @@
   - コード内に `gemini-2.5-flash` などのモデル名をハードコードせず、`.env` の `GEMINI_MODEL` および役割別環境変数（`GEMINI_MODEL_PLANNER` 等）から動的に解決する。
 - **背景:**
   - Geminiモデルは進化が極めて早く、コード改修なしに最新・最適モデルに切り替えられるようにするため。
+
+---
+
+## ADR-007: エンタープライズデータガバナンスとSBOM送信の安全管理方針 (Vertex AI対応)
+- **決定:**
+  - 商用・社内運用環境においては、無料枠APIキーではなく **Google Cloud Vertex AI**（または商用有償契約のGemini API）経由での実行を標準方針とする。
+- **背景:**
+  - SBOM（自社システムの利用ライブラリ・バージョン一覧）はシステムの攻撃対象領域を示す機密情報である。
+  - Google AI Studioの無料枠ではモデル改善にデータが利用される規約があるのに対し、Vertex AIでは「入力データおよびプロンプトは一切Googleの基盤モデル学習に利用されない（Zero Data Retention / No Training）」ことが契約上保証されている。
+- **実装上の対応:**
+  - `google-genai` SDK は `genai.Client(vertexai=True, project="my-project", location="us-central1")` によるVertex AIネイティブ接続をサポートしているため、環境変数で即座にVertex AIへ切り替えられる構成としている。

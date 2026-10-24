@@ -5,6 +5,7 @@ from google import genai
 from google.genai import types
 
 from triage_agent.config import get_gemini_api_key, get_model_name
+from triage_agent.rules import format_rules_for_prompt
 from triage_agent.schemas import (
     CheckPointItem,
     TargetResearchResult,
@@ -18,6 +19,7 @@ PROMPT_PATH = Path(__file__).resolve().parent.parent.parent.parent / "prompts" /
 
 def run_triage_agent(
     research_results: List[TargetResearchResult],
+    unscanned_components: Optional[List[str]] = None,
     client: Optional[genai.Client] = None,
     dry_run: bool = False,
 ) -> TriageReport:
@@ -25,10 +27,12 @@ def run_triage_agent(
     
     1. Analyzes all findings gathered by Researcher workers.
     2. Uses get_github_commit_or_advisory_detail to examine patches or advisory texts.
-    3. Produces structured TriageNotice objects with practical Yes/No check points and verification methods.
+    3. Produces structured TriageNotice objects adhering to the enterprise triage rules.
     """
+    unscanned = unscanned_components or []
+
     if dry_run or not get_gemini_api_key():
-        # High-fidelity dry-run generator following the user's exact specification
+        # Dry-run generator: transparently marks output as simulation and avoids fabricating conclusions
         notices: List[TriageNotice] = []
 
         for r in research_results:
@@ -43,11 +47,9 @@ def run_triage_agent(
                 if f.source_urls:
                     sources.extend(f.source_urls)
 
-                # Format CVE ID with CVSS score
                 cvss_label = f.cvss or f"{f.severity}"
                 display_cve = f"{f.id} (CVSS: {cvss_label})"
 
-                # Generate tailored practical verification methods for common libraries
                 if "urllib3" in target.name.lower():
                     if "gh4c" in f.id or "stream" in f.title.lower():
                         check_points.append(
@@ -112,35 +114,41 @@ def run_triage_agent(
                     product_name=f"{target.name}（利用バージョン: {target.version}）",
                     announcement_date="直近公開（GitHub / OSV最新シグナル）",
                     conclusion=(
-                        "下の確認ポイントに1つでも Yes で、かつ CVSS 7.0（High）以上の場合は、外部公開のシステムは7日以内に更新または回避策を適用します。"
-                        "CVSS 6.9 以下のものや、すべて No なら通常リリース（30日以内）で構いません。"
+                        "【DRY-RUN シミュレーション】下の確認ポイントに1つでも Yes、または不明なら該当ありとして要確認。"
+                        "外部公開システムで Critical なら48時間以内、Highなら7日以内に更新または回避策。確定判断はライブエージェントで実行してください。"
                     ),
-                    fixed_versions=f"{target.name} 次期最新パッチリリース",
-                    severity_note="High 相当。RCE の直接の報告なし（Dos / 情報漏洩リスク）",
+                    fixed_versions=f"{target.name} 最新パッチ [DRY-RUN: 修正バージョンはライブ実行で確認]",
+                    severity_note=f"推定深刻度: {r.findings[0].severity if r.findings else 'High'} [DRY-RUN: RCE有無や正確なCVSSはライブ精読で判定]",
                     pre_check_note="先にバージョンを確認します。範囲外なら、その CVE の確認ポイントは No として扱います。",
                     check_points=check_points,
                     workaround=(
-                        f"{target.name} の呼び出し箇所で入力バリデーションを厳格化するか、該当機能のオプション設定を明示的に指定して無効化する。"
+                        f"回避策（暫定案）: {target.name} の呼び出し箇所で入力バリデーションを厳格化するか、該当機能のオプション設定を明示的に指定して無効化する。"
                     ),
                     unconfirmed_points=[
-                        f"他言語バインディングや推移的依存先への波及状況",
-                        f"最新パッチ適用時の後方互換性（メジャーバージョンアップ要否）",
+                        "[DRY-RUN] 正確なRCE発火条件およびパッチコミットDiffの精読は未実施です。",
+                        "[DRY-RUN] 他言語バインディングや推移的依存先への波及状況はライブ実行で確認してください。",
                     ],
                     sources=list(dict.fromkeys(sources))[:3],
                 )
             )
 
         return TriageReport(
-            report_title="SBOM脆弱性トリアージ・現場即応指示書",
+            report_title="SBOM脆弱性トリアージ・現場即応指示書 (DRY-RUN シミュレーション)",
+            is_dry_run=True,
+            unscanned_or_failed_components=unscanned,
             notices=notices,
         )
 
-    # Online Agent Mode: Call Gemini with advisory/commit detail inspection tool
+    # Online Agent Mode: Call Gemini with full enterprise rules & diff tools
     if client is None:
         client = genai.Client(api_key=get_gemini_api_key())
 
     model_name = get_model_name("triage")
     system_instruction = PROMPT_PATH.read_text(encoding="utf-8")
+    
+    # Inject enterprise rules into the prompt
+    rules_text = format_rules_for_prompt()
+    system_instruction += f"\n\n{rules_text}"
 
     findings_payload = json.dumps(
         [r.model_dump() for r in research_results],
@@ -153,24 +161,29 @@ def run_triage_agent(
 【調査結果一覧】:
 {findings_payload}
 
+【未スキャン・エラー項目】:
+{json.dumps(unscanned, ensure_ascii=False)}
+
 指示:
-システムプロンプトの指示に従い、各プロダクトごとに以下の構成を持つ実務的・即応型の `TriageNotice` を生成してください：
-1. 【結論】: 「確認ポイントに1つでも Yes なら○日以内に更新/回避策、すべて No なら通常リリース(30日以内)」などの明確な期限とルール
+システムプロンプトおよび【組織の判定基準・意思決定ルール】に厳格に従い、各プロダクトごとに以下の構成を持つ実務的・即応型の `TriageNotice` を生成してください：
+1. 【結論】:
+   - 外部公開のCritical（CVSS 9.0+ / RCE）は、攻撃コードの有無に関わらず48時間以内に対処。
+   - High / Important（CVSS 7.0〜8.9）は、確認ポイントに1つでもYesなら7日以内に対処。
+   - 複数評価がある場合は最も高い深刻度を採用。
+   - 不明（コードベース外の設定に依存するもの）は該当あり（要確認）として扱う。
+   - すべてNoなら通常リリース（30日以内）。
 2. 【基本情報】: 公開日、修正版、深刻度、CVE内容
-3. 【確認ポイント（Yes/No）と確認方法】: 具体的なファイル名（server.xml, php.ini等）、XMLタグ、iniディレクティブ、grep/lddコマンド、コード検索キーワード
+3. 【確認ポイント（Yes/No）と確認方法】: 具体的な設定ファイル名（server.xml, php.ini等）、XMLタグ、iniディレクティブ、grep/lddコマンド、コード検索キーワード
 4. 【回避策】: 設定変更による回避手順、副作用の有無
 5. 【未確認事項】: 不明点や確認継続事項
 6. 【出典】: 参照URLリスト
 """
-
-    tools = [get_github_commit_or_advisory_detail]
 
     response = client.models.generate_content(
         model=model_name,
         contents=user_content,
         config=types.GenerateContentConfig(
             system_instruction=system_instruction,
-            tools=tools,
             response_mime_type="application/json",
             response_schema=TriageReport,
             temperature=0.2,
@@ -178,5 +191,9 @@ def run_triage_agent(
     )
 
     if response.text:
-        return TriageReport.model_validate_json(response.text)
+        report = TriageReport.model_validate_json(response.text)
+        report.is_dry_run = False
+        report.unscanned_or_failed_components = unscanned
+        return report
+
     raise RuntimeError("Triage agent failed to produce structured triage report.")

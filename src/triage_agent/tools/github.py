@@ -56,7 +56,7 @@ def search_github_security_signals(
                     cvss_data = adv.get("cvss") or {}
                     score = cvss_data.get("score")
                     sev = adv.get("severity", "unknown").capitalize()
-                    cvss_str = f"{score} ({sev})" if score else f"未公表 ({sev})"
+                    cvss_str = f"{score} ({sev})" if score else sev
                     signals["security_advisories"].append({
                         "ghsa_id": adv.get("ghsa_id"),
                         "cve_id": adv.get("cve_id"),
