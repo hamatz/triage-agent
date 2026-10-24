@@ -117,7 +117,25 @@ syft scan registry:my-org/my-app:latest -o cyclonedx-json > my_sbom.json
 syft scan dir:. -o cyclonedx-json > my_sbom.json
 ```
 
-### 3.2 トリアージエージェントの実行
+### 3.1 Web GUI ダッシュボードの起動（推奨・ゼロ追加依存）
+直感的にトリアージ指示書や自社コードベースの検証結果を閲覧し、画面上から1クリックで手動サインオフを作成できるローカルWebダッシュボードが付属しています（追加の外部パッケージインストール不要）。
+
+```bash
+# Web GUI ダッシュボードの起動（ブラウザが自動で開きます: http://localhost:8080）
+python -m triage_agent.cli --gui
+# または
+python -m triage_agent.web_ui
+```
+
+- **機能:**
+  - 実行モード選択（Demo / Dry-Run / Live Agent）とワンクリック実行
+  - 指示書早見表（Yes/No、具体的確認方法、CVSS、推奨回避策）のカード表示
+  - 自社コードベースの自動検証結果（該当箇所スニペットのハイライト表示）
+  - 「要確認」項目に対する手動監査サインオフの入力モーダル（エビデンスを記入して即座に保存・再検証）
+
+---
+
+### 3.2 トリアージエージェントのCLI実行
 ```bash
 # 基本実行 (Markdownレポートを output_report.md に出力)
 python -m triage_agent.cli --sbom my_sbom.json --output output_report.md

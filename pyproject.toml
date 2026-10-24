@@ -15,6 +15,7 @@ dependencies = [
 [project.scripts]
 triage-agent = "triage_agent.cli:main"
 triage-verifier = "triage_agent.verifier:main"
+triage-ui = "triage_agent.web_ui:main"
 
 [build-system]
 requires = ["setuptools"]

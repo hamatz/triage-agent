@@ -139,8 +139,19 @@ def main():
         action="store_true",
         help="Run in explicit demonstration showcase mode using clearly identifiable synthetic DEMO-* data",
     )
+    parser.add_argument(
+        "--gui",
+        action="store_true",
+        help="Launch the interactive Web GUI dashboard in your browser",
+    )
 
     args = parser.parse_args()
+
+    # Launch GUI dashboard if requested
+    if args.gui:
+        from triage_agent.web_ui import run_gui
+        run_gui()
+        return
 
     # Dynamic model override
     if args.model:
