@@ -163,6 +163,17 @@ HTML_PAGE = """<!DOCTYPE html>
         <p class="text-sm font-medium text-slate-700" id="loading-msg">エージェントが調査を実行中...</p>
       </div>
 
+      <!-- Error Alert Panel -->
+      <div id="error-panel" class="hidden bg-red-50 border-l-4 border-red-500 p-4 rounded-r-xl shadow-sm">
+        <div class="flex items-start">
+          <i class="fa-solid fa-circle-exclamation text-red-600 text-lg mr-3 mt-0.5"></i>
+          <div class="text-xs">
+            <h3 class="font-bold text-red-800">実行時エラー</h3>
+            <p id="error-message" class="text-red-700 mt-1 whitespace-pre-wrap font-mono text-[11px]"></p>
+          </div>
+        </div>
+      </div>
+
       <!-- Verification Audit Summary (If Codebase Scanned) -->
       <div id="verification-panel" class="hidden bg-white p-5 rounded-xl shadow-sm border border-slate-200 space-y-4">
         <div class="flex items-center justify-between border-b pb-3 border-slate-100">
@@ -295,14 +306,22 @@ HTML_PAGE = """<!DOCTYPE html>
       });
     });
 
+    function showError(msg) {
+      const errPanel = document.getElementById('error-panel');
+      const errMsg = document.getElementById('error-message');
+      errMsg.innerText = msg;
+      errPanel.classList.remove('hidden');
+    }
+
     // Form Submit
     document.getElementById('triage-form').addEventListener('submit', async (e) => {
       e.preventDefault();
       const mode = document.querySelector('input[name="mode"]:checked').value;
-      const sbom = document.getElementById('sbom-path').value;
-      const codeDir = document.getElementById('code-dir').value;
-      const auditFile = document.getElementById('audit-file').value;
+      const sbom = document.getElementById('sbom-path').value.trim();
+      const codeDir = document.getElementById('code-dir').value.trim();
+      const auditFile = document.getElementById('audit-file').value.trim();
 
+      document.getElementById('error-panel').classList.add('hidden');
       document.getElementById('loading-spinner').classList.remove('hidden');
       document.getElementById('notices-container').classList.add('hidden');
       document.getElementById('verification-panel').classList.add('hidden');
@@ -315,12 +334,19 @@ HTML_PAGE = """<!DOCTYPE html>
           body: JSON.stringify({ mode, sbom, code_dir: codeDir, audit_file: auditFile })
         });
         const data = await res.json();
+
+        if (!res.ok || data.error || !data.report) {
+          const msg = data.error || ('HTTP ' + res.status + ': ' + res.statusText);
+          showError(msg);
+          return;
+        }
+
         currentReport = data.report;
         currentAudit = data.audit;
 
         renderReport(currentReport, currentAudit);
       } catch (err) {
-        alert('実行エラー: ' + err);
+        showError('通信または実行エラー: ' + err.message);
       } finally {
         document.getElementById('loading-spinner').classList.add('hidden');
         document.getElementById('notices-container').classList.remove('hidden');
@@ -328,6 +354,7 @@ HTML_PAGE = """<!DOCTYPE html>
     });
 
     function renderReport(report, audit) {
+      if (!report) return;
       // 1. Render Verification summary if available
       const vPanel = document.getElementById('verification-panel');
       if (audit) {
@@ -602,16 +629,34 @@ class TriageDashboardHandler(BaseHTTPRequestHandler):
 
         if self.path == "/api/run":
             mode = req_data.get("mode", "demo")
-            sbom_path = req_data.get("sbom", "sample_sbom.json")
-            code_dir = req_data.get("code_dir")
-            audit_file = req_data.get("audit_file")
+            sbom_path = req_data.get("sbom", "sample_sbom.json").strip()
+            code_dir = req_data.get("code_dir", "").strip() or None
+            audit_file = req_data.get("audit_file", "").strip() or None
 
             try:
+                # 0. Pre-flight validations
+                if mode != "demo":
+                    p = Path(sbom_path)
+                    if not p.exists():
+                        # Try common typos like .jsom -> .json
+                        alt_p = p.with_suffix(".json")
+                        if alt_p.exists():
+                            sbom_path = str(alt_p)
+                        else:
+                            raise FileNotFoundError(f"SBOMファイルが見つかりません: '{sbom_path}'")
+
+                if mode == "live" and not is_llm_configured():
+                    raise ValueError(
+                        "LLM API が設定されていません。\n"
+                        "Live Agent モードを実行するには、.env または環境変数に GEMINI_API_KEY を設定するか、"
+                        "Google Cloud Vertex AI (GOOGLE_GENAI_USE_VERTEXAI=true) を設定してください。\n"
+                        "APIキーなしで挙動を試す場合は、画面左の実行モードで「Demo」または「Dry-Run」を選択してください。"
+                    )
+
                 # 1. Execute triage notice generation
                 if mode == "demo":
                     triage_report = generate_demo_report()
                 elif mode == "dry-run":
-                    from triage_agent.agents.planner import run_recon_planner
                     from triage_agent.agents.researcher import run_researcher
                     from triage_agent.agents.triage import run_triage_agent
                     from triage_agent.tools.osv import query_osv_batch
@@ -619,10 +664,33 @@ class TriageDashboardHandler(BaseHTTPRequestHandler):
 
                     components = load_sbom_summary(sbom_path)
                     osv_hits, osv_errs = query_osv_batch(components)
-                    recon_plan = run_recon_planner(sbom_path, osv_results=osv_hits, dry_run=True)
                     unscanned = [f"OSVエラー: {e}" for e in osv_errs]
+                    targets = []
+                    repo_map = {
+                        "urllib3": "urllib3/urllib3",
+                        "jsonwebtoken": "auth0/node-jsonwebtoken",
+                        "axios": "axios/axios",
+                        "log4j-core": "apache/logging-log4j2",
+                        "fastapi": "fastapi/fastapi",
+                        "express": "expressjs/express",
+                    }
+                    for c in components:
+                        is_hit = c.name in osv_hits
+                        targets.append(
+                            ReconTarget(
+                                name=c.name,
+                                version=c.version,
+                                ecosystem=c.ecosystem,
+                                github_repo=repo_map.get(c.name),
+                                priority="CRITICAL" if is_hit and c.name in ["log4j-core", "urllib3", "jsonwebtoken"] else "HIGH",
+                                rationale=f"Known OSV hits found ({len(osv_hits.get(c.name, []))} alerts)" if is_hit else "Core web/network component",
+                                search_queries=[f"{c.name} {c.version} security patch"],
+                                github_search_keywords=["security", "cve", "patch"],
+                            )
+                        )
+                    targets.sort(key=lambda t: 0 if t.priority == "CRITICAL" else 1)
                     res_list = []
-                    for t in recon_plan.targets[:10]:
+                    for t in targets[:10]:
                         r = run_researcher(t, dry_run=True)
                         res_list.append(r)
                         if r.errors:
@@ -637,7 +705,7 @@ class TriageDashboardHandler(BaseHTTPRequestHandler):
 
                     components = load_sbom_summary(sbom_path)
                     osv_hits, osv_errs = query_osv_batch(components)
-                    recon_plan = run_recon_planner(sbom_path, osv_results=osv_hits, dry_run=False)
+                    recon_plan = run_recon_planner(sbom_path, osv_results=osv_hits)
                     unscanned = [f"OSVエラー: {e}" for e in osv_errs]
                     res_list = []
                     for t in recon_plan.targets[:10]:
@@ -663,10 +731,12 @@ class TriageDashboardHandler(BaseHTTPRequestHandler):
                 self.wfile.write(json.dumps(response_payload, ensure_ascii=False).encode("utf-8"))
 
             except Exception as e:
-                self.send_response(500)
-                self.send_header("Content-Type", "application/json")
+                import traceback
+                traceback.print_exc()
+                self.send_response(400)
+                self.send_header("Content-Type", "application/json; charset=utf-8")
                 self.end_headers()
-                self.wfile.write(json.dumps({"error": str(e)}).encode("utf-8"))
+                self.wfile.write(json.dumps({"error": str(e)}, ensure_ascii=False).encode("utf-8"))
 
         elif self.path == "/api/create-signoff":
             audit_file_path = req_data.get("audit_file", "sample_audit_signoff.json")
