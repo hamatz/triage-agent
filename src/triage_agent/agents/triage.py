@@ -5,7 +5,7 @@ from typing import Any, Dict, List, Optional
 from google import genai
 from google.genai import types
 
-from triage_agent.config import get_genai_client, get_model_name, is_llm_configured
+from triage_agent.config import call_with_retry, get_genai_client, get_model_name, is_llm_configured
 from triage_agent.rules import format_rules_for_prompt
 from triage_agent.schemas import (
     CheckPointItem,
@@ -239,15 +239,17 @@ def run_triage_agent(
 6. 【出典】: 参照URLリスト
 """
 
-    response = client.models.generate_content(
-        model=model_name,
-        contents=user_content,
-        config=types.GenerateContentConfig(
-            system_instruction=system_instruction,
-            response_mime_type="application/json",
-            response_schema=TriageReport,
-            temperature=0.2,
-        ),
+    response = call_with_retry(
+        lambda: client.models.generate_content(
+            model=model_name,
+            contents=user_content,
+            config=types.GenerateContentConfig(
+                system_instruction=system_instruction,
+                response_mime_type="application/json",
+                response_schema=TriageReport,
+                temperature=0.2,
+            ),
+        )
     )
 
     if response.text:

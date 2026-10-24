@@ -4,7 +4,7 @@ from typing import Any, Dict, List, Optional
 from google import genai
 from google.genai import types
 
-from triage_agent.config import get_genai_client, get_model_name, is_llm_configured
+from triage_agent.config import call_with_retry, get_genai_client, get_model_name, is_llm_configured
 from triage_agent.schemas import ReconTarget, ResearchFinding, TargetResearchResult
 from triage_agent.tools.github import search_github_security_signals
 
@@ -70,13 +70,15 @@ Use Google Search to find:
 
 Summarize your findings with source URLs. If no upcoming announcements or active CVEs exist, explicitly state 'No active advisories or pre-announcements found'.
 """
-            search_resp = client.models.generate_content(
-                model=model_name,
-                contents=search_query_prompt,
-                config=types.GenerateContentConfig(
-                    tools=[types.Tool(google_search=types.GoogleSearch())],
-                    temperature=0.1,
-                ),
+            search_resp = call_with_retry(
+                lambda: client.models.generate_content(
+                    model=model_name,
+                    contents=search_query_prompt,
+                    config=types.GenerateContentConfig(
+                        tools=[types.Tool(google_search=types.GoogleSearch())],
+                        temperature=0.1,
+                    ),
+                )
             )
             if search_resp.text:
                 web_findings_text = search_resp.text
@@ -162,15 +164,17 @@ Summarize your findings with source URLs. If no upcoming announcements or active
 自社利用バージョン（{target.version}）に影響する脆弱性・パッチ予告を抽出して構造化データ（TargetResearchResult）を出力してください。
 """
 
-    response = client.models.generate_content(
-        model=model_name,
-        contents=user_content,
-        config=types.GenerateContentConfig(
-            system_instruction=system_instruction,
-            response_mime_type="application/json",
-            response_schema=TargetResearchResult,
-            temperature=0.1,
-        ),
+    response = call_with_retry(
+        lambda: client.models.generate_content(
+            model=model_name,
+            contents=user_content,
+            config=types.GenerateContentConfig(
+                system_instruction=system_instruction,
+                response_mime_type="application/json",
+                response_schema=TargetResearchResult,
+                temperature=0.1,
+            ),
+        )
     )
 
     if response.text:

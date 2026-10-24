@@ -68,3 +68,27 @@ def get_genai_client() -> genai.Client:
             "GEMINI_API_KEY is not set. Please set GEMINI_API_KEY in .env or configure Vertex AI (GOOGLE_GENAI_USE_VERTEXAI=true)."
         )
     return genai.Client(api_key=api_key)
+
+
+def call_with_retry(fn, max_retries: int = 3, initial_delay: float = 2.0):
+    """Execute a function with exponential backoff retry on transient 503 / 429 API errors."""
+    import time
+    delay = initial_delay
+    last_err = None
+
+    for attempt in range(max_retries + 1):
+        try:
+            return fn()
+        except Exception as e:
+            err_str = str(e)
+            is_transient = "503" in err_str or "UNAVAILABLE" in err_str or \
+                           "429" in err_str or "RESOURCE_EXHAUSTED" in err_str or \
+                           "high demand" in err_str.lower()
+            if not is_transient or attempt == max_retries:
+                raise e
+            last_err = e
+            time.sleep(delay)
+            delay *= 2.0
+
+    if last_err:
+        raise last_err

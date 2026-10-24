@@ -4,7 +4,7 @@ from typing import Any, Dict, List, Optional
 from google import genai
 from google.genai import types
 
-from triage_agent.config import get_genai_client, get_model_name
+from triage_agent.config import call_with_retry, get_genai_client, get_model_name
 from triage_agent.schemas import ComponentInfo, ReconPlan
 from triage_agent.tools.osv import query_osv_batch
 from triage_agent.tools.sbom import load_sbom_summary
@@ -67,15 +67,17 @@ def run_recon_planner(
 上記を分析し、外部露出・RCE傾向・事前予告の可能性を踏まえた動的調査計画（ReconPlan）を策定してください。
 """
 
-    response = client.models.generate_content(
-        model=model_name,
-        contents=user_content,
-        config=types.GenerateContentConfig(
-            system_instruction=system_instruction,
-            response_mime_type="application/json",
-            response_schema=ReconPlan,
-            temperature=0.2,
-        ),
+    response = call_with_retry(
+        lambda: client.models.generate_content(
+            model=model_name,
+            contents=user_content,
+            config=types.GenerateContentConfig(
+                system_instruction=system_instruction,
+                response_mime_type="application/json",
+                response_schema=ReconPlan,
+                temperature=0.2,
+            ),
+        )
     )
 
     if response.text:
