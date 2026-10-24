@@ -127,6 +127,9 @@ python -m triage_agent.cli --sbom my_sbom.json --model gemini-2.5-flash
 
 # 機械可読なJSON形式で指示書を出力 (verifier との連携用)
 python -m triage_agent.cli --sbom my_sbom.json --output triage_report.json
+
+# 機能展示・デモモード（明確に DEMO-* と識別可能な合成データで即座に挙動確認）
+python -m triage_agent.cli --demo --output demo_triage_report.json
 ```
 
 ### 3.3 自社コードベース自動検証（補助CLI: triage-verifier）
@@ -170,22 +173,23 @@ python -m triage_agent.cli --sbom my_sbom.json --verify-code /path/to/my-repo
 {
   "attestations": [
     {
-      "check_point_id": "urllib3-cve-2026-97687-cp1",
-      "cve_id": "CVE-2026-97687",
-      "check_point_yes_no": "HTTPS_PROXY 環境変数を利用しているか",
+      "check_point_id": "tomcat-demo-cve-2026-0001-338803ee",
+      "notice_hash": "1c14d0ad6058",
+      "cve_id": "DEMO-CVE-2026-0001",
+      "check_point_yes_no": "AJP コネクタを有効にしているか",
       "report_version": "1.0",
       "status": "NO (手動確認済み・非該当)",
       "reviewer": "SREチーム 山田",
       "date": "2026-10-25",
-      "evidence": "インフラ設計書およびK8sマニフェスト確認。本サービスはHTTPSプロキシを経由せず直接内部通信するため非該当。"
+      "evidence": "本番環境の server.xml を確認。AJP コネクタの定義はコメントアウトされており非該当。"
     }
   ]
 }
 ```
 
 > 🛡️ **安全側設計（誤爆・見落とし防止）:**
-> - **完全一致照合:** `check_point_id` による完全一致を原則とし、CVE番号の部分一致（例: `CVE-2026-11149` が `CVE-2026-111497` にマッチしてしまう問題）や、1つのCVEに複数の確認ポイントがある場合の全項目一括承認を防止。
-> - **版突合（`report_version`）:** 早見表の版が更新（v1.0 → v2.0）されて新たな発火条件が追加された場合、過去の古いサインオフは自動的に失効し、再確認を促します。
+> - **順序非依存・決定論的ID:** `check_point_id` は「何番目か」ではなく「CVE + 質問文」から暗号ハッシュで生成されるため、第2版で確認ポイントの並び順が変わっても誤った項目にサインオフが当たることはありません。
+> - **Notice Fingerprint (`notice_hash`) による自動失効:** お知らせに含まれる確認ポイント構成のハッシュを保持。第2版で新たな確認項目が追加されたり質問文が変更されると、ハッシュが変わり過去のサインオフは自動的に失効して再確認（黄色）を促します。
 > - **ステータス検証:** `status` が `NO` で始まっている場合のみ安全として集計されます。
 
 ---

@@ -1,4 +1,5 @@
 import json
+import re
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 from google import genai
@@ -11,6 +12,8 @@ from triage_agent.schemas import (
     TargetResearchResult,
     TriageNotice,
     TriageReport,
+    compute_check_point_id,
+    compute_notice_hash,
 )
 from triage_agent.tools.github import get_github_commit_or_advisory_detail
 
@@ -85,101 +88,104 @@ def run_triage_agent(
             check_points: List[CheckPointItem] = []
             sources: List[str] = []
 
-            for cp_idx, f in enumerate(r.findings, 1):
+            for f in r.findings:
                 if f.source_urls:
                     sources.extend(f.source_urls)
 
                 cvss_label = f.cvss or f"{f.severity}"
                 display_cve = f"{f.id} (CVSS: {cvss_label})"
-                clean_fid = f.id.lower().replace("/", "-")
-                cp_id = f"{target.name.lower()}-{clean_fid}-cp{cp_idx}"
 
                 if "urllib3" in target.name.lower():
                     if "gh4c" in f.id or "stream" in f.title.lower():
+                        q_text = "HTTPResponse.stream() または read_chunked() でチャンク転送をストリーミング処理しているか"
                         check_points.append(
                             CheckPointItem(
-                                check_point_id=cp_id,
+                                check_point_id=compute_check_point_id(target.name, f.id, q_text),
                                 target_or_cve=display_cve,
                                 cvss=cvss_label,
                                 content_summary=f.title,
                                 affected_versions=f.affected_versions or "< 1.26.19",
-                                check_point_yes_no="HTTPResponse.stream() または read_chunked() でチャンク転送をストリーミング処理しているか",
+                                check_point_yes_no=q_text,
                                 verification_method="コードベースを stream(、read_chunked(、decode_content= で検索。巨大なDeflateレスポンスを扱うクライアント処理があるか確認",
                             )
                         )
                     elif "proxy" in f.title.lower():
+                        q_text = "HTTPS プロキシ経由で TLS 通信を行う設定を使用しているか"
                         check_points.append(
                             CheckPointItem(
-                                check_point_id=cp_id,
+                                check_point_id=compute_check_point_id(target.name, f.id, q_text),
                                 target_or_cve=display_cve,
                                 cvss=cvss_label,
                                 content_summary=f.title,
                                 affected_versions=f.affected_versions or "< 1.26.19",
-                                check_point_yes_no="HTTPS プロキシ経由で TLS 通信を行う設定を使用しているか",
+                                check_point_yes_no=q_text,
                                 verification_method="環境変数 HTTPS_PROXY や ProxyManager( で HTTPS プロキシを設定している箇所を検索。証明書検証が無効化されていないか確認",
                             )
                         )
                     else:
+                        q_text = "外部入力されたURLやヘッダーを直接 urllib3 に渡しているか"
                         check_points.append(
                             CheckPointItem(
-                                check_point_id=cp_id,
+                                check_point_id=compute_check_point_id(target.name, f.id, q_text),
                                 target_or_cve=display_cve,
                                 cvss=cvss_label,
                                 content_summary=f.title,
                                 affected_versions=f.affected_versions or f"< {target.version}",
-                                check_point_yes_no="外部入力されたURLやヘッダーを直接 urllib3 に渡しているか",
+                                check_point_yes_no=q_text,
                                 verification_method="コード内で urllib3.PoolManager や requests を呼び出している外部通信処理を検索",
                             )
                         )
 
                 elif "jsonwebtoken" in target.name.lower():
+                    q_text = "jwt.verify() の algorithms オプションを省略または外部指定可能にしているか"
                     check_points.append(
                         CheckPointItem(
-                            check_point_id=cp_id,
+                            check_point_id=compute_check_point_id(target.name, f.id, q_text),
                             target_or_cve=display_cve,
                             cvss=cvss_label,
                             content_summary=f.title,
                             affected_versions=f.affected_versions or "< 9.0.0",
-                            check_point_yes_no="jwt.verify() の algorithms オプションを省略または外部指定可能にしているか",
+                            check_point_yes_no=q_text,
                             verification_method="コードベースで jwt.verify を検索。第3引数の options に algorithms: ['RS256'] 等の固定アルゴリズムが明示されているか確認",
                         )
                     )
 
                 else:
+                    q_text = f"{target.name} の特定脆弱機能（外部入力受付・非同期処理）を有効にしているか"
                     check_points.append(
                         CheckPointItem(
-                            check_point_id=cp_id,
+                            check_point_id=compute_check_point_id(target.name, f.id, q_text),
                             target_or_cve=display_cve,
                             cvss=cvss_label,
                             content_summary=f.title,
                             affected_versions=f.affected_versions or f"約 {target.version}",
-                            check_point_yes_no=f"{target.name} の特定脆弱機能（外部入力受付・非同期処理）を有効にしているか",
+                            check_point_yes_no=q_text,
                             verification_method=f"設定ファイルおよび依存コードで {target.name} の設定ディレクティブを grep 検索",
                         )
                     )
 
-            notices.append(
-                TriageNotice(
-                    product_name=f"{target.name}（利用バージョン: {target.version}）",
-                    announcement_date="直近公開（GitHub / OSV最新シグナル）",
-                    conclusion=(
-                        "【DRY-RUN シミュレーション】下の確認ポイントに1つでも Yes、または不明なら該当ありとして要確認。"
-                        "外部公開システムで Critical なら48時間以内、Highなら7日以内に更新または回避策。確定判断はライブエージェントで実行してください。"
-                    ),
-                    fixed_versions=f"{target.name} 最新パッチ [DRY-RUN: 修正バージョンはライブ実行で確認]",
-                    severity_note=f"推定深刻度: {r.findings[0].severity if r.findings else 'High'} [DRY-RUN: RCE有無や正確なCVSSはライブ精読で判定]",
-                    pre_check_note="先にバージョンを確認します。範囲外なら、その CVE の確認ポイントは No として扱います。",
-                    check_points=check_points,
-                    workaround=(
-                        f"回避策（暫定案）: {target.name} の呼び出し箇所で入力バリデーションを厳格化するか、該当機能のオプション設定を明示的に指定して無効化する。"
-                    ),
-                    unconfirmed_points=[
-                        "[DRY-RUN] 正確なRCE発火条件およびパッチコミットDiffの精読は未実施です。",
-                        "[DRY-RUN] 他言語バインディングや推移的依存先への波及状況はライブ実行で確認してください。",
-                    ],
-                    sources=list(dict.fromkeys(sources))[:3],
-                )
+            notice = TriageNotice(
+                product_name=f"{target.name}（利用バージョン: {target.version}）",
+                notice_hash=compute_notice_hash(check_points),
+                announcement_date="直近公開（GitHub / OSV最新シグナル）",
+                conclusion=(
+                    "【DRY-RUN シミュレーション】下の確認ポイントに1つでも Yes、または不明なら該当ありとして要確認。"
+                    "外部公開システムで Critical なら48時間以内、Highなら7日以内に更新または回避策。確定判断はライブエージェントで実行してください。"
+                ),
+                fixed_versions=f"{target.name} 最新パッチ [DRY-RUN: 修正バージョンはライブ実行で確認]",
+                severity_note=f"推定深刻度: {r.findings[0].severity if r.findings else 'High'} [DRY-RUN: RCE有無や正確なCVSSはライブ精読で判定]",
+                pre_check_note="先にバージョンを確認します。範囲外なら、その CVE の確認ポイントは No として扱います。",
+                check_points=check_points,
+                workaround=(
+                    f"回避策（暫定案）: {target.name} の呼び出し箇所で入力バリデーションを厳格化するか、該当機能のオプション設定を明示的に指定して無効化する。"
+                ),
+                unconfirmed_points=[
+                    "[DRY-RUN] 正確なRCE発火条件およびパッチコミットDiffの精読は未実施です。",
+                    "[DRY-RUN] 他言語バインディングや推移的依存先への波及状況はライブ実行で確認してください。",
+                ],
+                sources=list(dict.fromkeys(sources))[:3],
             )
+            notices.append(notice)
 
         return TriageReport(
             report_title="SBOM脆弱性トリアージ・現場即応指示書 (DRY-RUN シミュレーション)",
@@ -248,6 +254,15 @@ def run_triage_agent(
         report = TriageReport.model_validate_json(response.text)
         report.is_dry_run = False
         report.unscanned_or_failed_components = unscanned
+
+        # Deterministically enforce check_point_id and notice_hash
+        for notice in report.notices:
+            for cp in notice.check_points:
+                m = re.search(r"\b(CVE-\d{4}-\d{4,7}|GHSA-[a-z0-9\-]+)\b", cp.target_or_cve, re.I)
+                cve_id = m.group(1) if m else "VULN"
+                cp.check_point_id = compute_check_point_id(notice.product_name, cve_id, cp.check_point_yes_no)
+            notice.notice_hash = compute_notice_hash(notice.check_points)
+
         return report
 
     raise RuntimeError("Triage agent failed to produce structured triage report.")

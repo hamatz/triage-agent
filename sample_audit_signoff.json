@@ -1,14 +1,15 @@
 {
   "attestations": [
     {
-      "check_point_id": "urllib3-cve-2026-97687-cp1",
-      "cve_id": "CVE-2026-97687",
-      "check_point_yes_no": "HTTPS_PROXY 環境変数を利用しているか",
+      "check_point_id": "tomcat-demo-cve-2026-0001-338803ee",
+      "notice_hash": "1c14d0ad6058",
+      "cve_id": "DEMO-CVE-2026-0001",
+      "check_point_yes_no": "AJP コネクタを有効にしているか",
       "report_version": "1.0",
       "status": "NO (手動確認済み・非該当)",
       "reviewer": "SREチーム 山田",
       "date": "2026-10-25",
-      "evidence": "インフラ設計書およびK8sマニフェスト確認。本サービスはHTTPSプロキシを経由せず直接内部通信するため非該当。"
+      "evidence": "本番環境の server.xml を確認。AJP コネクタの定義はコメントアウトされており、前段のリバースプロキシも ALB(HTTP) であるため非該当。"
     }
   ]
 }

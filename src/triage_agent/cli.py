@@ -13,6 +13,7 @@ from triage_agent.agents.planner import run_recon_planner
 from triage_agent.agents.researcher import run_researcher
 from triage_agent.agents.triage import run_triage_agent
 from triage_agent.config import get_gemini_api_key, get_model_name, is_llm_configured
+from triage_agent.demo import generate_demo_report
 from triage_agent.schemas import ReconPlan, ReconTarget, TargetResearchResult, TriageNotice, TriageReport
 
 console = Console()
@@ -133,6 +134,11 @@ def main():
         action="store_true",
         help="Run in dry-run mode (uses direct tools and offline simulation without calling LLM API)",
     )
+    parser.add_argument(
+        "--demo",
+        action="store_true",
+        help="Run in explicit demonstration showcase mode using clearly identifiable synthetic DEMO-* data",
+    )
 
     args = parser.parse_args()
 
@@ -140,7 +146,40 @@ def main():
     if args.model:
         os.environ["GEMINI_MODEL"] = args.model
 
-    is_dry_run = args.dry_run
+    is_dry_run = args.dry_run or args.demo
+
+    # Handle explicit --demo showcase mode
+    if args.demo:
+        console.print(
+            Panel.fit(
+                "[bold yellow]【DEMO SHOWCASE モード】[/bold yellow]\n"
+                "明示的な展示用合成データ（DEMO-* プレフィックス）を使用して指示書を生成します。\n"
+                "実際の外部ネットワーク調査や推論は行いません。",
+                border_style="yellow",
+            )
+        )
+        triage_report = generate_demo_report()
+        # Skip straight to report rendering and verification
+        report_md = format_report_markdown(triage_report)
+        console.print(report_md)
+
+        if args.output:
+            out_file = Path(args.output)
+            if out_file.suffix.lower() == ".json":
+                out_file.write_text(triage_report.model_dump_json(indent=2), encoding="utf-8")
+            else:
+                out_file.write_text(report_md, encoding="utf-8")
+            console.print(f"[bold green]✓ 現場即応トリアージ指示書を出力しました: {out_file.resolve()}[/bold green]\n")
+
+        if args.verify_code:
+            console.print(f"[bold green]▶ 自社コードベース自動検証を実行中: {args.verify_code}[/bold green]")
+            from triage_agent.verifier import format_verification_markdown, verify_codebase
+            audit_report = verify_codebase(triage_report, args.verify_code)
+            audit_md = format_verification_markdown(audit_report)
+            Path(args.verify_output).write_text(audit_md, encoding="utf-8")
+            console.print(f"[bold green]✓ 自社検証結果レポートを出力しました: {Path(args.verify_output).resolve()}[/bold green]\n")
+
+        return
 
     # CRITICAL: Prevent silent failure fallback! (Supports both API Key and Vertex AI)
     if not is_dry_run and not is_llm_configured():

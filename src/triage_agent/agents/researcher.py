@@ -128,51 +128,6 @@ Summarize your findings with source URLs. If no upcoming announcements or active
                     )
                 )
 
-        # If offline / network blocked during dry-run, provide simulated findings for demo targets
-        if not findings:
-            if "urllib3" in target.name.lower():
-                findings.extend([
-                    ResearchFinding(
-                        id="CVE-2026-97687",
-                        title="Proxy header leakage or streaming decompression vulnerability in urllib3",
-                        severity="HIGH",
-                        cvss="7.5 (High)",
-                        is_pre_announcement=False,
-                        affected_versions="< 1.26.19, < 2.2.2",
-                        applies_to_current_version=True,
-                        summary="[SIMULATION] HTTPS_PROXY configured with custom auth or stream chunking leaks headers.",
-                        source_urls=["https://github.com/urllib3/urllib3/security/advisories/GHSA-gh4c-6fx4-qh6g"],
-                        trigger_hint="HTTPS_PROXY or response.stream() enabled",
-                    ),
-                    ResearchFinding(
-                        id="CVE-2026-97688",
-                        title="Decompression bomb in Deflate streaming response in urllib3",
-                        severity="MEDIUM",
-                        cvss="5.3 (Medium)",
-                        is_pre_announcement=False,
-                        affected_versions="< 1.26.19",
-                        applies_to_current_version=True,
-                        summary="[SIMULATION] Uncontrolled memory allocation when streaming deflate compressed payload.",
-                        source_urls=["https://github.com/urllib3/urllib3/security/advisories/GHSA-34jh-p97j-mpxq"],
-                        trigger_hint="HTTPResponse.stream() or read_chunked()",
-                    ),
-                ])
-            elif "jsonwebtoken" in target.name.lower():
-                findings.append(
-                    ResearchFinding(
-                        id="CVE-2026-33175",
-                        title="Algorithm confusion verification bypass in auth0/node-jsonwebtoken",
-                        severity="HIGH",
-                        cvss="7.5 (High)",
-                        is_pre_announcement=False,
-                        affected_versions="< 9.0.0",
-                        applies_to_current_version=True,
-                        summary="[SIMULATION] Missing algorithms option allows key confusion attack.",
-                        source_urls=["https://github.com/auth0/node-jsonwebtoken/security/advisories/GHSA-27h2-hvpr-p74q"],
-                        trigger_hint="jwt.verify without explicit algorithms option",
-                    )
-                )
-
         error_notes = f" | Errors: {'; '.join(errors)}" if errors else ""
         return TargetResearchResult(
             target=target,

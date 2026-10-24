@@ -36,7 +36,11 @@ class MatchSnippet(BaseModel):
 class AuditAttestation(BaseModel):
     check_point_id: Optional[str] = Field(
         default=None,
-        description="Deterministic unique ID of the check point (e.g. 'urllib3-cve-2026-97688-cp1'). Primary key.",
+        description="Deterministic unique ID of the check point (e.g. 'urllib3-cve-2026-97688-a1b2c3d4'). Primary key.",
+    )
+    notice_hash: Optional[str] = Field(
+        default=None,
+        description="Notice content hash fingerprint. If check points are added/changed in edition 2, automatically invalidates outdated sign-offs.",
     )
     cve_id: Optional[str] = Field(
         default=None,
@@ -225,33 +229,18 @@ def verify_codebase(
 
             # 1. Match human audit attestations strictly
             for att in attestations:
-                # Check report version compatibility if specified in attestation
-                if att.report_version and report_ver and att.report_version != report_ver:
-                    console.print(
-                        f"[yellow]⚠ 警告: サインオフの対象版（v{att.report_version}）が現在のレポート版（v{report_ver}）と不一致のため、"
-                        f"サインオフを適用せず再確認対象とします（対象: {att.check_point_id or att.cve_id or att.target_or_cve}）。[/yellow]"
-                    )
-                    continue
-
-                # Match priority 1: exact check_point_id
+                # Check candidate match first
+                is_candidate = False
                 if att.check_point_id and cp.check_point_id:
                     if att.check_point_id.strip() == cp.check_point_id.strip():
-                        matched_attestation = att
-                        break
-
-                # Match priority 2: exact cve_id + exact check_point_yes_no
+                        is_candidate = True
                 elif att.cve_id and att.check_point_yes_no:
                     if cp_cve and att.cve_id.upper() == cp_cve and \
                        normalize_text(att.check_point_yes_no) == normalize_text(cp.check_point_yes_no):
-                        matched_attestation = att
-                        break
-
-                # Match priority 3 (legacy fallback): exact CVE match with strict ambiguity prevention
+                        is_candidate = True
                 elif att.target_or_cve:
                     att_cve = extract_cve_id(att.target_or_cve)
                     if att_cve and cp_cve and att_cve == cp_cve:
-                        # Prevent partial match (e.g. CVE-2026-11149 vs CVE-2026-111497 is already avoided by extract_cve_id ==)
-                        # Check if multiple check points share this CVE
                         if cve_counts.get(cp_cve, 0) > 1:
                             console.print(
                                 f"[yellow]⚠ 警告: {cp_cve} には複数の確認ポイントが存在するため、"
@@ -259,8 +248,29 @@ def verify_codebase(
                                 f"安全のため check_point_id または check_point_yes_no を指定してください。[/yellow]"
                             )
                         else:
-                            matched_attestation = att
-                            break
+                            is_candidate = True
+
+                if not is_candidate:
+                    continue
+
+                # Verify report version compatibility
+                if att.report_version and report_ver and att.report_version != report_ver:
+                    console.print(
+                        f"[yellow]⚠ 警告: サインオフの対象版（v{att.report_version}）が現在のレポート版（v{report_ver}）と不一致のため、"
+                        f"サインオフを適用せず再確認対象とします（対象: {att.check_point_id or att.cve_id or att.target_or_cve}）。[/yellow]"
+                    )
+                    continue
+
+                # Verify notice fingerprint hash compatibility
+                if att.notice_hash and notice.notice_hash and att.notice_hash != notice.notice_hash:
+                    console.print(
+                        f"[yellow]⚠ 警告: {notice.product_name} の確認ポイント構成（版）が変更されたため、"
+                        f"古いサインオフ（hash {att.notice_hash}）を適用せず再確認対象とします（対象: {att.check_point_id or att.cve_id or att.target_or_cve}）。[/yellow]"
+                    )
+                    continue
+
+                matched_attestation = att
+                break
 
             if matched_attestation:
                 # Validate attestation status safely: only "NO..." counts as safe!

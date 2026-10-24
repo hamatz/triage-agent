@@ -1,5 +1,31 @@
-from typing import List, Optional
+import hashlib
+import re
+from typing import Dict, List, Optional
 from pydantic import BaseModel, Field
+
+
+def compute_check_point_id(target_name: str, cve_id: str, question: str) -> str:
+    """Deterministically compute a check_point_id from target, CVE, and normalized question text.
+    
+    Prevents sequence-dependent index bugs (e.g. cp1 pointing to different items across editions).
+    """
+    target_clean = re.sub(r"[^a-zA-Z0-9_\-]", "", target_name.strip().lower())
+    cve_clean = re.sub(r"[^a-zA-Z0-9_\-]", "-", cve_id.strip().lower())
+    norm_q = re.sub(r"\s+", " ", question.strip().lower())
+    q_hash = hashlib.sha256(norm_q.encode("utf-8")).hexdigest()[:8]
+    return f"{target_clean}-{cve_clean}-{q_hash}"
+
+
+def compute_notice_hash(check_points: List["CheckPointItem"]) -> str:
+    """Compute a deterministic hash fingerprint representing the exact set of check points in a notice.
+    
+    If check points are added, deleted, or modified in edition 2, the hash changes automatically,
+    safely invalidating outdated attestations without manual version bumping.
+    """
+    tokens = []
+    for cp in sorted(check_points, key=lambda x: x.check_point_id or ""):
+        tokens.append(f"{cp.check_point_id}:{cp.target_or_cve}:{cp.check_point_yes_no}:{cp.affected_versions}")
+    return hashlib.sha256("|".join(tokens).encode("utf-8")).hexdigest()[:12]
 
 
 class ComponentInfo(BaseModel):
@@ -94,6 +120,10 @@ class CheckPointItem(BaseModel):
 
 class TriageNotice(BaseModel):
     product_name: str = Field(description="Product name (e.g. 'Apache Tomcat', 'PHP CVE-2026-115560', 'Brotli (Node2Shell)')")
+    notice_hash: Optional[str] = Field(
+        default=None,
+        description="Cryptographic fingerprint of the check points in this notice to detect editions/modifications automatically"
+    )
     announcement_date: str = Field(description="Public date / release date (e.g. '2026年10月20日公開')")
     conclusion: str = Field(
         description="Actionable conclusion and deadline (e.g. '下の確認ポイントに1つでも Yes なら外部公開のシステムは7日以内に更新。すべて No なら通常リリース（30日以内）で構いません。')"
