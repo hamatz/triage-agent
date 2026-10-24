@@ -255,12 +255,26 @@ def run_triage_agent(
         report.is_dry_run = False
         report.unscanned_or_failed_components = unscanned
 
-        # Deterministically enforce check_point_id and notice_hash
+        # Build map of target names from research results for stable ID canonicalization
+        target_name_map = {r.target.name.lower(): r.target.name for r in research_results}
+
+        # Deterministically enforce canonical component_name, check_point_id and notice_hash
         for notice in report.notices:
+            canonical_name = notice.component_name
+            if not canonical_name:
+                for tname_key, tname_val in target_name_map.items():
+                    if tname_key in notice.product_name.lower():
+                        canonical_name = tname_val
+                        break
+            if not canonical_name:
+                canonical_name = notice.product_name
+
+            notice.component_name = canonical_name
+
             for cp in notice.check_points:
                 m = re.search(r"\b(CVE-\d{4}-\d{4,7}|GHSA-[a-z0-9\-]+)\b", cp.target_or_cve, re.I)
                 cve_id = m.group(1) if m else "VULN"
-                cp.check_point_id = compute_check_point_id(notice.product_name, cve_id, cp.check_point_yes_no)
+                cp.check_point_id = compute_check_point_id(canonical_name, cve_id, cp.check_point_yes_no)
             notice.notice_hash = compute_notice_hash(notice.check_points)
 
         return report

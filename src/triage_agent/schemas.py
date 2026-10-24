@@ -4,12 +4,26 @@ from typing import Dict, List, Optional
 from pydantic import BaseModel, Field
 
 
+def normalize_component_name(raw_name: str) -> str:
+    """Normalize product or package name by stripping parentheticals, versions, and decoration text.
+    
+    Ensures that 'Brotli (HTTP2Shell)' and 'brotli' resolve to the exact same canonical identifier.
+    """
+    cleaned = re.sub(r"[\(（].*?[\)）]", "", raw_name)
+    cleaned = re.sub(r"[:：].*$", "", cleaned)
+    tokens = re.findall(r"[a-zA-Z0-9_\-]+", cleaned)
+    if tokens:
+        return tokens[0].lower()
+    return re.sub(r"[^a-zA-Z0-9_\-]", "", raw_name.strip().lower())
+
+
 def compute_check_point_id(target_name: str, cve_id: str, question: str) -> str:
     """Deterministically compute a check_point_id from target, CVE, and normalized question text.
     
     Prevents sequence-dependent index bugs (e.g. cp1 pointing to different items across editions).
+    Canonicalizes target_name so LLM decoration text does not break attestation matching.
     """
-    target_clean = re.sub(r"[^a-zA-Z0-9_\-]", "", target_name.strip().lower())
+    target_clean = normalize_component_name(target_name)
     cve_clean = re.sub(r"[^a-zA-Z0-9_\-]", "-", cve_id.strip().lower())
     norm_q = re.sub(r"\s+", " ", question.strip().lower())
     q_hash = hashlib.sha256(norm_q.encode("utf-8")).hexdigest()[:8]
@@ -120,6 +134,10 @@ class CheckPointItem(BaseModel):
 
 class TriageNotice(BaseModel):
     product_name: str = Field(description="Product name (e.g. 'Apache Tomcat', 'PHP CVE-2026-115560', 'Brotli (Node2Shell)')")
+    component_name: Optional[str] = Field(
+        default=None,
+        description="Canonical package/library name from SBOM (e.g. 'brotli', 'urllib3') for stable ID calculation"
+    )
     notice_hash: Optional[str] = Field(
         default=None,
         description="Cryptographic fingerprint of the check points in this notice to detect editions/modifications automatically"
