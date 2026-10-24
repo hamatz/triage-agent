@@ -69,3 +69,18 @@
   - Google AI Studioの無料枠ではサービス改善のためにデータが利用される場合があるのに対し、Google Cloud Vertex AI では「顧客データ（入力プロンプトおよび生成データ）はGoogleの基盤モデル学習に利用されない（Customer Data is not used for model training）」ことが基本規約に明記されている（※キャッシュや不正利用検出・ログ保持等のポリシーはGoogle Cloudの最新の個別サービス利用条件に準拠）。
 - **実装上の対応:**
   - `src/triage_agent/config.py` 内に `get_genai_client()` ファクトリを実装。環境変数 `GOOGLE_GENAI_USE_VERTEXAI=true`（または `VERTEX_AI=true`）と `GOOGLE_CLOUD_PROJECT`, `GOOGLE_CLOUD_REGION` を設定することで、コード改修なしにVertex AI経由の接続にシームレスに切り替わる構成とした。
+
+---
+
+## ADR-008: 手動監査サインオフの厳格突合と「安全」判定の防衛的設計
+- **決定:**
+  - `triage-verifier` における人手監査サインオフ（`AuditAttestation`）の照合において、部分一致やCVE単位での全項目一括承認を禁止し、`check_point_id` による完全一致を主キーとする。
+  - サインオフ対象のレポート版（`report_version`）が現在のレポートと一致しない場合は失効扱いとする。
+  - サインオフの `status` が `NO` で始まっている場合のみ安全数（safe_count）として集約し、`YES` やその他が記録されている場合は要対応に倒す。
+- **背景:**
+  - 文字列の部分一致を行うと、`CVE-2026-11149` へのサインオフが `CVE-2026-111497` に誤爆するリスクが存在した。
+  - 1つのCVEに対して複数の確認ポイントがある場合（例: 「AJP有効か」「Apache httpd経由か」）、CVE名だけでサインオフすると全ポイントが不当に安全扱いされてしまう恐れがあった。
+  - 早見表の版が更新されて新たな発火条件が追加された場合、過去のサインオフがそのまま適用されると見落としの原因になる。
+- **実装上の対応:**
+  - `CheckPointItem` に決定論的な一意キー `check_point_id`（例: `urllib3-cve-2026-97687-cp1`）を付与。
+  - `verifier.py` で `check_point_id` 完全一致を最優先照合。フォールバック時も `cve_id` + `check_point_yes_no` の完全一致、かつCVE内の項目が単一であることの検証を徹底。

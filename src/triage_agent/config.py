@@ -33,21 +33,38 @@ def get_github_token() -> Optional[str]:
     return os.getenv("GITHUB_TOKEN")
 
 
+def is_vertex_ai_mode() -> bool:
+    """Check if Vertex AI mode is enabled via environment variables."""
+    return os.getenv("GOOGLE_GENAI_USE_VERTEXAI", "").lower() in ("true", "1") or \
+           os.getenv("VERTEX_AI", "").lower() in ("true", "1")
+
+
+def is_llm_configured() -> bool:
+    """Check if either Vertex AI or Gemini API key is configured."""
+    if is_vertex_ai_mode():
+        project = os.getenv("GOOGLE_CLOUD_PROJECT") or os.getenv("VERTEX_PROJECT")
+        return bool(project)
+    return bool(get_gemini_api_key())
+
+
 def get_genai_client() -> genai.Client:
     """Instantiate a genai.Client configured for either standard Gemini API or Vertex AI.
     
     If GOOGLE_GENAI_USE_VERTEXAI or VERTEX_AI is 'true', uses Vertex AI backend.
     Otherwise uses standard Gemini API with GEMINI_API_KEY.
     """
-    use_vertex = os.getenv("GOOGLE_GENAI_USE_VERTEXAI", "").lower() in ("true", "1") or \
-                 os.getenv("VERTEX_AI", "").lower() in ("true", "1")
-
-    if use_vertex:
+    if is_vertex_ai_mode():
         project = os.getenv("GOOGLE_CLOUD_PROJECT") or os.getenv("VERTEX_PROJECT")
         location = os.getenv("GOOGLE_CLOUD_REGION") or os.getenv("VERTEX_LOCATION", "us-central1")
+        if not project:
+            raise ValueError(
+                "Vertex AI mode requested but GOOGLE_CLOUD_PROJECT (or VERTEX_PROJECT) is not set."
+            )
         return genai.Client(vertexai=True, project=project, location=location)
 
     api_key = get_gemini_api_key()
     if not api_key:
-        raise ValueError("GEMINI_API_KEY is not set. Please set GEMINI_API_KEY in .env or environment, or use --dry-run.")
+        raise ValueError(
+            "GEMINI_API_KEY is not set. Please set GEMINI_API_KEY in .env or configure Vertex AI (GOOGLE_GENAI_USE_VERTEXAI=true)."
+        )
     return genai.Client(api_key=api_key)

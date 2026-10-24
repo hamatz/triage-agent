@@ -1,7 +1,10 @@
 {
   "attestations": [
     {
-      "target_or_cve": "CVE-2026-97687",
+      "check_point_id": "urllib3-cve-2026-97687-cp1",
+      "cve_id": "CVE-2026-97687",
+      "check_point_yes_no": "HTTPS_PROXY 環境変数を利用しているか",
+      "report_version": "1.0",
       "status": "NO (手動確認済み・非該当)",
       "reviewer": "SREチーム 山田",
       "date": "2026-10-25",

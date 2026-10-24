@@ -34,7 +34,26 @@ class MatchSnippet(BaseModel):
 
 
 class AuditAttestation(BaseModel):
-    target_or_cve: str = Field(description="Target product, CVE ID or check point pattern to match")
+    check_point_id: Optional[str] = Field(
+        default=None,
+        description="Deterministic unique ID of the check point (e.g. 'urllib3-cve-2026-97688-cp1'). Primary key.",
+    )
+    cve_id: Optional[str] = Field(
+        default=None,
+        description="Exact CVE or GHSA ID (e.g. 'CVE-2026-11149'). Used in combination with check_point_yes_no.",
+    )
+    check_point_yes_no: Optional[str] = Field(
+        default=None,
+        description="Exact question text of the check point (e.g. 'HTTPS_PROXY 環境変数を利用しているか').",
+    )
+    report_version: Optional[str] = Field(
+        default=None,
+        description="Target report version (e.g. '1.0'). If mismatched with current report version, sign-off is invalidated.",
+    )
+    target_or_cve: Optional[str] = Field(
+        default=None,
+        description="Legacy field for backward compatibility. Must match CVE ID strictly if used.",
+    )
     status: str = Field(default="NO (手動確認済み・非該当)")
     reviewer: str = Field(description="Name/ID of the security reviewer or engineer")
     date: str = Field(description="Date of attestation (e.g. '2026-10-25')")
@@ -43,6 +62,17 @@ class AuditAttestation(BaseModel):
 
 class AttestationFile(BaseModel):
     attestations: List[AuditAttestation] = Field(default_factory=list)
+
+
+def normalize_text(text: str) -> str:
+    """Normalize whitespace and lowercase for reliable exact matching."""
+    return re.sub(r"\s+", " ", text.strip().lower())
+
+
+def extract_cve_id(text: str) -> Optional[str]:
+    """Extract standard CVE or GHSA identifier from text."""
+    m = re.search(r"\b(CVE-\d{4}-\d{4,7}|GHSA-[a-z0-9\-]+)\b", text, re.IGNORECASE)
+    return m.group(1).upper() if m else None
 
 
 class CheckVerificationResult(BaseModel):
@@ -175,24 +205,80 @@ def verify_codebase(
     total_unverified = 0
     total_safe = 0
 
+    report_ver = getattr(report, "report_version", None)
+
     for notice in report.notices:
         check_results: List[CheckVerificationResult] = []
         has_yes = False
         has_unverified = False
 
+        # Count occurrences of CVEs in this notice to detect ambiguity
+        cve_counts: Dict[str, int] = {}
         for cp in notice.check_points:
-            # 1. Check if a human audit attestation exists for this check point
+            cve = extract_cve_id(cp.target_or_cve)
+            if cve:
+                cve_counts[cve] = cve_counts.get(cve, 0) + 1
+
+        for cp in notice.check_points:
+            cp_cve = extract_cve_id(cp.target_or_cve)
             matched_attestation = None
+
+            # 1. Match human audit attestations strictly
             for att in attestations:
-                if att.target_or_cve.lower() in cp.target_or_cve.lower() or \
-                   att.target_or_cve.lower() in cp.check_point_yes_no.lower():
-                    matched_attestation = att
-                    break
+                # Check report version compatibility if specified in attestation
+                if att.report_version and report_ver and att.report_version != report_ver:
+                    console.print(
+                        f"[yellow]⚠ 警告: サインオフの対象版（v{att.report_version}）が現在のレポート版（v{report_ver}）と不一致のため、"
+                        f"サインオフを適用せず再確認対象とします（対象: {att.check_point_id or att.cve_id or att.target_or_cve}）。[/yellow]"
+                    )
+                    continue
+
+                # Match priority 1: exact check_point_id
+                if att.check_point_id and cp.check_point_id:
+                    if att.check_point_id.strip() == cp.check_point_id.strip():
+                        matched_attestation = att
+                        break
+
+                # Match priority 2: exact cve_id + exact check_point_yes_no
+                elif att.cve_id and att.check_point_yes_no:
+                    if cp_cve and att.cve_id.upper() == cp_cve and \
+                       normalize_text(att.check_point_yes_no) == normalize_text(cp.check_point_yes_no):
+                        matched_attestation = att
+                        break
+
+                # Match priority 3 (legacy fallback): exact CVE match with strict ambiguity prevention
+                elif att.target_or_cve:
+                    att_cve = extract_cve_id(att.target_or_cve)
+                    if att_cve and cp_cve and att_cve == cp_cve:
+                        # Prevent partial match (e.g. CVE-2026-11149 vs CVE-2026-111497 is already avoided by extract_cve_id ==)
+                        # Check if multiple check points share this CVE
+                        if cve_counts.get(cp_cve, 0) > 1:
+                            console.print(
+                                f"[yellow]⚠ 警告: {cp_cve} には複数の確認ポイントが存在するため、"
+                                f"target_or_cve 単体での曖昧なサインオフを拒否しました。"
+                                f"安全のため check_point_id または check_point_yes_no を指定してください。[/yellow]"
+                            )
+                        else:
+                            matched_attestation = att
+                            break
 
             if matched_attestation:
-                status = matched_attestation.status
-                total_safe += 1
-                reason = f"【手動監査済】{matched_attestation.reviewer}（{matched_attestation.date}）: {matched_attestation.evidence}"
+                # Validate attestation status safely: only "NO..." counts as safe!
+                att_status = matched_attestation.status.strip()
+                if att_status.upper().startswith("NO"):
+                    status = matched_attestation.status
+                    total_safe += 1
+                    reason = f"【手動監査済】{matched_attestation.reviewer}（{matched_attestation.date}）: {matched_attestation.evidence}"
+                elif att_status.upper().startswith("YES"):
+                    status = "YES (手動監査・該当あり)"
+                    has_yes = True
+                    total_yes += 1
+                    reason = f"【手動監査にて該当】{matched_attestation.reviewer}（{matched_attestation.date}）: {matched_attestation.evidence}"
+                else:
+                    status = matched_attestation.status
+                    has_unverified = True
+                    total_unverified += 1
+                    reason = f"【手動監査・要確認】{matched_attestation.reviewer}（{matched_attestation.date}）: {matched_attestation.evidence}"
                 advice = None
                 matches = []
             else:
@@ -423,13 +509,15 @@ def main():
         table.add_column("検出コード / 判定根拠", style="dim")
 
         for c_res in n_res.results:
-            # Color logic fix: matches any status with '確認' or '未検出' as yellow
+            # Color logic: NO (safe/signoff) is green even if it contains "確認"; YES is red; unverified is yellow
             if c_res.status.startswith("YES"):
                 c_color = "bold red"
+            elif c_res.status.startswith("NO"):
+                c_color = "bold green"
             elif "確認" in c_res.status or "未検出" in c_res.status:
                 c_color = "bold yellow"
             else:
-                c_color = "bold green"
+                c_color = "bold white"
 
             table.add_row(
                 c_res.check_point.target_or_cve,

@@ -60,9 +60,17 @@ class TargetResearchResult(BaseModel):
     target: ReconTarget
     findings: List[ResearchFinding] = Field(default_factory=list)
     recon_notes: str = Field(description="Observations from web and GitHub searches, including non-findings if clean")
+    errors: List[str] = Field(
+        default_factory=list,
+        description="List of errors encountered during investigation (e.g. GitHub 403 Rate Limit, Search errors)"
+    )
 
 
 class CheckPointItem(BaseModel):
+    check_point_id: Optional[str] = Field(
+        default=None,
+        description="Deterministic unique ID for this check point (e.g. 'urllib3-cve-2026-97688-cp1') to bind audit sign-offs"
+    )
     target_or_cve: str = Field(
         description="Target category, CVE/GHSA ID, and CVSS score if known (e.g. 'CVE-2026-103119 (CVSS 7.5 High)', 'CVE-2026-111497 (CVSS 9.2 Critical)', 'GHSA-gh4c-6fx4-qh6g (CVSS 5.3 Medium)')"
     )
@@ -116,6 +124,7 @@ class TriageNotice(BaseModel):
 
 class TriageReport(BaseModel):
     report_title: str = Field(description="Title of the triage report")
+    report_version: str = Field(default="1.0", description="Version or edition of the triage report (e.g. '1.0', '2.0')")
     is_dry_run: bool = Field(default=False, description="True if generated in offline / dry-run simulation mode")
     unscanned_or_failed_components: List[str] = Field(
         default_factory=list,

@@ -12,7 +12,7 @@ from rich.table import Table
 from triage_agent.agents.planner import run_recon_planner
 from triage_agent.agents.researcher import run_researcher
 from triage_agent.agents.triage import run_triage_agent
-from triage_agent.config import get_gemini_api_key, get_model_name
+from triage_agent.config import get_gemini_api_key, get_model_name, is_llm_configured
 from triage_agent.schemas import ReconPlan, ReconTarget, TargetResearchResult, TriageNotice, TriageReport
 
 console = Console()
@@ -140,14 +140,15 @@ def main():
     if args.model:
         os.environ["GEMINI_MODEL"] = args.model
 
-    api_key = get_gemini_api_key()
     is_dry_run = args.dry_run
 
-    # CRITICAL: Prevent silent failure fallback!
-    if not is_dry_run and not api_key:
+    # CRITICAL: Prevent silent failure fallback! (Supports both API Key and Vertex AI)
+    if not is_dry_run and not is_llm_configured():
         console.print(
-            "[bold red]❌ エラー: GEMINI_API_KEY が設定されていません。[/bold red]\n"
-            "ライブエージェントによる自動調査・推論を行うには、.env または環境変数に GEMINI_API_KEY を設定してください。\n"
+            "[bold red]❌ エラー: LLM API が設定されていません。[/bold red]\n"
+            "ライブエージェントによる自動調査・推論を行うには、以下のいずれかを設定してください：\n"
+            "  1. Google AI Studio: .env または環境変数に GEMINI_API_KEY を設定\n"
+            "  2. Google Cloud Vertex AI: GOOGLE_GENAI_USE_VERTEXAI=true および GCP プロジェクト/認証を設定\n\n"
             "オフラインでシミュレーションを実行したい場合は、明示的に [bold cyan]--dry-run[/bold cyan] フラグを付与してください。\n"
             "例: python -m triage_agent.cli --sbom sample_sbom.json --dry-run"
         )
@@ -257,6 +258,10 @@ def main():
             for f in res.findings:
                 pre_flag = "[bold magenta][PRE-ANNOUNCEMENT][/bold magenta] " if f.is_pre_announcement else ""
                 console.print(f"      - {pre_flag}[bold]{f.id}[/bold]: {f.title[:70]}...")
+            if res.errors:
+                for err in res.errors:
+                    console.print(f"      [yellow]⚠ 警告: {err}[/yellow]")
+                    unscanned_items.append(f"{target.name}: {err}")
         except Exception as e:
             console.print(f"    [red]調査失敗 ({target.name}):[/red] {e}")
             unscanned_items.append(f"{target.name}: 調査処理エラー ({str(e)})")

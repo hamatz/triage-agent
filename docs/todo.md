@@ -4,6 +4,17 @@
 
 ---
 
+## 0. 実装済み（Completed）
+- [x] **SBOM（Syft CycloneDX / JSON）からの自律巡回戦略策定（Recon Planner）**
+- [x] **OSV.dev バッチ照会と GitHub API / Google Search Grounding の2段階動的調査（Researcher）**
+- [x] **現場即応指示書生成（Triage Agent: 結論・期限・Yes/No確認ポイント・具体的確認方法・CVSS）**
+- [x] **自社コードベース自動検証CLI（triage-verifier）と3値判定（YES/外部設定要確認/手動確認）**
+- [x] **手動監査サインオフ突合の防衛的設計（check_point_id主キー完全一致・版突合・安全側判定）**
+- [x] **Google Cloud Vertex AI（非学習・エンタープライズガバナンス）完全サポート**
+- [x] **調査不能・未調査コンポーネント（GitHub 403レートリミット等）の漏れなき警告集約**
+
+---
+
 ## 1. 近日対応予定（Near-term / Quick Wins）
 
 - [ ] **SPDX JSON形式へのネイティブ対応拡充**

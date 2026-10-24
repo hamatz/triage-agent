@@ -67,35 +67,38 @@ flowchart TD
 
 ## 3. 各エージェントの責務と入出力
 
-| エージェント | 責務 | 入力 | 出力スキーマ | 主なツール |
+| エージェント | 責務 | 入力 | 出力スキーマ | 主なツール / 実行方式 |
 | :--- | :--- | :--- | :--- | :--- |
-| **Recon Planner** | SBOMを全件走査し、OSV一括照会結果と外部露出度から調査優先度（CRITICAL/HIGH）と検索クエリリストを策定 | SBOM JSON, 自社特性（任意） | `ReconPlan` | `load_sbom_summary`<br>`query_osv_batch` |
-| **Researcher** | 特定されたターゲットごとに、GitHub Advisories、直近Release/RC、修正コミット、Google検索でシグナルを探索 | `ReconTarget` | `TargetResearchResult`<br>（`ResearchFinding` リスト） | `search_github_security_signals`<br>`fetch_webpage_text`<br>`google_search` |
-| **Triage Agent** | 収集したシグナルとパッチ差分（Diff）を精読し、発火する具体的設定値・API利用条件を特定。現場指示書を生成 | `List[TargetResearchResult]` | `TriageReport`<br>（`TriageNotice` リスト） | `get_github_commit_or_advisory_detail` |
-| **Verifier (補助CLI)** | 指示書の確認ポイントに基づき、自社コードベース内を走査してYes/Noの自社判定レポートを自動生成 | `TriageReport (JSON)`<br>自社コードディレクトリ | `CodebaseAuditReport` | `extract_keywords_from_method`<br>`scan_directory_for_patterns` |
+| **Recon Planner** | SBOMを全件走査し、OSV一括照会結果と外部露出度から調査優先度（CRITICAL/HIGH）と検索クエリリストを策定 | SBOM JSON, 自社特性（任意） | `ReconPlan` | `load_sbom_summary`<br>`query_osv_batch` (CLI側で1回取得して注入) |
+| **Researcher** | 特定されたターゲットごとに、Google検索で事前予告・ブログを探索し、GitHub Advisories、直近Release/RC、修正コミットを取得した上で2段階推論 | `ReconTarget` | `TargetResearchResult`<br>（`ResearchFinding` リスト） | **2段階実行:**<br>1. `google_search` + GitHub API<br>2. `response_schema` による構造化合成 |
+| **Triage Agent** | 収集したシグナルとパッチ差分（Diff）を精読し、発火する具体的設定値・API利用条件を特定。現場指示書を生成 | `List[TargetResearchResult]` | `TriageReport`<br>（`TriageNotice` リスト） | **2段階実行:**<br>1. Commit Diff & 詳細アドバイザリ取得<br>2. `response_schema` による構造化指示書合成 |
+| **Verifier (補助CLI)** | 指示書の確認ポイントに基づき、自社コードベース内を走査してYes/Noの自社判定レポートを自動生成。手動監査サインオフ突合に対応 | `TriageReport (JSON)`<br>自社コードディレクトリ<br>`AuditAttestation` (任意) | `CodebaseAuditReport` | `extract_keywords_from_method`<br>`scan_directory_for_patterns`<br>厳格サインオフ突合（ID・版・NO検証） |
 
 ---
 
-## 4. ツールセット設計（APIキー・レートリミット対策）
+## 4. ツールセット設計（APIキー・レートリミット対策・堅牢性）
 
 1. **OSV.dev API (`query_osv_batch`):**
-   - 無料・認証不要。数千件のパッケージを一括で1リクエスト（`POST /v1/querybatch`）で照会可能。
+   - 無料・認証不要。数千件のパッケージを一括で1リクエスト（`POST /v1/querybatch`）で照会可能。CLI起動時に1回だけ取得し、プランナーおよびレポートに注入。
 2. **GitHub API (`search_github_security_signals`, `get_github_commit_or_advisory_detail`):**
    - トークン未設定時は公開IPレートリミット（60回/時）、`GITHUB_TOKEN` 設定時は 5,000回/時。
-   - Advisories, Releases, Commits, Diffを一元取得。
+   - Advisories, Releases, Commits, Diffを一元取得。403/429レート制限等の非200応答は例外を飲み込まず `errors` に記録し、レポート警告に集約。
 3. **Gemini Google Search Grounding (`google_search`):**
    - Gemini APIネイティブのグラウンディング機能。追加のSerpAPI / Tavily等の有料APIキーを不要とし、低コストで事前予告ニュースやブログを検索。
+4. **2段階実行アーキテクチャ (2-Stage Synthesis):**
+   - Gemini APIにおける「カスタムFunction Calling/Search Grounding」と「`response_schema`（Structured Outputs）」の競合（HTTP 400エラー）を回避するため、Stage 1でツール探索（外部検索・Diff取得）を行い、その生コンテキストを渡してStage 2で構造化JSONを確定生成するクリーンな2段階モデルを採用。
 
 ---
 
 ## 5. モデル設定とプロンプト分離
 
 - **環境変数外出し:**
-  - `GEMINI_MODEL`: デフォルトモデル名（`.env` で設定可能、例: `gemini-2.5-flash`）。
-  - `GEMINI_MODEL_PLANNER`, `GEMINI_MODEL_TRIAGE` などの役割別オーバーライドにも対応。
+   - `GEMINI_MODEL`: デフォルトモデル名（`.env` で設定可能、例: `gemini-2.5-flash`）。呼び出しごとに動的評価。
+   - `GEMINI_MODEL_PLANNER`, `GEMINI_MODEL_TRIAGE` などの役割別オーバーライドにも対応。
+   - Google AI Studio（`GEMINI_API_KEY`）および Google Cloud Vertex AI（`GOOGLE_GENAI_USE_VERTEXAI=true`）の双方を完全サポート。
 - **プロンプトファイルの分離:**
-  - プロンプトはPythonコード内に埋め込まず、`prompts/*.md` にMarkdownとして独立管理。
-  - 出力フォーマットは自然言語プロンプトではなく、SDKの `response_schema`（Pydantic）によって100%保証。
+   - プロンプトはPythonコード内に埋め込まず、`prompts/*.md` にMarkdownとして独立管理。
+   - 出力フォーマットは自然言語プロンプトではなく、SDKの `response_schema`（Pydantic）によって100%保証。
 
 ---
 
@@ -105,20 +108,54 @@ flowchart TD
 
 ```mermaid
 flowchart LR
-    Report["triage_report.json\n(確認ポイント・確認方法)"] --> Extractor["1. キーワード・パターン自動抽出\n(extract_keywords_from_method)"]
-    Extractor --> Scanner["2. マルチ言語コード走査\n(scan_directory_for_patterns)"]
-    Repo["自社リポジトリ\n(Python, JS/TS, Java, XML, ini等)"] --> Scanner
-    Scanner --> Evaluator["3. 判定ロジック\n(Yes: 要対応 / No: 安全)"]
-    Evaluator --> Output["verification_audit_report.md\n(該当行スニペット・根拠付き)"]
+    Report["triage_report.json\n(確認ポイント・確認方法・版)"] --> AttestationCheck{"手動監査サインオフ\n(audit_signoff.json)"}
+    AttestationCheck -- "完全一致 & 版一致 & NO" --> Safe["NO (手動確認済み・非該当)\n(次回定例30日更新)"]
+    AttestationCheck -- "未登録 / 不明" --> Scanner["2. マルチ言語コード走査\n(Python, JS, Java, XML等)"]
+    Scanner -- "キーワード検知" --> Yes["YES (該当・要対応)\n(緊急更新: 48h / 7日)"]
+    Scanner -- "未検出" --> Unknown["コード内未検出 (外部設定/既定値の要確認)\n(不明＝該当あり扱い)"]
 ```
 
-### 動作ステップ
-1. **パターン抽出（`extract_keywords_from_method`）:**
-   - 指示書の `check_point_yes_no` および `verification_method` に含まれるコードトークン（バッククォート囲み、関数呼び出し `stream(`, `jwt.verify`、XMLタグ `<Connector`, `<async-supported`、ini設定 `serialize_handler` 等）を自動抽出。
-2. **高速マルチ言語走査（`scan_directory_for_patterns`）:**
-   - `.git`, `node_modules`, `.venv`, `dist` 等の非対象ディレクトリを除外し、主要ソースファイル（`.py`, `.js`, `.ts`, `.java`, `.xml`, `.ini`, `.conf` 等）を行単位で走査。
-3. **判定と根拠のバインド（`verify_codebase`）:**
-   - 発火パターンが検出された場合: `YES (要対応)` と判定し、該当ファイルパス・行番号・コードスニペットを記録。
-   - 検出されなかった場合: `NO (安全)` と判定し、「自社コード内では使用されていないため次回定例リリース（30日以内）で可」と結論。
-4. **自社検証レポート生成（`format_verification_markdown`）:**
-   - 総合判定、項目別判定、検出箇所、推奨回避策を網羅した Markdown レポートを出力。
+### 3値判定と安全側サインオフ突合設計
+1. **3値判定モデル:**
+   - `YES (該当・要対応)`: ソースコード内に発火キーワードや危険な関数呼び出し・設定値を検出。
+   - `コード内未検出 (外部設定/既定値の要確認)`: ソースコード内には見つからないが、ミドルウェア既定値（デフォルト有効）や外部設定（php.ini, server.xml, 環境変数, コンテナマニフェスト等）の可能性があるため「安全」とは断定せず要確認扱い。
+   - `要手動確認`: キーワード抽出不能なインフラ依存の確認項目。
+2. **厳格な手動監査サインオフ突合:**
+   - **完全一致の原則:** `check_point_id`（例: `urllib3-cve-2026-97687-cp1`）または `(cve_id, check_point_yes_no)` による完全一致のみを認める。文字列の部分一致（`CVE-2026-11149` が `CVE-2026-111497` に誤爆する問題）やCVE単位での全項目一括安全判定を完全に防止。
+   - **レポート版（`report_version`）の検証:** サインオフ時の版と現在のレポート版が異なる場合、早見表の更新に伴う見落としを防ぐためサインオフを自動的に無効化し再確認を促す。
+   - **安全判定の厳格化:** サインオフの `status` が `NO` で始まっている場合のみ安全数（safe_count）として集約し、`YES` やその他が記録されている場合は安全側（要対応）に倒す。
+
+---
+
+## 7. 監査サインオフ（Audit Sign-off）の運用ワークフロー
+
+外部設定やデフォルト有効に依存する脆弱性について、「未検出＝安全」と安易に判定せず、人間のエンジニアやSREが確認根拠（Evidence）を明記して承認（サインオフ）する実務運用フローは以下の通りです。
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor SecEng as セキュリティ担当 / CI
+    actor SRE as SRE / インフラ担当
+    participant Agent as triage-agent
+    participant Verifier as triage-verifier
+    participant Signoff as audit_signoff.json
+    participant Report as verification_audit_report.md
+
+    SecEng->>Agent: SBOMを入力し指示書を生成
+    Agent-->>SecEng: triage_report.json (v1.0)
+    SecEng->>Verifier: 初期検証実行 (--code-dir)
+    Verifier-->>SecEng: 一部項目が「コード内未検出 (外部設定/既定値の要確認)」(黄色)
+    SecEng->>SRE: 外部設定・既定値の確認依頼
+    Note over SRE: K8sマニフェスト、php.ini、<br/>server.xml、環境変数を実地調査
+    SRE->>Signoff: 確認結果・根拠(Evidence)・担当者名を記録
+    SecEng->>Verifier: 再検証実行 (--audit-file audit_signoff.json)
+    Verifier->>Signoff: check_point_id & 版(v1.0) & NO を厳格検証
+    Verifier-->>Report: 判定を「NO (手動確認済み・非該当)」(緑色) に昇格
+    Verifier-->>SecEng: 監査証跡付き最終レポート出力 (次回定例30日更新で可)
+```
+
+### ガバナンス・監査対応（Audit Trail）としての保証
+1. **再現性・監査証跡:**
+   - 単なる「Yes/No」のフラグではなく、`reviewer`（誰が）、`date`（いつ）、`evidence`（何のドキュメントや設定を見て安全と判断したか）が Markdown レポート内に表形式で永久記録されます。
+2. **版更新時の再評価トリガー:**
+   - トリアージ指示書に脆弱性の追加や修正があり `report_version` が上がった場合、過去のサインオフは自動失効します。これにより「古い確認結果のまま放置されて新脆弱性を見落とす」運用事故を防ぎます。

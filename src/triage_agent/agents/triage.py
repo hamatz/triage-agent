@@ -4,7 +4,7 @@ from typing import Any, Dict, List, Optional
 from google import genai
 from google.genai import types
 
-from triage_agent.config import get_genai_client, get_model_name
+from triage_agent.config import get_genai_client, get_model_name, is_llm_configured
 from triage_agent.rules import format_rules_for_prompt
 from triage_agent.schemas import (
     CheckPointItem,
@@ -33,7 +33,7 @@ def run_triage_agent(
         - Prompts the LLM with the actual code diffs, advisory details, and enterprise rules.
         - Generates the standard TriageNotice report.
     """
-    unscanned = unscanned_components or []
+    unscanned = list(unscanned_components or [])
 
     # -------------------------------------------------------------
     # Stage 1: Retrieve actual patch diffs & advisory details
@@ -71,16 +71,9 @@ def run_triage_agent(
     # -------------------------------------------------------------
     # Stage 2: Synthesis
     # -------------------------------------------------------------
-    if dry_run or not client and not get_genai_client():
-        pass
+    should_run_dry = dry_run or not is_llm_configured()
 
-    try:
-        if client is None:
-            client = get_genai_client()
-    except Exception:
-        client = None
-
-    if dry_run or client is None:
+    if should_run_dry:
         # Dry-run generator: transparently marks output as simulation and avoids fabricating conclusions
         notices: List[TriageNotice] = []
 
@@ -92,17 +85,20 @@ def run_triage_agent(
             check_points: List[CheckPointItem] = []
             sources: List[str] = []
 
-            for f in r.findings:
+            for cp_idx, f in enumerate(r.findings, 1):
                 if f.source_urls:
                     sources.extend(f.source_urls)
 
                 cvss_label = f.cvss or f"{f.severity}"
                 display_cve = f"{f.id} (CVSS: {cvss_label})"
+                clean_fid = f.id.lower().replace("/", "-")
+                cp_id = f"{target.name.lower()}-{clean_fid}-cp{cp_idx}"
 
                 if "urllib3" in target.name.lower():
                     if "gh4c" in f.id or "stream" in f.title.lower():
                         check_points.append(
                             CheckPointItem(
+                                check_point_id=cp_id,
                                 target_or_cve=display_cve,
                                 cvss=cvss_label,
                                 content_summary=f.title,
@@ -114,6 +110,7 @@ def run_triage_agent(
                     elif "proxy" in f.title.lower():
                         check_points.append(
                             CheckPointItem(
+                                check_point_id=cp_id,
                                 target_or_cve=display_cve,
                                 cvss=cvss_label,
                                 content_summary=f.title,
@@ -125,6 +122,7 @@ def run_triage_agent(
                     else:
                         check_points.append(
                             CheckPointItem(
+                                check_point_id=cp_id,
                                 target_or_cve=display_cve,
                                 cvss=cvss_label,
                                 content_summary=f.title,
@@ -137,6 +135,7 @@ def run_triage_agent(
                 elif "jsonwebtoken" in target.name.lower():
                     check_points.append(
                         CheckPointItem(
+                            check_point_id=cp_id,
                             target_or_cve=display_cve,
                             cvss=cvss_label,
                             content_summary=f.title,
@@ -149,6 +148,7 @@ def run_triage_agent(
                 else:
                     check_points.append(
                         CheckPointItem(
+                            check_point_id=cp_id,
                             target_or_cve=display_cve,
                             cvss=cvss_label,
                             content_summary=f.title,
@@ -183,16 +183,19 @@ def run_triage_agent(
 
         return TriageReport(
             report_title="SBOM脆弱性トリアージ・現場即応指示書 (DRY-RUN シミュレーション)",
+            report_version="1.0",
             is_dry_run=True,
             unscanned_or_failed_components=unscanned,
             notices=notices,
         )
 
     # Online Agent Mode: Call Gemini with full enterprise rules & diff tools
+    if client is None:
+        client = get_genai_client()
+
     model_name = get_model_name("triage")
     system_instruction = PROMPT_PATH.read_text(encoding="utf-8")
     
-    # Inject enterprise rules into the prompt
     rules_text = format_rules_for_prompt()
     system_instruction += f"\n\n{rules_text}"
 
