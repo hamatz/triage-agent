@@ -1,0 +1,73 @@
+{
+  "$schema": "http://cyclonedx.org/schema/bom-1.5.schema.json",
+  "bomFormat": "CycloneDX",
+  "specVersion": "1.5",
+  "serialNumber": "urn:uuid:3e671687-395b-41f5-a30f-a58921a69b79",
+  "version": 1,
+  "metadata": {
+    "timestamp": "2026-10-25T00:00:00Z",
+    "tools": [
+      {
+        "vendor": "anchore",
+        "name": "syft",
+        "version": "1.10.0"
+      }
+    ],
+    "component": {
+      "type": "application",
+      "name": "triage-demo-service",
+      "version": "1.0.0"
+    }
+  },
+  "components": [
+    {
+      "bom-ref": "pkg:pypi/urllib3@1.26.18?package-id=6a8b1c",
+      "type": "library",
+      "name": "urllib3",
+      "version": "1.26.18",
+      "purl": "pkg:pypi/urllib3@1.26.18",
+      "description": "HTTP library with thread-safe connection pooling, file post, and more."
+    },
+    {
+      "bom-ref": "pkg:npm/jsonwebtoken@8.5.1?package-id=4e1a9d",
+      "type": "library",
+      "name": "jsonwebtoken",
+      "version": "8.5.1",
+      "purl": "pkg:npm/jsonwebtoken@8.5.1",
+      "description": "JSON Web Token implementation (symmetric and asymmetric)"
+    },
+    {
+      "bom-ref": "pkg:npm/axios@0.21.1?package-id=5f2c3b",
+      "type": "library",
+      "name": "axios",
+      "version": "0.21.1",
+      "purl": "pkg:npm/axios@0.21.1",
+      "description": "Promise based HTTP client for the browser and node.js"
+    },
+    {
+      "bom-ref": "pkg:maven/org.apache.logging.log4j/log4j-core@2.14.1?package-id=9b8a7c",
+      "type": "library",
+      "group": "org.apache.logging.log4j",
+      "name": "log4j-core",
+      "version": "2.14.1",
+      "purl": "pkg:maven/org.apache.logging.log4j/log4j-core@2.14.1",
+      "description": "The Apache Log4j Implementation"
+    },
+    {
+      "bom-ref": "pkg:pypi/fastapi@0.95.0?package-id=1a2b3c",
+      "type": "library",
+      "name": "fastapi",
+      "version": "0.95.0",
+      "purl": "pkg:pypi/fastapi@0.95.0",
+      "description": "FastAPI framework, high performance, easy to learn, fast to code, ready for production"
+    },
+    {
+      "bom-ref": "pkg:npm/express@4.17.1?package-id=8c7b6a",
+      "type": "library",
+      "name": "express",
+      "version": "4.17.1",
+      "purl": "pkg:npm/express@4.17.1",
+      "description": "Fast, unopinionated, minimalist web framework"
+    }
+  ]
+}
