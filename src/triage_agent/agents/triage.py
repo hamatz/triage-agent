@@ -1,10 +1,10 @@
 import json
 from pathlib import Path
-from typing import List, Optional
+from typing import Any, Dict, List, Optional
 from google import genai
 from google.genai import types
 
-from triage_agent.config import get_gemini_api_key, get_model_name
+from triage_agent.config import get_genai_client, get_model_name
 from triage_agent.rules import format_rules_for_prompt
 from triage_agent.schemas import (
     CheckPointItem,
@@ -25,13 +25,62 @@ def run_triage_agent(
 ) -> TriageReport:
     """Execute the Triage & Action Generation Agent.
     
-    1. Analyzes all findings gathered by Researcher workers.
-    2. Uses get_github_commit_or_advisory_detail to examine patches or advisory texts.
-    3. Produces structured TriageNotice objects adhering to the enterprise triage rules.
+    Architecture (2-Stage Deep Inspection):
+      Stage 1 (Code Diff & Advisory Detail Retrieval):
+        - For every finding with a commit SHA or GHSA ID, automatically fetches the exact patch diff
+          and detailed advisory markdown via get_github_commit_or_advisory_detail.
+      Stage 2 (Triage Decision & Trigger Condition Synthesis):
+        - Prompts the LLM with the actual code diffs, advisory details, and enterprise rules.
+        - Generates the standard TriageNotice report.
     """
     unscanned = unscanned_components or []
 
-    if dry_run or not get_gemini_api_key():
+    # -------------------------------------------------------------
+    # Stage 1: Retrieve actual patch diffs & advisory details
+    # -------------------------------------------------------------
+    detailed_diffs: Dict[str, Any] = {}
+    for r in research_results:
+        repo = r.target.github_repo
+        if not repo:
+            continue
+        for f in r.findings:
+            # Check GHSA detail
+            if f.id.upper().startswith("GHSA-"):
+                try:
+                    adv_detail = get_github_commit_or_advisory_detail(repo, f.id)
+                    if "error" not in adv_detail:
+                        detailed_diffs[f.id] = {
+                            "description": adv_detail.get("description", "")[:1000],
+                            "vulnerabilities": adv_detail.get("vulnerabilities", []),
+                        }
+                except Exception:
+                    pass
+
+            # Check commit patch diffs
+            for sha in f.commit_shas[:2]:
+                try:
+                    commit_detail = get_github_commit_or_advisory_detail(repo, sha)
+                    if "files" in commit_detail:
+                        detailed_diffs[sha] = [
+                            {"file": fl.get("filename"), "patch": fl.get("patch", "")[:1000]}
+                            for fl in commit_detail["files"]
+                        ]
+                except Exception:
+                    pass
+
+    # -------------------------------------------------------------
+    # Stage 2: Synthesis
+    # -------------------------------------------------------------
+    if dry_run or not client and not get_genai_client():
+        pass
+
+    try:
+        if client is None:
+            client = get_genai_client()
+    except Exception:
+        client = None
+
+    if dry_run or client is None:
         # Dry-run generator: transparently marks output as simulation and avoids fabricating conclusions
         notices: List[TriageNotice] = []
 
@@ -140,9 +189,6 @@ def run_triage_agent(
         )
 
     # Online Agent Mode: Call Gemini with full enterprise rules & diff tools
-    if client is None:
-        client = genai.Client(api_key=get_gemini_api_key())
-
     model_name = get_model_name("triage")
     system_instruction = PROMPT_PATH.read_text(encoding="utf-8")
     
@@ -156,12 +202,17 @@ def run_triage_agent(
         ensure_ascii=False,
     )
 
-    user_content = f"""以下は動的調査エージェント（Researcher）が収集した調査結果と脆弱性シグナルの一覧です。
+    diffs_payload = json.dumps(detailed_diffs, indent=2, ensure_ascii=False)
 
-【調査結果一覧】:
+    user_content = f"""以下は動的調査エージェント（Researcher）が収集した調査結果と、GitHubから取得したパッチ差分（Commit Diff / Advisory Detail）です。
+
+【1. 調査結果一覧】:
 {findings_payload}
 
-【未スキャン・エラー項目】:
+【2. 取得されたパッチ差分・Advisory詳細】:
+{diffs_payload if detailed_diffs else 'パッチ差分なし（Advisoryメタデータのみ）'}
+
+【3. 未スキャン・エラー項目】:
 {json.dumps(unscanned, ensure_ascii=False)}
 
 指示:
@@ -173,7 +224,7 @@ def run_triage_agent(
    - 不明（コードベース外の設定に依存するもの）は該当あり（要確認）として扱う。
    - すべてNoなら通常リリース（30日以内）。
 2. 【基本情報】: 公開日、修正版、深刻度、CVE内容
-3. 【確認ポイント（Yes/No）と確認方法】: 具体的な設定ファイル名（server.xml, php.ini等）、XMLタグ、iniディレクティブ、grep/lddコマンド、コード検索キーワード
+3. 【確認ポイント（Yes/No）と確認方法】: パッチ差分（Diff）やAdvisory詳細から読み取った具体的な設定ファイル名（server.xml, php.ini等）、XMLタグ、iniディレクティブ、grep/lddコマンド、コード検索キーワード
 4. 【回避策】: 設定変更による回避手順、副作用の有無
 5. 【未確認事項】: 不明点や確認継続事項
 6. 【出典】: 参照URLリスト

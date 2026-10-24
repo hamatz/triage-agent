@@ -1,4 +1,5 @@
 import argparse
+import json
 import os
 import re
 from pathlib import Path
@@ -9,11 +10,11 @@ from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
 
+from triage_agent.rules import TRIAGE_RULES
 from triage_agent.schemas import CheckPointItem, TriageNotice, TriageReport
 
 console = Console()
 
-# Standard file extensions to scan in codebases
 TARGET_EXTENSIONS = {
     ".py", ".js", ".jsx", ".ts", ".tsx", ".java", ".go", ".rb", ".php",
     ".xml", ".yaml", ".yml", ".json", ".ini", ".conf", ".toml", ".env",
@@ -32,20 +33,36 @@ class MatchSnippet(BaseModel):
     line_content: str
 
 
+class AuditAttestation(BaseModel):
+    target_or_cve: str = Field(description="Target product, CVE ID or check point pattern to match")
+    status: str = Field(default="NO (手動確認済み・非該当)")
+    reviewer: str = Field(description="Name/ID of the security reviewer or engineer")
+    date: str = Field(description="Date of attestation (e.g. '2026-10-25')")
+    evidence: str = Field(description="Audit justification, config proof, or architecture rationale")
+
+
+class AttestationFile(BaseModel):
+    attestations: List[AuditAttestation] = Field(default_factory=list)
+
+
 class CheckVerificationResult(BaseModel):
     check_point: CheckPointItem
-    status: str = Field(description="'YES (該当・要対応)', 'コード内未検出 (外部設定/既定値の要確認)', or '要手動確認'")
+    status: str = Field(description="'YES (該当・要対応)', 'コード内未検出 (外部設定/既定値の要確認)', '要手動確認', or 'NO (手動確認済み・非該当)'")
     matches: List[MatchSnippet] = Field(default_factory=list)
     reasoning: str
     external_check_advice: Optional[str] = Field(
         default=None,
         description="Advice on external config files (e.g. php.ini, server.xml, env vars, K8s manifests)"
     )
+    attestation: Optional[AuditAttestation] = Field(
+        default=None,
+        description="Human audit sign-off if confirmed offline"
+    )
 
 
 class NoticeVerificationResult(BaseModel):
     notice: TriageNotice
-    overall_status: str = Field(description="'YES (該当・要対応)', '要確認 (外部設定・環境設定の確認要)', or 'NO (安全)'")
+    overall_status: str = Field(description="'YES (該当・要対応)', '要確認 (外部設定・環境設定の確認要)', or 'NO (安全・確認済み)'")
     action_deadline_advice: str
     results: List[CheckVerificationResult] = Field(default_factory=list)
 
@@ -61,17 +78,14 @@ def extract_keywords_from_method(text: str) -> List[str]:
     """Extract code tokens, XML tags, function calls, or config keys from verification method text."""
     patterns = set()
 
-    # Backtick tokens: `stream(` -> stream(
     for token in re.findall(r"`([^`]+)`", text):
         cleaned = token.strip()
         if len(cleaned) >= 3:
             patterns.add(cleaned)
 
-    # XML tags like <Connector or <UpgradeProtocol
     for tag in re.findall(r"<([a-zA-Z0-9_\-]+)", text):
         patterns.add(f"<{tag}")
 
-    # Specific common keywords
     for kw in [
         "stream(", "read_chunked(", "HTTPS_PROXY", "ProxyManager",
         "jwt.verify", "serialize_handler", "upload_progress",
@@ -91,7 +105,6 @@ def scan_directory_for_patterns(code_dir: Path, patterns: List[str], max_matches
     matches: List[MatchSnippet] = []
 
     for root, dirs, files in os.walk(code_dir):
-        # Filter out ignored directories
         dirs[:] = [d for d in dirs if d not in IGNORE_DIRS and not d.startswith(".")]
 
         for fname in files:
@@ -124,15 +137,38 @@ def scan_directory_for_patterns(code_dir: Path, patterns: List[str], max_matches
     return matches
 
 
-def verify_codebase(report: TriageReport, code_dir_path: str) -> CodebaseAuditReport:
+def load_audit_attestations(audit_file_path: Optional[str]) -> List[AuditAttestation]:
+    """Load human attestation sign-off records if provided."""
+    if not audit_file_path:
+        return []
+    path = Path(audit_file_path)
+    if not path.exists():
+        return []
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+        if isinstance(data, list):
+            return [AuditAttestation.model_validate(item) for item in data]
+        if isinstance(data, dict) and "attestations" in data:
+            return [AuditAttestation.model_validate(item) for item in data["attestations"]]
+    except Exception as e:
+        console.print(f"[yellow]Warning: Failed to load audit file {audit_file_path}: {e}[/yellow]")
+    return []
+
+
+def verify_codebase(
+    report: TriageReport,
+    code_dir_path: str,
+    audit_file_path: Optional[str] = None
+) -> CodebaseAuditReport:
     """Run automated code inspection against a local codebase based on TriageReport check points.
     
-    Adheres to the core enterprise security principle:
-    '不明・未検出は安全ではなく該当あり（要確認）として扱う。確実な否定証拠がない限り安全と断定しない。'
+    Supports audit attestation files (e.g. audit_signoff.json) to record human sign-offs.
     """
     code_dir = Path(code_dir_path).resolve()
     if not code_dir.exists():
         raise FileNotFoundError(f"Codebase directory not found: {code_dir_path}")
+
+    attestations = load_audit_attestations(audit_file_path)
 
     notice_results: List[NoticeVerificationResult] = []
     total_yes = 0
@@ -145,36 +181,48 @@ def verify_codebase(report: TriageReport, code_dir_path: str) -> CodebaseAuditRe
         has_unverified = False
 
         for cp in notice.check_points:
-            patterns = extract_keywords_from_method(f"{cp.check_point_yes_no} {cp.verification_method}")
-            
-            # If no pattern could be extracted, it requires manual inspection
-            if not patterns:
-                status = "要手動確認 (キーワード抽出不能)"
-                has_unverified = True
-                total_unverified += 1
-                reason = "確認方法が自然言語またはインフラ依存のため、自動検索キーワードを抽出できませんでした。手動での確認が必要です。"
-                advice = cp.verification_method
+            # 1. Check if a human audit attestation exists for this check point
+            matched_attestation = None
+            for att in attestations:
+                if att.target_or_cve.lower() in cp.target_or_cve.lower() or \
+                   att.target_or_cve.lower() in cp.check_point_yes_no.lower():
+                    matched_attestation = att
+                    break
+
+            if matched_attestation:
+                status = matched_attestation.status
+                total_safe += 1
+                reason = f"【手動監査済】{matched_attestation.reviewer}（{matched_attestation.date}）: {matched_attestation.evidence}"
+                advice = None
                 matches = []
             else:
-                matches = scan_directory_for_patterns(code_dir, patterns)
-                if matches:
-                    status = "YES (該当・要対応)"
-                    has_yes = True
-                    total_yes += 1
-                    reason = f"自社リポジトリ内で発火キーワード（{', '.join(patterns)}）の利用を {len(matches)} 箇所検出しました。"
-                    advice = f"該当箇所（{matches[0].file_path}:{matches[0].line_number} 等）の設定および呼び出し引数を修正してください。"
-                else:
-                    # In enterprise security, not finding in code does NOT mean safe!
-                    # It could be default-enabled (e.g. upload_progress) or in external configs (php.ini, server.xml, K8s, env)
-                    status = "コード内未検出 (外部設定/既定値の要確認)"
+                patterns = extract_keywords_from_method(f"{cp.check_point_yes_no} {cp.verification_method}")
+                
+                if not patterns:
+                    status = "要手動確認 (キーワード抽出不能)"
                     has_unverified = True
                     total_unverified += 1
-                    reason = (
-                        f"リポジトリ内のコードでは '{', '.join(patterns)}' は未検出でした。"
-                        "ただし、ミドルウェアの既定値（デフォルト有効）や、外部設定ファイル"
-                        "（php.ini, server.xml, 環境変数, コンテナマニフェスト等）で有効化されている可能性があります。"
-                    )
-                    advice = f"外部設定（{cp.verification_method[:80]}...）の有無を確認してください。"
+                    reason = "確認方法が自然言語またはインフラ依存のため、自動検索キーワードを抽出できませんでした。手動での確認が必要です。"
+                    advice = cp.verification_method
+                    matches = []
+                else:
+                    matches = scan_directory_for_patterns(code_dir, patterns)
+                    if matches:
+                        status = "YES (該当・要対応)"
+                        has_yes = True
+                        total_yes += 1
+                        reason = f"自社リポジトリ内で発火キーワード（{', '.join(patterns)}）の利用を {len(matches)} 箇所検出しました。"
+                        advice = f"該当箇所（{matches[0].file_path}:{matches[0].line_number} 等）の設定および呼び出し引数を修正してください。"
+                    else:
+                        status = "コード内未検出 (外部設定/既定値の要確認)"
+                        has_unverified = True
+                        total_unverified += 1
+                        reason = (
+                            f"リポジトリ内のコードでは '{', '.join(patterns)}' は未検出でした。"
+                            "ただし、ミドルウェアの既定値（デフォルト有効）や外部設定"
+                            "（php.ini, server.xml, 環境変数, コンテナマニフェスト等）で有効化されている可能性があります。"
+                        )
+                        advice = f"外部設定（{cp.verification_method[:80]}...）の有無を確認してください。"
 
             check_results.append(
                 CheckVerificationResult(
@@ -183,25 +231,25 @@ def verify_codebase(report: TriageReport, code_dir_path: str) -> CodebaseAuditRe
                     matches=matches,
                     reasoning=reason,
                     external_check_advice=advice,
+                    attestation=matched_attestation,
                 )
             )
 
-        # Determine overall product status adhering to: "不明は該当あり（要確認）"
         if has_yes:
             overall_status = "YES (該当・要対応)"
             deadline_advice = (
-                "【緊急対応要】自社コード内に発火条件を検知しました。"
-                "外部公開システムは指示書記載の期限（Critical: 48時間以内、High: 7日以内）に設定変更またはパッチを適用してください。"
+                f"【緊急対応要】自社コード内に発火条件を検知しました。"
+                f"外部公開システムはルールに従い（Critical: {TRIAGE_RULES['CRITICAL_DEADLINE']}、High: {TRIAGE_RULES['HIGH_DEADLINE']}）に修正または回避策を適用してください。"
             )
         elif has_unverified:
             overall_status = "要確認 (外部設定・環境設定の確認要)"
             deadline_advice = (
                 "【要確認（不明は該当あり扱い）】ソースコード内では未検出ですが、外部設定（php.ini, server.xml, 環境変数等）"
-                "または既定値で有効になっている可能性があります。外部設定の確認が完了するまでは『要対応』として扱ってください。"
+                "または既定値で有効になっている可能性があります。外部設定の確認または監査サインオフが完了するまでは『要対応』として扱ってください。"
             )
         else:
-            overall_status = "NO (安全)"
-            deadline_advice = "【通常リリース可】自社環境において非該当であることが確認されました。"
+            overall_status = "NO (安全・確認済み)"
+            deadline_advice = f"【通常リリース可】自社環境において非該当・確認済みであることが検証されました。{TRIAGE_RULES['NORMAL_DEADLINE']}での更新対応で問題ありません。"
 
         notice_results.append(
             NoticeVerificationResult(
@@ -212,13 +260,12 @@ def verify_codebase(report: TriageReport, code_dir_path: str) -> CodebaseAuditRe
             )
         )
 
-    # Determine overall codebase status
     if total_yes > 0:
         overall_codebase_status = "YES (該当あり・緊急対応要)"
     elif total_unverified > 0:
         overall_codebase_status = "要確認 (外部設定・環境設定の確認要)"
     else:
-        overall_codebase_status = "NO (安全・通常対応可)"
+        overall_codebase_status = "NO (安全・確認済み)"
 
     return CodebaseAuditReport(
         code_dir=str(code_dir),
@@ -243,13 +290,13 @@ def format_verification_markdown(audit: CodebaseAuditReport) -> str:
         "",
         "> ⚠️ **【重要判定基準】** 本検証は自社リポジトリ内のソースコード走査結果です。"
         "『コード内未検出』であっても、ミドルウェアの既定有効値や外部設定（php.ini, server.xml, 環境変数, K8s設定等）"
-        "に依存する場合は【不明＝該当あり（要確認）】として扱います。否定の確証がない限り『安全』と断定しないでください。",
+        "に依存する場合は【不明＝該当あり（要確認）】として扱います。否定の確証または監査サインオフがない限り『安全』と断定しないでください。",
         "",
         "## 1. 検証サマリ",
         f"- **総検査項目数:** {audit.summary_counts.get('total_checks', 0)} 件",
         f"- **判定: YES (自社コード内該当・要対応):** {audit.summary_counts.get('yes_count', 0)} 件",
         f"- **判定: コード内未検出 (外部設定/既定値の要確認):** {audit.summary_counts.get('unverified_count', 0)} 件",
-        f"- **判定: NO (完全非該当・安全確証):** {audit.summary_counts.get('safe_count', 0)} 件",
+        f"- **判定: NO (非該当・手動監査サインオフ済):** {audit.summary_counts.get('safe_count', 0)} 件",
         "",
         "---",
         "",
@@ -312,6 +359,12 @@ def main():
         help="Path to the source code repository directory to inspect (default: current directory)",
     )
     parser.add_argument(
+        "--audit-file",
+        type=str,
+        default=None,
+        help="Optional path to human audit sign-off file (e.g. audit_signoff.json) to record verified safe settings",
+    )
+    parser.add_argument(
         "--output",
         type=str,
         default="verification_audit_report.md",
@@ -340,12 +393,12 @@ def main():
         )
     )
 
-    audit_report = verify_codebase(report, args.code_dir)
+    audit_report = verify_codebase(report, args.code_dir, audit_file_path=args.audit_file)
 
-    # Console display
+    # Console display with corrected color logic (Fixed '要手動確認' being green)
     if audit_report.overall_status.startswith("YES"):
         status_color = "red"
-    elif "要確認" in audit_report.overall_status:
+    elif "確認" in audit_report.overall_status or "未検出" in audit_report.overall_status:
         status_color = "yellow"
     else:
         status_color = "green"
@@ -355,8 +408,8 @@ def main():
             f"[bold]総合判定:[/bold] [{status_color}]{audit_report.overall_status}[/{status_color}]\n"
             f"総項目: {audit_report.summary_counts['total_checks']} 件 | "
             f"[bold red]YES (該当・要対応): {audit_report.summary_counts['yes_count']} 件[/bold red] | "
-            f"[bold yellow]コード内未検出 (外部設定/既定値の要確認): {audit_report.summary_counts['unverified_count']} 件[/bold yellow] | "
-            f"[bold green]NO (安全確証): {audit_report.summary_counts['safe_count']} 件[/bold green]",
+            f"[bold yellow]要確認 (外部設定/手動確認): {audit_report.summary_counts['unverified_count']} 件[/bold yellow] | "
+            f"[bold green]NO (確認済・安全): {audit_report.summary_counts['safe_count']} 件[/bold green]",
             title="[bold]自社コードベース検証結果サマリ[/bold]",
             border_style=status_color,
         )
@@ -370,9 +423,10 @@ def main():
         table.add_column("検出コード / 判定根拠", style="dim")
 
         for c_res in n_res.results:
+            # Color logic fix: matches any status with '確認' or '未検出' as yellow
             if c_res.status.startswith("YES"):
                 c_color = "bold red"
-            elif "要確認" in c_res.status or "未検出" in c_res.status:
+            elif "確認" in c_res.status or "未検出" in c_res.status:
                 c_color = "bold yellow"
             else:
                 c_color = "bold green"

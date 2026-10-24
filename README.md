@@ -136,13 +136,16 @@ python -m triage_agent.cli --sbom my_sbom.json --output triage_report.json
 # 1. 補助CLIで自社コードベースを自動検証
 python -m triage_agent.verifier --report triage_report.json --code-dir /path/to/my-repo --output verification_audit_report.md
 
-# 2. もしくは triage-agent 実行時にワンライナーで同時実行
+# 2. 人手による確認結果（インフラ設定確認済み・非該当）を反映した監査レポートの生成
+python -m triage_agent.verifier --report triage_report.json --code-dir /path/to/my-repo --audit-file sample_audit_signoff.json
+
+# 3. もしくは triage-agent 実行時にワンライナーで同時実行
 python -m triage_agent.cli --sbom my_sbom.json --verify-code /path/to/my-repo
 ```
 
 生成される検証レポート（[verification_audit_report.md](verification_audit_report.md)）例：
 - **総合判定:** `【要対応あり (ACTION REQUIRED)】`
-- **urllib3:** `NO (安全)` → 自社コード内に `stream(` や `HTTPS_PROXY` の呼び出しなし（通常リリースで可）
+- **urllib3:** `コード内未検出 (外部設定/既定値の要確認)` → ソース内未検出だが外部設定（`HTTPS_PROXY`等）の確認が必要（※`sample_audit_signoff.json` のような手動監査サインオフを渡すことで `NO (手動確認済み・安全)` へ移行可能）
 - **jsonwebtoken:** `YES (要対応)` → `server.js:6: return jwt.verify(token, "secret-key")` を自動検知（7日以内の修正推奨）
 
 ---

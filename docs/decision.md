@@ -63,9 +63,9 @@
 
 ## ADR-007: エンタープライズデータガバナンスとSBOM送信の安全管理方針 (Vertex AI対応)
 - **決定:**
-  - 商用・社内運用環境においては、無料枠APIキーではなく **Google Cloud Vertex AI**（または商用有償契約のGemini API）経由での実行を標準方針とする。
+  - 社内・商用運用環境においては、個人向け無料枠ではなく **Google Cloud Vertex AI**（または商用有償契約のGemini API）経由での実行を標準方針とする。
 - **背景:**
   - SBOM（自社システムの利用ライブラリ・バージョン一覧）はシステムの攻撃対象領域を示す機密情報である。
-  - Google AI Studioの無料枠ではモデル改善にデータが利用される規約があるのに対し、Vertex AIでは「入力データおよびプロンプトは一切Googleの基盤モデル学習に利用されない（Zero Data Retention / No Training）」ことが契約上保証されている。
+  - Google AI Studioの無料枠ではサービス改善のためにデータが利用される場合があるのに対し、Google Cloud Vertex AI では「顧客データ（入力プロンプトおよび生成データ）はGoogleの基盤モデル学習に利用されない（Customer Data is not used for model training）」ことが基本規約に明記されている（※キャッシュや不正利用検出・ログ保持等のポリシーはGoogle Cloudの最新の個別サービス利用条件に準拠）。
 - **実装上の対応:**
-  - `google-genai` SDK は `genai.Client(vertexai=True, project="my-project", location="us-central1")` によるVertex AIネイティブ接続をサポートしているため、環境変数で即座にVertex AIへ切り替えられる構成としている。
+  - `src/triage_agent/config.py` 内に `get_genai_client()` ファクトリを実装。環境変数 `GOOGLE_GENAI_USE_VERTEXAI=true`（または `VERTEX_AI=true`）と `GOOGLE_CLOUD_PROJECT`, `GOOGLE_CLOUD_REGION` を設定することで、コード改修なしにVertex AI経由の接続にシームレスに切り替わる構成とした。

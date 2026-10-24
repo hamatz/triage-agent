@@ -215,7 +215,7 @@ def main():
                 targets=targets[:args.max_targets],
             )
         else:
-            recon_plan = run_recon_planner(args.sbom)
+            recon_plan = run_recon_planner(args.sbom, osv_results=osv_hits)
             recon_plan.targets = recon_plan.targets[:args.max_targets]
 
     except Exception as e:

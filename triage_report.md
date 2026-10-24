@@ -10,11 +10,11 @@
 
 | 対象 / CVE (CVSS) | 内容 | 影響バージョン | 確認ポイント（Yes/No） | 確認方法 |
 | :--- | :--- | :--- | :--- | :--- |
-| CVE-2026-97688 (CVSS: Medium) | Chunked Deflate streaming can enter an infinite loop | Affects versions around 1.26.18 | HTTPResponse.stream() または read_chunked() でチャンク転送をストリーミング処理しているか | コードベースを stream(、read_chunked(、decode_content= で検索。巨大なDeflateレスポンスを扱うクライアント処理があるか確認 |
-| CVE-2026-97689 (CVSS: High) | HTTPResponse.stream()/read_chunked() buffers an unbounded chunk-size line into memory | Affects versions around 1.26.18 | HTTPResponse.stream() または read_chunked() でチャンク転送をストリーミング処理しているか | コードベースを stream(、read_chunked(、decode_content= で検索。巨大なDeflateレスポンスを扱うクライアント処理があるか確認 |
-| CVE-2026-97687 (CVSS: High) | HTTPS proxy TLS configuration may be ignored or overridden | Affects versions around 1.26.18 | HTTPS プロキシ経由で TLS 通信を行う設定を使用しているか | 環境変数 HTTPS_PROXY や ProxyManager( で HTTPS プロキシを設定している箇所を検索。証明書検証が無効化されていないか確認 |
-| CVE-2026-44432 (CVSS: High) | Decompression-bomb safeguards bypassed in parts of the streaming API | Affects versions around 1.26.18 | HTTPResponse.stream() または read_chunked() でチャンク転送をストリーミング処理しているか | コードベースを stream(、read_chunked(、decode_content= で検索。巨大なDeflateレスポンスを扱うクライアント処理があるか確認 |
-| CVE-2026-44431 (CVSS: High) | Sensitive headers forwarded across origins in proxied low-level redirects | Affects versions around 1.26.18 | 外部入力されたURLやヘッダーを直接 urllib3 に渡しているか | コード内で urllib3.PoolManager や requests を呼び出している外部通信処理を検索 |
+| CVE-2026-97688 (CVSS: 6.9 (Medium)) | Chunked Deflate streaming can enter an infinite loop | Affects versions around 1.26.18 | HTTPResponse.stream() または read_chunked() でチャンク転送をストリーミング処理しているか | コードベースを stream(、read_chunked(、decode_content= で検索。巨大なDeflateレスポンスを扱うクライアント処理があるか確認 |
+| CVE-2026-97689 (CVSS: 8.9 (High)) | HTTPResponse.stream()/read_chunked() buffers an unbounded chunk-size line into memory | Affects versions around 1.26.18 | HTTPResponse.stream() または read_chunked() でチャンク転送をストリーミング処理しているか | コードベースを stream(、read_chunked(、decode_content= で検索。巨大なDeflateレスポンスを扱うクライアント処理があるか確認 |
+| CVE-2026-97687 (CVSS: 7.6 (High)) | HTTPS proxy TLS configuration may be ignored or overridden | Affects versions around 1.26.18 | HTTPS プロキシ経由で TLS 通信を行う設定を使用しているか | 環境変数 HTTPS_PROXY や ProxyManager( で HTTPS プロキシを設定している箇所を検索。証明書検証が無効化されていないか確認 |
+| CVE-2026-44432 (CVSS: 8.9 (High)) | Decompression-bomb safeguards bypassed in parts of the streaming API | Affects versions around 1.26.18 | HTTPResponse.stream() または read_chunked() でチャンク転送をストリーミング処理しているか | コードベースを stream(、read_chunked(、decode_content= で検索。巨大なDeflateレスポンスを扱うクライアント処理があるか確認 |
+| CVE-2026-44431 (CVSS: 8.2 (High)) | Sensitive headers forwarded across origins in proxied low-level redirects | Affects versions around 1.26.18 | 外部入力されたURLやヘッダーを直接 urllib3 に渡しているか | コード内で urllib3.PoolManager や requests を呼び出している外部通信処理を検索 |
 
 > 先にバージョンを確認します。範囲外なら、その CVE の確認ポイントは No として扱います。
 
@@ -61,13 +61,13 @@
 
 | 対象 / CVE (CVSS) | 内容 | 影響バージョン | 確認ポイント（Yes/No） | 確認方法 |
 | :--- | :--- | :--- | :--- | :--- |
-| CVE-2026-101901 (CVSS: High) | Denial of Service  via Unhandled 'error' Event in HTTP/2 ClientHttp2Session Initialization | Affects versions around 0.21.1 | axios の特定脆弱機能（外部入力受付・非同期処理）を有効にしているか | 設定ファイルおよび依存コードで axios の設定ディレクティブを grep 検索 |
-| CVE-2026-101898 (CVSS: High) | HTTP/2 adapter bypasses configured DNS lookup and proxy controls | Affects versions around 0.21.1 | axios の特定脆弱機能（外部入力受付・非同期処理）を有効にしているか | 設定ファイルおよび依存コードで axios の設定ディレクティブを grep 検索 |
-| CVE-2026-101909 (CVSS: High) | Prototype Pollution Gadget in axios toFormData Options | Affects versions around 0.21.1 | axios の特定脆弱機能（外部入力受付・非同期処理）を有効にしているか | 設定ファイルおよび依存コードで axios の設定ディレクティブを grep 検索 |
-| CVE-2026-101906 (CVSS: High) | ReDoS (O(N²)) in shouldBypassProxy host normalization, reachable via untrusted redirect Location | Affects versions around 0.21.1 | axios の特定脆弱機能（外部入力受付・非同期処理）を有効にしているか | 設定ファイルおよび依存コードで axios の設定ディレクティブを grep 検索 |
-| CVE-2026-101903 (CVSS: High) | ReDoS in fromDataURI data: URL parser freezes the Node event loop (DoS) | Affects versions around 0.21.1 | axios の特定脆弱機能（外部入力受付・非同期処理）を有効にしているか | 設定ファイルおよび依存コードで axios の設定ディレクティブを grep 検索 |
-| PRE-RELEASE-v1.19.0 (CVSS: 未公表 (Pre-release)) | Pre-release / Security Notice: v1.19.0 | Targeting fixes around 0.21.1 | axios の特定脆弱機能（外部入力受付・非同期処理）を有効にしているか | 設定ファイルおよび依存コードで axios の設定ディレクティブを grep 検索 |
-| PRE-RELEASE-v1.18.0 (CVSS: 未公表 (Pre-release)) | Pre-release / Security Notice: v1.18.0 | Targeting fixes around 0.21.1 | axios の特定脆弱機能（外部入力受付・非同期処理）を有効にしているか | 設定ファイルおよび依存コードで axios の設定ディレクティブを grep 検索 |
+| CVE-2026-101901 (CVSS: 8.2 (High)) | Denial of Service  via Unhandled 'error' Event in HTTP/2 ClientHttp2Session Initialization | Affects versions around 0.21.1 | axios の特定脆弱機能（外部入力受付・非同期処理）を有効にしているか | 設定ファイルおよび依存コードで axios の設定ディレクティブを grep 検索 |
+| CVE-2026-101898 (CVSS: 7.0 (High)) | HTTP/2 adapter bypasses configured DNS lookup and proxy controls | Affects versions around 0.21.1 | axios の特定脆弱機能（外部入力受付・非同期処理）を有効にしているか | 設定ファイルおよび依存コードで axios の設定ディレクティブを grep 検索 |
+| CVE-2026-101909 (CVSS: 8.3 (High)) | Prototype Pollution Gadget in axios toFormData Options | Affects versions around 0.21.1 | axios の特定脆弱機能（外部入力受付・非同期処理）を有効にしているか | 設定ファイルおよび依存コードで axios の設定ディレクティブを grep 検索 |
+| CVE-2026-101906 (CVSS: 8.2 (High)) | ReDoS (O(N²)) in shouldBypassProxy host normalization, reachable via untrusted redirect Location | Affects versions around 0.21.1 | axios の特定脆弱機能（外部入力受付・非同期処理）を有効にしているか | 設定ファイルおよび依存コードで axios の設定ディレクティブを grep 検索 |
+| CVE-2026-101903 (CVSS: 8.2 (High)) | ReDoS in fromDataURI data: URL parser freezes the Node event loop (DoS) | Affects versions around 0.21.1 | axios の特定脆弱機能（外部入力受付・非同期処理）を有効にしているか | 設定ファイルおよび依存コードで axios の設定ディレクティブを grep 検索 |
+| PRE-RELEASE-v1.19.0 (CVSS: Pre-release) | Pre-release / Security Notice: v1.19.0 | Targeting fixes around 0.21.1 | axios の特定脆弱機能（外部入力受付・非同期処理）を有効にしているか | 設定ファイルおよび依存コードで axios の設定ディレクティブを grep 検索 |
+| PRE-RELEASE-v1.18.0 (CVSS: Pre-release) | Pre-release / Security Notice: v1.18.0 | Targeting fixes around 0.21.1 | axios の特定脆弱機能（外部入力受付・非同期処理）を有効にしているか | 設定ファイルおよび依存コードで axios の設定ディレクティブを grep 検索 |
 
 > 先にバージョンを確認します。範囲外なら、その CVE の確認ポイントは No として扱います。
 
@@ -114,9 +114,9 @@
 | CVE-2024-51999 (CVSS: Low) | REJECTED (not a vulnerability): improperly controlled modification of query properties in express | Affects versions around 4.17.1 | express の特定脆弱機能（外部入力受付・非同期処理）を有効にしているか | 設定ファイルおよび依存コードで express の設定ディレクティブを grep 検索 |
 | CVE-2024-43796 (CVSS: 5.0 (Medium)) | express vulnerable to XSS via response.redirect() | Affects versions around 4.17.1 | express の特定脆弱機能（外部入力受付・非同期処理）を有効にしているか | 設定ファイルおよび依存コードで express の設定ディレクティブを grep 検索 |
 | CVE-2024-29041 (CVSS: 6.1 (Medium)) | Express.js Open Redirect in malformed URLs | Affects versions around 4.17.1 | express の特定脆弱機能（外部入力受付・非同期処理）を有効にしているか | 設定ファイルおよび依存コードで express の設定ディレクティブを grep 検索 |
-| PRE-RELEASE-v5.2.1 (CVSS: 未公表 (Pre-release)) | Pre-release / Security Notice: v5.2.1 | Targeting fixes around 4.17.1 | express の特定脆弱機能（外部入力受付・非同期処理）を有効にしているか | 設定ファイルおよび依存コードで express の設定ディレクティブを grep 検索 |
-| PRE-RELEASE-v5.2.0 (CVSS: 未公表 (Pre-release)) | Pre-release / Security Notice: v5.2.0 | Targeting fixes around 4.17.1 | express の特定脆弱機能（外部入力受付・非同期処理）を有効にしているか | 設定ファイルおよび依存コードで express の設定ディレクティブを grep 検索 |
-| PRE-RELEASE-v4.22.1 (CVSS: 未公表 (Pre-release)) | Pre-release / Security Notice: v4.22.1 | Targeting fixes around 4.17.1 | express の特定脆弱機能（外部入力受付・非同期処理）を有効にしているか | 設定ファイルおよび依存コードで express の設定ディレクティブを grep 検索 |
+| PRE-RELEASE-v5.2.1 (CVSS: Pre-release) | Pre-release / Security Notice: v5.2.1 | Targeting fixes around 4.17.1 | express の特定脆弱機能（外部入力受付・非同期処理）を有効にしているか | 設定ファイルおよび依存コードで express の設定ディレクティブを grep 検索 |
+| PRE-RELEASE-v5.2.0 (CVSS: Pre-release) | Pre-release / Security Notice: v5.2.0 | Targeting fixes around 4.17.1 | express の特定脆弱機能（外部入力受付・非同期処理）を有効にしているか | 設定ファイルおよび依存コードで express の設定ディレクティブを grep 検索 |
+| PRE-RELEASE-v4.22.1 (CVSS: Pre-release) | Pre-release / Security Notice: v4.22.1 | Targeting fixes around 4.17.1 | express の特定脆弱機能（外部入力受付・非同期処理）を有効にしているか | 設定ファイルおよび依存コードで express の設定ディレクティブを grep 検索 |
 
 > 先にバージョンを確認します。範囲外なら、その CVE の確認ポイントは No として扱います。
 
