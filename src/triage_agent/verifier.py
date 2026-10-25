@@ -1,4 +1,5 @@
 import argparse
+import hashlib
 import json
 import os
 import re
@@ -58,6 +59,10 @@ class AuditAttestation(BaseModel):
         default=None,
         description="Legacy field for backward compatibility. Must match CVE ID strictly if used.",
     )
+    matches_hash: Optional[str] = Field(
+        default=None,
+        description="Fingerprint hash of detected code snippet matches at sign-off time. Invalidates sign-off if code changes.",
+    )
     status: str = Field(default="NO (手動確認済み・非該当)")
     reviewer: str = Field(description="Name/ID of the security reviewer or engineer")
     date: str = Field(description="Date of attestation (e.g. '2026-10-25')")
@@ -66,6 +71,18 @@ class AuditAttestation(BaseModel):
 
 class AttestationFile(BaseModel):
     attestations: List[AuditAttestation] = Field(default_factory=list)
+
+
+def compute_matches_hash(matches: List[MatchSnippet]) -> Optional[str]:
+    """Compute deterministic fingerprint of code matches for drift detection."""
+    if not matches:
+        return None
+    normalized_items = [
+        f"{m.file_path}:{' '.join(m.line_content.split())}"
+        for m in sorted(matches, key=lambda x: (x.file_path, x.line_number))
+    ]
+    raw = "\n".join(normalized_items)
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:12]
 
 
 def normalize_text(text: str) -> str:
@@ -83,6 +100,7 @@ class CheckVerificationResult(BaseModel):
     check_point: CheckPointItem
     status: str = Field(description="'YES (該当・要対応)', 'コード内未検出 (外部設定/既定値の要確認)', '要手動確認', or 'NO (手動確認済み・非該当)'")
     matches: List[MatchSnippet] = Field(default_factory=list)
+    matches_hash: Optional[str] = Field(default=None, description="Current fingerprint hash of code matches")
     reasoning: str
     external_check_advice: Optional[str] = Field(
         default=None,
@@ -285,24 +303,46 @@ def verify_codebase(
                 if scan_patterns:
                     code_matches = scan_directory_for_patterns(code_dir, scan_patterns)
 
+            current_matches_hash = compute_matches_hash(code_matches)
+
             if matched_attestation:
-                # Validate attestation status safely: only "NO..." without code match counts as safe!
+                # Validate attestation status safely: only "NO..." without code drift counts as safe!
                 att_status = matched_attestation.status.strip()
                 matches = code_matches
                 advice = None
 
                 if att_status.upper().startswith("NO"):
                     if code_matches:
-                        # Conflict detected: Signed off as NO, but active pattern match found in codebase!
-                        status = "NO (サインオフ済・コード該当あり⚠️)"
-                        has_unverified = True
-                        total_unverified += 1
-                        reason = (
-                            f"【要再確認・コード該当あり⚠️】{matched_attestation.reviewer}（{matched_attestation.date}）による非該当サインオフ（{matched_attestation.evidence}）がありますが、"
-                            f"コード走査により該当キーワード（{', '.join(scan_patterns)}）が {len(code_matches)} 箇所検出されました（{code_matches[0].file_path}:{code_matches[0].line_number} 等）。"
-                            f"コード変更または例外的な許容根拠の再確認が必要です。"
-                        )
-                        advice = f"該当箇所（{code_matches[0].file_path}:{code_matches[0].line_number} 等）の設定を確認し、必要に応じてサインオフの更新または修正を行ってください。"
+                        if matched_attestation.matches_hash and matched_attestation.matches_hash == current_matches_hash:
+                            # False positive safely confirmed: code matches match exactly what reviewer approved
+                            status = "NO (コード確認済み・非該当)"
+                            total_safe += 1
+                            reason = (
+                                f"【手動監査済・該当コード確認済】{matched_attestation.reviewer}（{matched_attestation.date}）により"
+                                f"該当コード箇所（{len(code_matches)}件）は確認済み・非該当と判断されています: {matched_attestation.evidence}"
+                            )
+                        elif matched_attestation.matches_hash and matched_attestation.matches_hash != current_matches_hash:
+                            # Code drift detected! Matches have changed since sign-off
+                            status = "要再確認 (コード変更検知・サインオフ要更新⚠️)"
+                            has_unverified = True
+                            total_unverified += 1
+                            reason = (
+                                f"【コード変更検知⚠️】サインオフ時点とコード検出内容が変化しました。"
+                                f"{matched_attestation.reviewer}（{matched_attestation.date}）のサインオフを自動失効し再確認対象とします。"
+                                f"（現在 {len(code_matches)} 箇所検出: {code_matches[0].file_path}:{code_matches[0].line_number} 等）"
+                            )
+                            advice = f"変更されたコード箇所（{code_matches[0].file_path}:{code_matches[0].line_number} 等）を確認し、サインオフを更新してください。"
+                        else:
+                            # Attestation has no matches_hash (e.g. signed off assuming 0 matches, but matches exist)
+                            status = "要再確認 (サインオフ済・コード該当あり⚠️)"
+                            has_unverified = True
+                            total_unverified += 1
+                            reason = (
+                                f"【要再確認・コード該当あり⚠️】{matched_attestation.reviewer}（{matched_attestation.date}）による非該当サインオフ（{matched_attestation.evidence}）がありますが、"
+                                f"コード走査により該当キーワード（{', '.join(scan_patterns)}）が {len(code_matches)} 箇所検出されました（{code_matches[0].file_path}:{code_matches[0].line_number} 等）。"
+                                f"コード変更または例外的な許容根拠の再確認が必要です。"
+                            )
+                            advice = f"該当箇所（{code_matches[0].file_path}:{code_matches[0].line_number} 等）の設定を確認し、必要に応じてサインオフの更新または修正を行ってください。"
                     else:
                         status = matched_attestation.status
                         total_safe += 1
@@ -357,6 +397,7 @@ def verify_codebase(
                     check_point=cp,
                     status=status,
                     matches=matches,
+                    matches_hash=current_matches_hash,
                     reasoning=reason,
                     external_check_advice=advice,
                     attestation=matched_attestation,

@@ -663,10 +663,14 @@ HTML_PAGE = """<!DOCTYPE html>
         <div>
           <label class="block font-semibold mb-1">Notice Fingerprint (notice_hash)</label>
           <input type="text" id="modal-notice-hash" readonly class="dawn-input" style="background: var(--bg-surface-subtle); color: var(--text-muted);">
+          <input type="hidden" id="modal-matches-hash">
         </div>
         <div>
           <label class="block font-semibold mb-1">確認ポイントの質問</label>
           <textarea id="modal-question" readonly rows="2" class="dawn-input" style="background: var(--bg-surface-subtle); color: var(--text-muted); resize: none;"></textarea>
+        </div>
+        <div id="modal-drift-note" class="hidden p-3" style="background: #fff9ed; border: 1px solid #fde68a; border-left: 4px solid #d97706; border-radius: 8px; color: #92400e; font-size: 11px; line-height: 1.5;">
+          <strong>🛡️ コードドリフト保護（自動照合）:</strong> 現在検出されているコード箇所のフィンガープリント（ハッシュ）を同時に記録します。今後コードが変更された場合は、安全のため自動的に再確認対象に戻ります。
         </div>
         <div class="grid grid-cols-2 gap-3">
           <div>
@@ -907,7 +911,7 @@ HTML_PAGE = """<!DOCTYPE html>
                         if (auditCp.status.startsWith('YES')) {
                           stBadge = 'badge-critical';
                         } else if (auditCp.status.startsWith('NO')) {
-                          stBadge = (auditCp.matches && auditCp.matches.length > 0) ? 'badge-high' : 'badge-normal';
+                          stBadge = 'badge-normal';
                         } else {
                           stBadge = 'badge-high';
                         }
@@ -919,12 +923,13 @@ HTML_PAGE = """<!DOCTYPE html>
                         <td>
                           <span class="badge-pill ${stBadge}">${escapeHtml(statusText)}</span>
                           ${auditCp && auditCp.matches && auditCp.matches.length > 0 ? 
-                            `<div class="mt-1 font-mono text-xs" style="color: #991b1b; font-size: 10px;">
-                              📍 ${escapeHtml(auditCp.matches[0].file_path)}:${auditCp.matches[0].line_number}
+                            `<div class="mt-1 font-mono text-xs" style="color: ${auditCp.status.startsWith('NO') ? '#166534' : '#991b1b'}; font-size: 10px;">
+                              ${auditCp.status.startsWith('NO') ? '✔ 確認済' : '📍 検出'} ${escapeHtml(auditCp.matches[0].file_path)}:${auditCp.matches[0].line_number} (${auditCp.matches.length}件)
                             </div>` : ''}
                           <button type="button" class="table-action-btn mt-2 btn-open-signoff"
                                   data-cp-id="${escapeHtml(cp.check_point_id || '')}"
                                   data-notice-hash="${escapeHtml(n.notice_hash || '')}"
+                                  data-matches-hash="${escapeHtml(auditCp && auditCp.matches_hash ? auditCp.matches_hash : '')}"
                                   data-question="${escapeHtml(cp.check_point_yes_no || '')}"
                                   data-current-status="${escapeHtml(statusText)}">
                             <span>✎</span>
@@ -975,24 +980,34 @@ HTML_PAGE = """<!DOCTYPE html>
       if (!btn) return;
       const cpId = btn.getAttribute('data-cp-id') || '';
       const noticeHash = btn.getAttribute('data-notice-hash') || '';
+      const matchesHash = btn.getAttribute('data-matches-hash') || '';
       const question = btn.getAttribute('data-question') || '';
       const currentStatus = btn.getAttribute('data-current-status') || '';
-      openSignoffModal(cpId, noticeHash, question, currentStatus);
+      openSignoffModal(cpId, noticeHash, question, currentStatus, matchesHash);
     });
 
     document.getElementById('btn-close-modal').addEventListener('click', closeModal);
     document.getElementById('btn-cancel-modal').addEventListener('click', closeModal);
     document.getElementById('btn-save-signoff').addEventListener('click', applySignoff);
 
-    function openSignoffModal(cpId, noticeHash, question, currentStatus) {
+    function openSignoffModal(cpId, noticeHash, question, currentStatus, matchesHash) {
       document.getElementById('modal-cp-id').value = cpId;
       document.getElementById('modal-notice-hash').value = noticeHash;
+      document.getElementById('modal-matches-hash').value = matchesHash || '';
       document.getElementById('modal-question').value = question;
       if (!document.getElementById('modal-reviewer').value && window.DEFAULT_REVIEWER) {
         document.getElementById('modal-reviewer').value = window.DEFAULT_REVIEWER;
       }
       document.getElementById('modal-date').value = new Date().toISOString().split('T')[0];
       document.getElementById('modal-evidence').value = '';
+
+      // Drift protection note
+      const driftNote = document.getElementById('modal-drift-note');
+      if (matchesHash) {
+        driftNote.classList.remove('hidden');
+      } else {
+        driftNote.classList.add('hidden');
+      }
 
       // Pre-select appropriate status based on currentStatus
       const statusSelect = document.getElementById('modal-status');
@@ -1024,6 +1039,7 @@ HTML_PAGE = """<!DOCTYPE html>
     async function applySignoff() {
       const cpId = document.getElementById('modal-cp-id').value;
       const noticeHash = document.getElementById('modal-notice-hash').value;
+      const matchesHash = document.getElementById('modal-matches-hash').value;
       const status = document.getElementById('modal-status').value;
       const reviewer = document.getElementById('modal-reviewer').value.trim();
       const date = document.getElementById('modal-date').value;
@@ -1047,6 +1063,7 @@ HTML_PAGE = """<!DOCTYPE html>
             attestation: {
               check_point_id: cpId,
               notice_hash: noticeHash,
+              matches_hash: matchesHash || null,
               status: status,
               reviewer: reviewer,
               date: date,
