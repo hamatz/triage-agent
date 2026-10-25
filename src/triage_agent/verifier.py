@@ -32,6 +32,7 @@ class MatchSnippet(BaseModel):
     file_path: str
     line_number: int
     line_content: str
+    context_content: Optional[str] = None
 
 
 class AuditAttestation(BaseModel):
@@ -77,10 +78,11 @@ def compute_matches_hash(matches: List[MatchSnippet]) -> Optional[str]:
     """Compute deterministic fingerprint of code matches for drift detection."""
     if not matches:
         return None
-    normalized_items = [
-        f"{m.file_path}:{' '.join(m.line_content.split())}"
-        for m in sorted(matches, key=lambda x: (x.file_path, x.line_number))
-    ]
+    normalized_items = []
+    for m in sorted(matches, key=lambda x: (x.file_path, x.line_number)):
+        content = m.context_content if m.context_content else m.line_content
+        normalized_content = " ".join(content.split())
+        normalized_items.append(f"{m.file_path}:{normalized_content}")
     raw = "\n".join(normalized_items)
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:12]
 
@@ -149,8 +151,8 @@ def extract_keywords_from_method(text: str) -> List[str]:
     return list(patterns)
 
 
-def scan_directory_for_patterns(code_dir: Path, patterns: List[str], max_matches: int = 5) -> List[MatchSnippet]:
-    """Scan code directory for occurrences of patterns, returning line snippets."""
+def scan_directory_for_patterns(code_dir: Path, patterns: List[str], max_matches: int = 500) -> List[MatchSnippet]:
+    """Scan code directory for occurrences of patterns, returning line and surrounding context snippets."""
     if not patterns:
         return []
 
@@ -159,30 +161,39 @@ def scan_directory_for_patterns(code_dir: Path, patterns: List[str], max_matches
     for root, dirs, files in os.walk(code_dir):
         dirs[:] = [d for d in dirs if d not in IGNORE_DIRS and not d.startswith(".")]
 
-        for fname in files:
+        for fname in sorted(files):
             fpath = Path(root) / fname
             suffix = fpath.suffix.lower()
 
             if suffix in TARGET_EXTENSIONS or fname in TARGET_EXTENSIONS:
                 try:
                     with open(fpath, "r", encoding="utf-8", errors="ignore") as f:
-                        for line_no, line in enumerate(f, 1):
-                            line_str = line.strip()
-                            if not line_str or line_str.startswith("#") or line_str.startswith("//"):
-                                continue
+                        all_lines = f.readlines()
 
-                            for p in patterns:
-                                if p in line:
-                                    rel_path = str(fpath.relative_to(code_dir))
-                                    matches.append(
-                                        MatchSnippet(
-                                            file_path=rel_path,
-                                            line_number=line_no,
-                                            line_content=line_str[:120],
-                                        )
+                    for line_no, raw_line in enumerate(all_lines, 1):
+                        line_str = raw_line.strip()
+                        if not line_str or line_str.startswith("#") or line_str.startswith("//"):
+                            continue
+
+                        for p in patterns:
+                            if p in raw_line:
+                                rel_path = str(fpath.relative_to(code_dir))
+                                # Capture surrounding context (1 line before, 6 lines after) for multi-line argument drift detection
+                                start_idx = max(0, line_no - 2)
+                                end_idx = min(len(all_lines), line_no + 6)
+                                context_snippet = "".join(all_lines[start_idx:end_idx]).strip()
+
+                                matches.append(
+                                    MatchSnippet(
+                                        file_path=rel_path,
+                                        line_number=line_no,
+                                        line_content=line_str,  # Full untruncated line
+                                        context_content=context_snippet,  # Multi-line context
                                     )
-                                    if len(matches) >= max_matches:
-                                        return matches
+                                )
+                                if len(matches) >= max_matches:
+                                    return matches
+                                break
                 except Exception:
                     continue
 
@@ -491,8 +502,10 @@ def format_verification_markdown(audit: CodebaseAuditReport) -> str:
 
             if c_res.matches:
                 match_desc = "<br>".join(
-                    [f"• `{m.file_path}:{m.line_number}`: `{m.line_content}`" for m in c_res.matches]
+                    [f"• `{m.file_path}:{m.line_number}`: `{m.line_content[:100]}`" for m in c_res.matches[:5]]
                 )
+                if len(c_res.matches) > 5:
+                    match_desc += f"<br>• ...他 {len(c_res.matches) - 5} 箇所"
                 if c_res.attestation:
                     match_desc = (
                         f"⚠️ **サインオフ（{c_res.attestation.reviewer}）:** {c_res.attestation.evidence}<br>"
