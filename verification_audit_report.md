@@ -1,6 +1,6 @@
 # 自社コードベース脆弱性発火条件・検証結果レポート
 
-**対象コードベース:** `/Users/hamatsumakoto/Documents/develop/triage-agent/demo_app`
+**対象コードベース:** `/Users/hogetahogeo/Documents/develop/triage-agent/demo_app`
 **総合判定:** `YES (該当あり・緊急対応要)`
 
 > ⚠️ **【重要判定基準】** 本検証は自社リポジトリ内のソースコード走査結果です。『コード内未検出』であっても、ミドルウェアの既定有効値や外部設定（php.ini, server.xml, 環境変数, K8s設定等）に依存する場合は【不明＝該当あり（要確認）】として扱います。否定の確証または監査サインオフがない限り『安全』と断定しないでください。
