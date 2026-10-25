@@ -4,9 +4,6 @@
 
 ---
 
-![スクリーンショット](./docs/img/ss1.png)
-![スクリーンショット](./docs/img/ss2.png)
-
 ## 1. アーキテクチャ概要
 
 本システムは、過剰な独自コードや複雑なフレームワークを排し、Geminiのネイティブな **Function Calling**・**Google Search Grounding**・**Structured Outputs (Pydantic)** を最大限活用した3フェーズの自律型パイプラインです。
@@ -157,6 +154,9 @@ python -m triage_agent.cli --sbom my_sbom.json --verify-code /path/to/my-repo
 - **jsonwebtoken:** `YES (要対応)` → `server.js:6: return jwt.verify(token, "secret-key")` を自動検知（7日以内の修正推奨）
 
 ### 3.4 Web GUI ダッシュボード（DAWN Studio）
+
+![スクリーンショット](./docs/img/ss1.png)
+![スクリーンショット](./docs/img/ss2.png)
 
 ブラウザ上で対話的にトリアージ指示書の閲覧、自社コードベース検証、外注委託先への確認結果（手動監査サインオフ）の登録を行える軽量Web GUIを提供しています。
 
