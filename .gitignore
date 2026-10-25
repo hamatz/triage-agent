@@ -10,22 +10,24 @@ dist/
 triage-output/
 reports/
 
-# Operational files (Confidential Attack Map protection)
-triage_report.*
-verification_audit_report.*
-audit_signoff.*
-*triage*.json
-*triage*.md
-*audit*.json
-*audit*.md
-*report*.json
-*report*.md
-*sbom*.json
-*.cdx.json
-*.spdx.json
-output_report.md
-my_sbom.json
-test_*.json
+# Operational files in workspace root (Confidential Attack Map protection)
+# Prefix with '/' to strictly target root directory and avoid affecting docs/ or src/
+/triage_report.*
+/verification_audit_report.*
+/audit_signoff.*
+/*triage*.json
+/*triage*.md
+/*audit*.json
+/*audit*.md
+/*report*.json
+/*report*.md
+/*sbom*.json
+/*.cdx.json
+/*.spdx.json
+/output_report.md
+/my_sbom.json
+/test_*.json
 
 # Whitelist safe demo/sample files
 !sample_*
+!/sample_*
