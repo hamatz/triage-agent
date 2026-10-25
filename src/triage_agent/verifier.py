@@ -191,16 +191,21 @@ def load_audit_attestations(audit_file_path: Optional[str]) -> List[AuditAttesta
 
 def verify_codebase(
     report: TriageReport,
-    code_dir_path: str,
+    code_dir_path: Optional[str] = None,
     audit_file_path: Optional[str] = None
 ) -> CodebaseAuditReport:
-    """Run automated code inspection against a local codebase based on TriageReport check points.
+    """Run automated code inspection or vendor attestation check based on TriageReport check points.
     
-    Supports audit attestation files (e.g. audit_signoff.json) to record human sign-offs.
+    Supports audit attestation files (e.g. audit_signoff.json) to record human and vendor sign-offs.
+    If code_dir_path is None or empty, operates in vendor/manual audit mode without scanning local files.
     """
-    code_dir = Path(code_dir_path).resolve()
-    if not code_dir.exists():
-        raise FileNotFoundError(f"Codebase directory not found: {code_dir_path}")
+    code_dir = None
+    if code_dir_path and code_dir_path.strip():
+        p = Path(code_dir_path).resolve()
+        if p.exists():
+            code_dir = p
+        else:
+            raise FileNotFoundError(f"Codebase directory not found: {code_dir_path}")
 
     attestations = load_audit_attestations(audit_file_path)
 
@@ -292,33 +297,41 @@ def verify_codebase(
                 advice = None
                 matches = []
             else:
-                patterns = extract_keywords_from_method(f"{cp.check_point_yes_no} {cp.verification_method}")
-                
-                if not patterns:
-                    status = "要手動確認 (キーワード抽出不能)"
+                if code_dir is None:
+                    status = "要手動確認 (ベンダー照会要)"
                     has_unverified = True
                     total_unverified += 1
-                    reason = "確認方法が自然言語またはインフラ依存のため、自動検索キーワードを抽出できませんでした。手動での確認が必要です。"
+                    reason = "自社コードベース対象外（外注・ベンダー委託）。ベンダーへの照会および手動確認・回答記録が必要です。"
                     advice = cp.verification_method
                     matches = []
                 else:
-                    matches = scan_directory_for_patterns(code_dir, patterns)
-                    if matches:
-                        status = "YES (該当・要対応)"
-                        has_yes = True
-                        total_yes += 1
-                        reason = f"自社リポジトリ内で発火キーワード（{', '.join(patterns)}）の利用を {len(matches)} 箇所検出しました。"
-                        advice = f"該当箇所（{matches[0].file_path}:{matches[0].line_number} 等）の設定および呼び出し引数を修正してください。"
-                    else:
-                        status = "コード内未検出 (外部設定/既定値の要確認)"
+                    patterns = extract_keywords_from_method(f"{cp.check_point_yes_no} {cp.verification_method}")
+                    
+                    if not patterns:
+                        status = "要手動確認 (キーワード抽出不能)"
                         has_unverified = True
                         total_unverified += 1
-                        reason = (
-                            f"リポジトリ内のコードでは '{', '.join(patterns)}' は未検出でした。"
-                            "ただし、ミドルウェアの既定値（デフォルト有効）や外部設定"
-                            "（php.ini, server.xml, 環境変数, コンテナマニフェスト等）で有効化されている可能性があります。"
-                        )
-                        advice = f"外部設定（{cp.verification_method[:80]}...）の有無を確認してください。"
+                        reason = "確認方法が自然言語またはインフラ依存のため、自動検索キーワードを抽出できませんでした。手動での確認が必要です。"
+                        advice = cp.verification_method
+                        matches = []
+                    else:
+                        matches = scan_directory_for_patterns(code_dir, patterns)
+                        if matches:
+                            status = "YES (該当・要対応)"
+                            has_yes = True
+                            total_yes += 1
+                            reason = f"自社リポジトリ内で発火キーワード（{', '.join(patterns)}）の利用を {len(matches)} 箇所検出しました。"
+                            advice = f"該当箇所（{matches[0].file_path}:{matches[0].line_number} 等）の設定および呼び出し引数を修正してください。"
+                        else:
+                            status = "コード内未検出 (外部設定/既定値の要確認)"
+                            has_unverified = True
+                            total_unverified += 1
+                            reason = (
+                                f"リポジトリ内のコードでは '{', '.join(patterns)}' は未検出でした。"
+                                "ただし、ミドルウェアの既定値（デフォルト有効）や外部設定"
+                                "（php.ini, server.xml, 環境変数, コンテナマニフェスト等）で有効化されている可能性があります。"
+                            )
+                            advice = f"外部設定（{cp.verification_method[:80]}...）の有無を確認してください。"
 
             check_results.append(
                 CheckVerificationResult(
@@ -359,12 +372,12 @@ def verify_codebase(
     if total_yes > 0:
         overall_codebase_status = "YES (該当あり・緊急対応要)"
     elif total_unverified > 0:
-        overall_codebase_status = "要確認 (外部設定・環境設定の確認要)"
+        overall_codebase_status = "要確認 (ベンダー照会・回答待ち)" if code_dir is None else "要確認 (外部設定・環境設定の確認要)"
     else:
-        overall_codebase_status = "NO (安全・確認済み)"
+        overall_codebase_status = "NO (安全・ベンダー確認済み)" if code_dir is None else "NO (安全・確認済み)"
 
     return CodebaseAuditReport(
-        code_dir=str(code_dir),
+        code_dir=str(code_dir) if code_dir else "なし (外注・ベンダー委託システム / 手動監査)",
         overall_status=overall_codebase_status,
         summary_counts={
             "total_checks": total_yes + total_unverified + total_safe,

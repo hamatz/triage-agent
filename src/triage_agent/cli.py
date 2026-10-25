@@ -140,6 +140,12 @@ def main():
         help="Run in explicit demonstration showcase mode using clearly identifiable synthetic DEMO-* data",
     )
     parser.add_argument(
+        "--audit-file",
+        type=str,
+        default=None,
+        help="Optional path to audit attestation JSON file (e.g. sample_audit_signoff.json)",
+    )
+    parser.add_argument(
         "--gui",
         action="store_true",
         help="Launch the interactive Web GUI dashboard in your browser",
@@ -157,10 +163,9 @@ def main():
     if args.model:
         os.environ["GEMINI_MODEL"] = args.model
 
-    is_dry_run = args.dry_run or args.demo
+    mode = "demo" if args.demo else ("dry-run" if args.dry_run else "live")
 
-    # Handle explicit --demo showcase mode
-    if args.demo:
+    if mode == "demo":
         console.print(
             Panel.fit(
                 "[bold yellow]【DEMO SHOWCASE モード】[/bold yellow]\n"
@@ -169,31 +174,7 @@ def main():
                 border_style="yellow",
             )
         )
-        triage_report = generate_demo_report()
-        # Skip straight to report rendering and verification
-        report_md = format_report_markdown(triage_report)
-        console.print(report_md)
-
-        if args.output:
-            out_file = Path(args.output)
-            if out_file.suffix.lower() == ".json":
-                out_file.write_text(triage_report.model_dump_json(indent=2), encoding="utf-8")
-            else:
-                out_file.write_text(report_md, encoding="utf-8")
-            console.print(f"[bold green]✓ 現場即応トリアージ指示書を出力しました: {out_file.resolve()}[/bold green]\n")
-
-        if args.verify_code:
-            console.print(f"[bold green]▶ 自社コードベース自動検証を実行中: {args.verify_code}[/bold green]")
-            from triage_agent.verifier import format_verification_markdown, verify_codebase
-            audit_report = verify_codebase(triage_report, args.verify_code)
-            audit_md = format_verification_markdown(audit_report)
-            Path(args.verify_output).write_text(audit_md, encoding="utf-8")
-            console.print(f"[bold green]✓ 自社検証結果レポートを出力しました: {Path(args.verify_output).resolve()}[/bold green]\n")
-
-        return
-
-    # CRITICAL: Prevent silent failure fallback! (Supports both API Key and Vertex AI)
-    if not is_dry_run and not is_llm_configured():
+    elif mode == "live" and not is_llm_configured():
         console.print(
             "[bold red]❌ エラー: LLM API が設定されていません。[/bold red]\n"
             "ライブエージェントによる自動調査・推論を行うには、以下のいずれかを設定してください：\n"
@@ -203,133 +184,28 @@ def main():
             "例: python -m triage_agent.cli --sbom sample_sbom.json --dry-run"
         )
         sys.exit(1)
-
-    console.print(
-        Panel.fit(
-            f"[bold cyan]triage-agent[/bold cyan] : Autonomous SBOM Vulnerability Intelligence\n"
-            f"[dim]Model: {get_model_name()} | SBOM: {args.sbom} | Mode: {'Dry-Run (Simulation)' if is_dry_run else 'Live Agent'}[/dim]",
-            border_style="cyan",
-        )
-    )
-
-    unscanned_items: List[str] = []
-
-    # -------------------------------------------------------------
-    # Phase 1: Recon Planner
-    # -------------------------------------------------------------
-    console.print("[bold green]▶ [1/3] Recon Planner: SBOM解析および巡回戦略策定中...[/bold green]")
-    try:
-        from triage_agent.tools.sbom import load_sbom_summary
-        from triage_agent.tools.osv import query_osv_batch
-
-        components = load_sbom_summary(args.sbom)
-        osv_hits, osv_errors = query_osv_batch(components)
-
-        if osv_errors:
-            console.print(f"[bold red]⚠️ OSV.dev 一括照会エラー:[/bold red] {'; '.join(osv_errors)}")
-            unscanned_items.append(f"OSV.dev 一括照会失敗: {'; '.join(osv_errors)}")
-
-        if is_dry_run:
-            targets: List[ReconTarget] = []
-            repo_map = {
-                "urllib3": "urllib3/urllib3",
-                "jsonwebtoken": "auth0/node-jsonwebtoken",
-                "axios": "axios/axios",
-                "log4j-core": "apache/logging-log4j2",
-                "fastapi": "fastapi/fastapi",
-                "express": "expressjs/express",
-            }
-
-            for c in components:
-                is_hit = c.name in osv_hits
-                targets.append(
-                    ReconTarget(
-                        name=c.name,
-                        version=c.version,
-                        ecosystem=c.ecosystem,
-                        github_repo=repo_map.get(c.name, f"{c.name}/{c.name}"),
-                        priority="CRITICAL" if is_hit and c.name in ["log4j-core", "urllib3", "jsonwebtoken"] else "HIGH",
-                        rationale=f"Known OSV hits found ({len(osv_hits.get(c.name, []))} alerts)" if is_hit else "Core web/network component",
-                        search_queries=[
-                            f"{c.name} upcoming security release notice",
-                            f"{c.name} {c.version} RCE vulnerability patch",
-                        ],
-                        github_search_keywords=["security", "cve", "patch", "rce"],
-                    )
-                )
-
-            targets.sort(key=lambda t: 0 if t.priority == "CRITICAL" else 1)
-            recon_plan = ReconPlan(
-                summary="Heuristic & OSV batch scan completed.",
-                total_components_scanned=len(components),
-                known_osv_hits_count=len(osv_hits),
-                targets=targets[:args.max_targets],
+    else:
+        console.print(
+            Panel.fit(
+                f"[bold cyan]triage-agent[/bold cyan] : Autonomous SBOM Vulnerability Intelligence\n"
+                f"[dim]Model: {get_model_name()} | SBOM: {args.sbom} | Mode: {'Dry-Run (Simulation)' if mode == 'dry-run' else 'Live Agent'}[/dim]",
+                border_style="cyan",
             )
-        else:
-            recon_plan = run_recon_planner(args.sbom, osv_results=osv_hits)
-            recon_plan.targets = recon_plan.targets[:args.max_targets]
-
-    except Exception as e:
-        console.print(f"[bold red]Recon Planner Error:[/bold red] {e}")
-        sys.exit(1)
-
-    # Note any components beyond max_targets
-    if len(components) > len(recon_plan.targets):
-        remaining_count = len(components) - len(recon_plan.targets)
-        unscanned_items.append(
-            f"上限（--max-targets {args.max_targets}）により深層調査を省略したコンポーネント（計 {remaining_count} 件）"
         )
 
-    plan_table = Table(title="Recon Planner - 選定された深層調査ターゲット", show_lines=True)
-    plan_table.add_column("Priority", style="bold red")
-    plan_table.add_column("Component", style="cyan")
-    plan_table.add_column("Version", style="magenta")
-    plan_table.add_column("GitHub Repo", style="green")
-    plan_table.add_column("Rationale")
+    from triage_agent.pipeline import execute_triage_pipeline
 
-    for t in recon_plan.targets:
-        plan_table.add_row(t.priority, t.name, t.version, t.github_repo or "-", t.rationale)
-
-    console.print(plan_table)
-    console.print(f"[dim]スキャン対象: 全 {len(components)} 件中、上位 {len(recon_plan.targets)} 件を深層調査。[/dim]\n")
-
-    # -------------------------------------------------------------
-    # Phase 2: Dynamic Researcher (Target-by-Target)
-    # -------------------------------------------------------------
-    console.print(f"[bold green]▶ [2/3] Researcher: {len(recon_plan.targets)} コンポーネントの動的調査・事前予告探索中...[/bold green]")
-    research_results: List[TargetResearchResult] = []
-
-    for idx, target in enumerate(recon_plan.targets, 1):
-        console.print(f"  [{idx}/{len(recon_plan.targets)}] 調査中: [cyan]{target.name}[/cyan] ({target.version})...")
-        try:
-            res = run_researcher(target, dry_run=is_dry_run)
-            research_results.append(res)
-            console.print(f"    ✓ 発見シグナル数: [bold yellow]{len(res.findings)}[/bold yellow] 件")
-            for f in res.findings:
-                pre_flag = "[bold magenta][PRE-ANNOUNCEMENT][/bold magenta] " if f.is_pre_announcement else ""
-                console.print(f"      - {pre_flag}[bold]{f.id}[/bold]: {f.title[:70]}...")
-            if res.errors:
-                for err in res.errors:
-                    console.print(f"      [yellow]⚠ 警告: {err}[/yellow]")
-                    unscanned_items.append(f"{target.name}: {err}")
-        except Exception as e:
-            console.print(f"    [red]調査失敗 ({target.name}):[/red] {e}")
-            unscanned_items.append(f"{target.name}: 調査処理エラー ({str(e)})")
-
-    console.print()
-
-    # -------------------------------------------------------------
-    # Phase 3: Triage & Action Generation
-    # -------------------------------------------------------------
-    console.print("[bold green]▶ [3/3] Triage Agent: 発火条件特定・現場即応指示書生成中...[/bold green]")
     try:
-        triage_report = run_triage_agent(
-            research_results=research_results,
-            unscanned_components=unscanned_items,
-            dry_run=is_dry_run,
+        triage_report, audit_report = execute_triage_pipeline(
+            sbom_path=args.sbom,
+            mode=mode,
+            max_targets=args.max_targets,
+            code_dir=args.verify_code,
+            audit_file_path=args.audit_file,
+            progress_callback=lambda msg: console.print(f"[dim]{msg}[/dim]"),
         )
     except Exception as e:
-        console.print(f"[bold red]Triage Agent Error:[/bold red] {e}")
+        console.print(f"[bold red]❌ パイプライン実行エラー:[/bold red] {e}")
         sys.exit(1)
 
     console.print()
@@ -400,14 +276,12 @@ def main():
             out_path.write_text(md_content, encoding="utf-8")
         console.print(f"[bold green]✓ 現場即応トリアージ指示書を出力しました: {out_path.resolve()}[/bold green]\n")
 
-    # Optional automated codebase verification
-    if args.verify_code:
-        from triage_agent.verifier import format_verification_markdown, verify_codebase
-        console.print(f"[bold cyan]▶ 自社コードベース自動検証を実行中: {args.verify_code}...[/bold cyan]")
-        audit_report = verify_codebase(triage_report, args.verify_code)
+    # Optional automated codebase or vendor verification output
+    if audit_report:
+        from triage_agent.verifier import format_verification_markdown
         audit_file = Path(args.verify_output)
         audit_file.write_text(format_verification_markdown(audit_report), encoding="utf-8")
-        console.print(f"[bold green]✓ 自社検証結果レポートを出力しました: {audit_file.resolve()}[/bold green]\n")
+        console.print(f"[bold green]✓ 検証結果レポートを出力しました: {audit_file.resolve()}[/bold green]\n")
 
 
 if __name__ == "__main__":

@@ -1,0 +1,182 @@
+"""Core execution pipeline shared between CLI and Web GUI.
+
+Ensures that triage investigation, target selection, researcher loops,
+omission tracking, and codebase/vendor verification remain strictly identical
+across both CLI and GUI interfaces.
+"""
+
+import os
+from pathlib import Path
+from typing import Callable, List, Optional, Tuple
+
+from triage_agent.agents.planner import run_recon_planner
+from triage_agent.agents.researcher import run_researcher
+from triage_agent.agents.triage import run_triage_agent
+from triage_agent.config import is_llm_configured
+from triage_agent.demo import generate_demo_report
+from triage_agent.schemas import ReconPlan, ReconTarget, TargetResearchResult, TriageReport
+from triage_agent.tools.osv import query_osv_batch
+from triage_agent.tools.sbom import load_sbom_summary
+from triage_agent.verifier import CodebaseAuditReport, verify_codebase
+
+
+def execute_triage_pipeline(
+    sbom_path: str,
+    mode: str = "live",
+    max_targets: int = 10,
+    code_dir: Optional[str] = None,
+    audit_file_path: Optional[str] = None,
+    progress_callback: Optional[Callable[[str], None]] = None,
+) -> Tuple[TriageReport, Optional[CodebaseAuditReport]]:
+    """Execute the full 3-phase triage pipeline and optional verification.
+
+    Args:
+        sbom_path: Path to the SBOM file (JSON).
+        mode: Execution mode ('demo', 'dry-run', or 'live').
+        max_targets: Maximum top priority targets to investigate.
+        code_dir: Optional path to local codebase for automatic code inspection.
+        audit_file_path: Optional path to audit attestation JSON file.
+        progress_callback: Optional callback for status progress messages.
+
+    Returns:
+        Tuple of (TriageReport, Optional[CodebaseAuditReport])
+    """
+    def log(msg: str):
+        if progress_callback:
+            progress_callback(msg)
+
+    # 1. Handle Demo mode
+    if mode == "demo":
+        log("Executing Demo Showcase mode (synthetic DEMO-* data)...")
+        triage_report = generate_demo_report()
+        audit_report = None
+        if code_dir or audit_file_path:
+            audit_report = verify_codebase(
+                triage_report,
+                code_dir_path=code_dir,
+                audit_file_path=audit_file_path,
+            )
+        return triage_report, audit_report
+
+    # 2. Check SBOM existence and handle typo fallback with explicit warning
+    p = Path(sbom_path)
+    unscanned_items: List[str] = []
+
+    if not p.exists():
+        alt_p = p.with_suffix(".json")
+        if alt_p.exists():
+            unscanned_items.append(
+                f"⚠️ 指定されたSBOMファイル '{sbom_path}' が見つからなかったため、同名の '{alt_p}' を代替使用しました。"
+            )
+            sbom_path = str(alt_p)
+            p = alt_p
+        else:
+            raise FileNotFoundError(f"SBOMファイルが見つかりません: '{sbom_path}'")
+
+    is_dry_run = (mode == "dry-run")
+
+    if not is_dry_run and not is_llm_configured():
+        raise ValueError(
+            "LLM API が設定されていません。\n"
+            "ライブエージェントによる自動調査を行うには、GEMINI_API_KEY または Vertex AI を設定してください。\n"
+            "オフラインでシミュレーションを実行したい場合は、Dry-Run モードを選択してください。"
+        )
+
+    # -------------------------------------------------------------
+    # Phase 1: Recon Planner
+    # -------------------------------------------------------------
+    log("[1/3] Recon Planner: SBOM解析および巡回戦略策定中...")
+    components = load_sbom_summary(sbom_path)
+    osv_hits, osv_errors = query_osv_batch(components)
+
+    if osv_errors:
+        unscanned_items.append(f"OSV.dev 一括照会失敗: {'; '.join(osv_errors)}")
+
+    if is_dry_run:
+        targets: List[ReconTarget] = []
+        repo_map = {
+            "urllib3": "urllib3/urllib3",
+            "jsonwebtoken": "auth0/node-jsonwebtoken",
+            "axios": "axios/axios",
+            "log4j-core": "apache/logging-log4j2",
+            "fastapi": "fastapi/fastapi",
+            "express": "expressjs/express",
+        }
+
+        for c in components:
+            is_hit = c.name in osv_hits
+            github_repo = repo_map.get(c.name, f"{c.name}/{c.name}")
+            targets.append(
+                ReconTarget(
+                    name=c.name,
+                    version=c.version,
+                    ecosystem=c.ecosystem,
+                    github_repo=github_repo,
+                    priority="CRITICAL" if is_hit and c.name in ["log4j-core", "urllib3", "jsonwebtoken"] else "HIGH",
+                    rationale=f"Known OSV hits found ({len(osv_hits.get(c.name, []))} alerts)" if is_hit else "Core web/network component",
+                    search_queries=[
+                        f"{c.name} upcoming security release notice",
+                        f"{c.name} {c.version} RCE vulnerability patch",
+                    ],
+                    github_search_keywords=["security", "cve", "patch", "rce"],
+                )
+            )
+
+        targets.sort(key=lambda t: 0 if t.priority == "CRITICAL" else 1)
+        recon_plan = ReconPlan(
+            summary="Heuristic & OSV batch scan completed.",
+            total_components_scanned=len(components),
+            known_osv_hits_count=len(osv_hits),
+            targets=targets[:max_targets],
+        )
+    else:
+        recon_plan = run_recon_planner(sbom_path, osv_results=osv_hits)
+        recon_plan.targets = recon_plan.targets[:max_targets]
+
+    # Explicitly track omitted components beyond max_targets
+    if len(components) > len(recon_plan.targets):
+        remaining_count = len(components) - len(recon_plan.targets)
+        unscanned_items.append(
+            f"上限（--max-targets {max_targets}）により深層調査を省略したコンポーネント（計 {remaining_count} 件）"
+        )
+
+    # -------------------------------------------------------------
+    # Phase 2: Dynamic Researcher (Target-by-Target)
+    # -------------------------------------------------------------
+    log(f"[2/3] Researcher: {len(recon_plan.targets)} コンポーネントの動的調査・事前予告探索中...")
+    research_results: List[TargetResearchResult] = []
+
+    for idx, target in enumerate(recon_plan.targets, 1):
+        log(f"  [{idx}/{len(recon_plan.targets)}] 調査中: {target.name} ({target.version})...")
+        try:
+            res = run_researcher(target, dry_run=is_dry_run)
+            research_results.append(res)
+            if res.errors:
+                for err in res.errors:
+                    unscanned_items.append(f"{target.name}: {err}")
+        except Exception as e:
+            unscanned_items.append(f"{target.name}: 調査処理エラー ({str(e)})")
+
+    # -------------------------------------------------------------
+    # Phase 3: Triage & Action Generation
+    # -------------------------------------------------------------
+    log("[3/3] Triage Agent: 発火条件特定・現場即応指示書生成中...")
+    triage_report = run_triage_agent(
+        research_results=research_results,
+        unscanned_components=unscanned_items,
+        dry_run=is_dry_run,
+    )
+
+    # -------------------------------------------------------------
+    # Phase 4: Codebase / Vendor Verification Audit
+    # -------------------------------------------------------------
+    audit_report = None
+    if code_dir or audit_file_path:
+        log("自社検証 / ベンダー監査判定を実行中...")
+        audit_report = verify_codebase(
+            triage_report,
+            code_dir_path=code_dir,
+            audit_file_path=audit_file_path,
+        )
+
+    return triage_report, audit_report

@@ -120,7 +120,7 @@ syft scan registry:my-org/my-app:latest -o cyclonedx-json > my_sbom.json
 syft scan dir:. -o cyclonedx-json > my_sbom.json
 ```
 
-### 3.1 Web GUI ダッシュボードの起動（推奨・ゼロ追加依存）
+### 3.1 Web GUI ダッシュボードの起動（ベンダー対応者向けを想定）
 直感的にトリアージ指示書や自社コードベースの検証結果を閲覧し、画面上から1クリックで手動サインオフを作成できるローカルWebダッシュボードが付属しています（追加の外部パッケージインストール不要）。
 
 ```bash
@@ -172,7 +172,23 @@ python -m triage_agent.cli --sbom my_sbom.json --verify-code /path/to/my-repo
 - **urllib3:** `コード内未検出 (外部設定/既定値の要確認)` → ソース内未検出だが外部設定（`HTTPS_PROXY`等）の確認が必要（※`sample_audit_signoff.json` のような手動監査サインオフを渡すことで `NO (手動確認済み・安全)` へ移行可能）
 - **jsonwebtoken:** `YES (要対応)` → `server.js:6: return jwt.verify(token, "secret-key")` を自動検知（7日以内の修正推奨）
 
-### 3.4 監査サインオフ（Audit Sign-off）の概念と運用ワークフロー
+### 3.4 Web GUI ダッシュボード（DAWN Studio）
+
+ブラウザ上で対話的にトリアージ指示書の閲覧、自社コードベース検証、外注・ベンダー委託先への確認結果（手動監査サインオフ）の登録を行える軽量Web GUIを提供しています。
+
+```bash
+# Web GUI ダッシュボードの起動
+python -m triage_agent.cli --gui
+# ブラウザで http://127.0.0.1:8080 が自動的に開きます
+```
+
+> 🔒 **エンタープライズ・高セキュリティ設計:**
+> - **堅牢なCSRF防護:** サーバー起動時に生成される動的CSRFトークン検証、Host/Originヘッダーの厳格な検証、および `Content-Type: application/json` の強制により、外部サイトからの不正なクロスオリジン書き込みを完全に遮断。
+> - **パストラバーサル防止:** 読み書き対象のファイルパス（SBOM、コード、監査ファイル）を作業ディレクトリ配下に厳格に制限。
+> - **完全オフライン対応（Zero CDN）:** 外部CDNスクリプト（TailwindやFont Awesome）への依存を排除し、すべて自己完結したCSS/シンボルで構成。社外アクセスが制限された金融機関等の閉域網・イントラネットでも画面崩れなく安全に動作します。
+> - **外注・ベンダー管理対応:** ソースコードを保有しない外注委託システムであっても、早見表の確認ポイントごとに「ベンダー確認済み・非該当」「要対応」などの回答とエビデンスを直接記録・保存できます。
+
+### 3.5 監査サインオフ（Audit Sign-off）の概念と運用ワークフロー
 
 セキュリティ現場において、**「ソースコード内で設定キーワードが見つからないこと」は決して「安全（非該当）」を意味しません。**
 ミドルウェアのデフォルト有効設定（例: PHPの `session.upload_progress.enabled`）や、環境変数、インフラ側の設定（`server.xml` や K8s マニフェスト）に依存する脆弱性は、コード走査だけでは安全を証明できないためです。
@@ -213,7 +229,7 @@ python -m triage_agent.cli --sbom my_sbom.json --verify-code /path/to/my-repo
 > - **Notice Fingerprint (`notice_hash`) による自動失効:** お知らせに含まれる確認ポイント構成のハッシュを保持。第2版で新たな確認項目が追加されたり質問文が変更されると、ハッシュが変わり過去のサインオフは自動的に失効して再確認（黄色）を促します。
 > - **ステータス検証:** `status` が `NO` で始まっている場合のみ安全として集計されます。
 
-### 3.5 実務運用フロー：AI下書きと正本（Official Baseline）管理
+### 3.6 実務運用フロー：AI下書きと正本（Official Baseline）管理
 
 LLMによる文章生成は、実行ごとに言い回しが微妙に変わる可能性があります。毎回レポートをゼロから再生成して検証を回すと、質問文の微細な変化によってIDが変わり、以前作成したサインオフが当たらなくなってエンジニアが疲弊する原因になります。
 
@@ -266,6 +282,8 @@ triage-agent/
         ├── config.py         # 環境変数・モデル名管理
         ├── schemas.py        # Pydanticデータスキーマ
         ├── cli.py            # メインCLIエントリポイント
+        ├── pipeline.py       # 共有パイプライン実行コア
+        ├── web_ui.py         # 軽量・セキュアWeb GUIダッシュボード
         ├── verifier.py       # 自社コードベース自動検証補助CLI
         ├── tools/
         │   ├── sbom.py       # Syft CycloneDX / JSON パーサー
