@@ -148,10 +148,13 @@ python -m triage_agent.verifier --report triage_report.json --code-dir /path/to/
 python -m triage_agent.cli --sbom my_sbom.json --verify-code /path/to/my-repo
 ```
 
-生成される検証レポート（[verification_audit_report.md](verification_audit_report.md)）例：
+生成される検証レポート（[sample_verification_audit_report.md](sample_verification_audit_report.md)）例：
 - **総合判定:** `【要対応あり (ACTION REQUIRED)】`
 - **urllib3:** `コード内未検出 (外部設定/既定値の要確認)` → ソース内未検出だが外部設定（`HTTPS_PROXY`等）の確認が必要（※`sample_audit_signoff.json` のような手動監査サインオフを渡すことで `NO (手動確認済み・安全)` へ移行可能）
 - **jsonwebtoken:** `YES (要対応)` → `server.js:6: return jwt.verify(token, "secret-key")` を自動検知（7日以内の修正推奨）
+
+> 🔒 **機密保持・漏洩防止（攻撃地図化の防止）:**
+> 実際の脆弱性スキャン・検証によって生成される `triage_report.json`, `verification_audit_report.md`, `audit_signoff.json` 等は、システムの脆弱箇所や該当コード行を特定する「攻撃地図」となり得るため、デフォルトの `.gitignore` により Git 管理から安全に除外されます（同梱の `sample_*` ファイルのみが動作確認用として管理されています）。CI/CD連携や実環境での運用時は、アクセス制限されたストレージへの期限付き保存（TTL）を行ってください。
 
 ### 3.4 Web GUI ダッシュボード（DAWN Studio）
 

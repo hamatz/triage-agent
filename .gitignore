@@ -6,15 +6,26 @@ __pycache__/
 dist/
 *.egg-info/
 
-# Triage Agent operational outputs & audit records (Confidential Attack Map protection)
-triage_report.json
-verification_audit_report.md
-verification_audit_report.json
-audit_signoff.json
-*.audit.json
-sbom.json
+# Dedicated output & reports directories (Recommended for all operational runs)
+triage-output/
+reports/
+
+# Operational files (Confidential Attack Map protection)
+triage_report.*
+verification_audit_report.*
+audit_signoff.*
+*triage*.json
+*triage*.md
+*audit*.json
+*audit*.md
+*report*.json
+*report*.md
+*sbom*.json
+*.cdx.json
+*.spdx.json
+output_report.md
+my_sbom.json
 test_*.json
 
-# Preserve demo/sample files
-!sample_sbom.json
-!sample_audit_signoff.json
+# Whitelist safe demo/sample files
+!sample_*
