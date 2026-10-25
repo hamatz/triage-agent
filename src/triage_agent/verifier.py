@@ -277,23 +277,46 @@ def verify_codebase(
                 matched_attestation = att
                 break
 
+            # Run code scan if code directory is provided
+            code_matches: List[MatchLocation] = []
+            scan_patterns: List[str] = []
+            if code_dir is not None:
+                scan_patterns = extract_keywords_from_method(f"{cp.check_point_yes_no} {cp.verification_method}")
+                if scan_patterns:
+                    code_matches = scan_directory_for_patterns(code_dir, scan_patterns)
+
             if matched_attestation:
-                # Validate attestation status safely: only "NO..." counts as safe!
+                # Validate attestation status safely: only "NO..." without code match counts as safe!
                 att_status = matched_attestation.status.strip()
-                status = matched_attestation.status
+                matches = code_matches
+                advice = None
+
                 if att_status.upper().startswith("NO"):
-                    total_safe += 1
-                    reason = f"【安全確認済（サインオフ記録）】{matched_attestation.reviewer}（{matched_attestation.date}）: {matched_attestation.evidence}"
+                    if code_matches:
+                        # Conflict detected: Signed off as NO, but active pattern match found in codebase!
+                        status = "NO (サインオフ済・コード該当あり⚠️)"
+                        has_unverified = True
+                        total_unverified += 1
+                        reason = (
+                            f"【要再確認・コード該当あり⚠️】{matched_attestation.reviewer}（{matched_attestation.date}）による非該当サインオフ（{matched_attestation.evidence}）がありますが、"
+                            f"コード走査により該当キーワード（{', '.join(scan_patterns)}）が {len(code_matches)} 箇所検出されました（{code_matches[0].file_path}:{code_matches[0].line_number} 等）。"
+                            f"コード変更または例外的な許容根拠の再確認が必要です。"
+                        )
+                        advice = f"該当箇所（{code_matches[0].file_path}:{code_matches[0].line_number} 等）の設定を確認し、必要に応じてサインオフの更新または修正を行ってください。"
+                    else:
+                        status = matched_attestation.status
+                        total_safe += 1
+                        reason = f"【安全確認済（サインオフ記録）】{matched_attestation.reviewer}（{matched_attestation.date}）: {matched_attestation.evidence}"
                 elif att_status.upper().startswith("YES"):
+                    status = matched_attestation.status
                     has_yes = True
                     total_yes += 1
                     reason = f"【該当あり（サインオフ記録）】{matched_attestation.reviewer}（{matched_attestation.date}）: {matched_attestation.evidence}"
                 else:
+                    status = matched_attestation.status
                     has_unverified = True
                     total_unverified += 1
                     reason = f"【要確認（サインオフ記録）】{matched_attestation.reviewer}（{matched_attestation.date}）: {matched_attestation.evidence}"
-                advice = None
-                matches = []
             else:
                 if code_dir is None:
                     status = "要手動確認 (ベンダー照会要)"
@@ -303,9 +326,7 @@ def verify_codebase(
                     advice = cp.verification_method
                     matches = []
                 else:
-                    patterns = extract_keywords_from_method(f"{cp.check_point_yes_no} {cp.verification_method}")
-                    
-                    if not patterns:
+                    if not scan_patterns:
                         status = "要手動確認 (キーワード抽出不能)"
                         has_unverified = True
                         total_unverified += 1
@@ -313,19 +334,19 @@ def verify_codebase(
                         advice = cp.verification_method
                         matches = []
                     else:
-                        matches = scan_directory_for_patterns(code_dir, patterns)
+                        matches = code_matches
                         if matches:
                             status = "YES (該当・要対応)"
                             has_yes = True
                             total_yes += 1
-                            reason = f"自社リポジトリ内で発火キーワード（{', '.join(patterns)}）の利用を {len(matches)} 箇所検出しました。"
+                            reason = f"自社リポジトリ内で発火キーワード（{', '.join(scan_patterns)}）の利用を {len(matches)} 箇所検出しました。"
                             advice = f"該当箇所（{matches[0].file_path}:{matches[0].line_number} 等）の設定および呼び出し引数を修正してください。"
                         else:
                             status = "コード内未検出 (外部設定/既定値の要確認)"
                             has_unverified = True
                             total_unverified += 1
                             reason = (
-                                f"リポジトリ内のコードでは '{', '.join(patterns)}' は未検出でした。"
+                                f"リポジトリ内のコードでは '{', '.join(scan_patterns)}' は未検出でした。"
                                 "ただし、ミドルウェアの既定値（デフォルト有効）や外部設定"
                                 "（php.ini, server.xml, 環境変数, コンテナマニフェスト等）で有効化されている可能性があります。"
                             )
@@ -431,6 +452,11 @@ def format_verification_markdown(audit: CodebaseAuditReport) -> str:
                 match_desc = "<br>".join(
                     [f"• `{m.file_path}:{m.line_number}`: `{m.line_content}`" for m in c_res.matches]
                 )
+                if c_res.attestation:
+                    match_desc = (
+                        f"⚠️ **サインオフ（{c_res.attestation.reviewer}）:** {c_res.attestation.evidence}<br>"
+                        f"📍 **コード内検出箇所（要照合）:**<br>" + match_desc
+                    )
             else:
                 match_desc = f"{c_res.reasoning}"
                 if c_res.external_check_advice:

@@ -904,9 +904,13 @@ HTML_PAGE = """<!DOCTYPE html>
 
                       let stBadge = 'badge-neutral';
                       if (auditCp) {
-                        if (auditCp.status.startsWith('YES')) stBadge = 'badge-critical';
-                        else if (auditCp.status.startsWith('NO')) stBadge = 'badge-normal';
-                        else stBadge = 'badge-high';
+                        if (auditCp.status.startsWith('YES')) {
+                          stBadge = 'badge-critical';
+                        } else if (auditCp.status.startsWith('NO')) {
+                          stBadge = (auditCp.matches && auditCp.matches.length > 0) ? 'badge-high' : 'badge-normal';
+                        } else {
+                          stBadge = 'badge-high';
+                        }
                       }
 
                       const statusText = auditCp ? auditCp.status : '未検証';
