@@ -5,3 +5,16 @@ __pycache__/
 .DS_Store
 dist/
 *.egg-info/
+
+# Triage Agent operational outputs & audit records (Confidential Attack Map protection)
+triage_report.json
+verification_audit_report.md
+verification_audit_report.json
+audit_signoff.json
+*.audit.json
+sbom.json
+test_*.json
+
+# Preserve demo/sample files
+!sample_sbom.json
+!sample_audit_signoff.json

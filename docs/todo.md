@@ -36,12 +36,12 @@
 
 Engineering Enablement（専門家依存の解消と組織的な即応）を実現するため、単なる機能追加にとどまらず、全社運用に耐えうるガバナンスと知識蓄積を強化します。
 
-### 進化像の4つの柱
+### 進化像の5つの柱
 
-| 柱 | ① スコープ階層化 | ② 判定精緻化 | ③ システム知識化 | ④ MTTR/ROI可視化 |
-| :--- | :--- | :--- | :--- | :--- |
-| **英名** | Clarity of Scope & Integration | Contextual Attestation & TTL | Architectural Knowledge Base | Lifecycle Metrics & MTTR |
-| **主要テーマ** | 機械照合・AI深層調査・未調査の3層分離 | 環境・構成版・有効期限付きサインオフ | システム恒久事実の辞書化と再利用 | 各フェーズ所要時間と削減効果の定量化 |
+| 柱 | ① スコープ階層化 | ② 判定精緻化 | ③ システム知識化 | ④ MTTR/ROI可視化 | ⑤ 成果物機密管理 |
+| :--- | :--- | :--- | :--- | :--- | :--- |
+| **英名** | Clarity of Scope | Contextual Attestation | Architectural Knowledge Base | Lifecycle Metrics & MTTR | Confidentiality & Data Minimization |
+| **主要テーマ** | 機械照合・AI深層調査・未調査の3層分離 | 環境・構成版・有効期限付きサインオフ | システム恒久事実の辞書化と再利用 | 各フェーズ所要時間と削減効果の定量化 | 「攻撃地図化」の防止・最小特権・TTLパージ |
 
 ### ① 調査範囲の3層階層化と全社スキャン基盤連携（Clarity of Coverage & Scope）
 - [ ] **3層ステータスモデルの導入**
@@ -78,6 +78,14 @@ Engineering Enablement（専門家依存の解消と組織的な即応）を実�
 - [ ] **MTTR（平均対応時間）短縮・削減工数の定量ダッシュボード**
   - 「従来の手作業トリアージ（平均5営業日）」 vs 「triage-agent 導入後（平均数時間）」の削減効果を可視化し、経営層やIT部門リーダーへのROI報告を自動化。
 
+### ⑤ 成果物の機密性管理と「攻撃地図化」の防止（Confidentiality & Data Minimization）
+- [ ] **成果物のデータ最小化と保管期限（TTLパージ）**
+  - 未対応の間は詳細なコード該当行・コンテキストを保持するが、対応完了・パッチ適用後は詳細行情報をパージし、「誰がいつどのような根拠で対応したか」という監査証跡の最小メタデータのみを長期保管。
+- [ ] **配布範囲の最小化（システム別レポート分割・テナント分離）**
+  - 全社一覧やフラッシュレポートの一斉同報を避け、ベンダーや各開発部門には「自システムに直接関連する確認ポイントのみ」を切り分けて配布するスコープ制御。
+- [ ] **48時間ルールによる「地図の賞味期限短縮」**
+  - 脆弱性の攻撃地図としての価値を無効化する最も本質的な防御として、発火条件特定から48時間以内の初動対応完了を促すライフサイクル運用。
+
 ---
 
 ## 3. 技術的深化ロードマップ（Technical Deep Dive）
@@ -86,8 +94,9 @@ Engineering Enablement（専門家依存の解消と組織的な即応）を実�
   - `verifier.py` において、現在の正規表現・コンテキスト走査に加え、Python (`ast`) や JavaScript/TypeScript (`tree-sitter`) の構文解析による引数レベルの検証。
 - [ ] **推移的依存の到達可能性（Reachability Analysis）エンジン統合**
   - 静的コールグラフ解析を行い、推移的依存ライブラリの危険関数が自社コードのエントリポイントから実際に呼び出されうるか（Call Graph Reachability）を検証。
-- [ ] **CI/CD パイプライン連携（GitHub Actions / GitLab CI）**
-  - PR作成時やコンテナビルド時に自動で `syft` -> `triage-agent` -> `verifier` を実行し、PRコメントにトリアージ結果とYes/No自動判定を書き込むActionの提供。
+- [ ] **セキュアなCI/CDパイプライン連携（GitHub Actions / GitLab CI）**
+  - PR作成時やコンテナビルド時に自動で `syft` -> `triage-agent` -> `verifier` を実行。
+  - **※ セキュリティ・機密性への配慮:** PRコメントや公開ビルドログには、具体的な脆弱コード行番号や攻撃地図を平文で露出させず、合否サマリ（Pass/Fail・件数）のみを通知。詳細レポートはアクセス権限が制御された閉じたストレージに期限付きで保管する設計とする。
 - [ ] **自動修正PR（Auto-Remediation PR）生成**
   - `verifier` で発火コード（例: `jwt.verify(token, secret)`）が特定された場合、LLMが自動で修正差分（例: `jwt.verify(token, secret, { algorithms: ['RS256'] })`）を生成し、テスト実行の上で修正Pull Requestを下書き作成する機能。
 - [ ] **通知インテグレーション（Slack / Teams / Jira）**
