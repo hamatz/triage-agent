@@ -674,7 +674,9 @@ HTML_PAGE = """<!DOCTYPE html>
             <select id="modal-status" class="dawn-input">
               <option value="NO (ベンダー確認済み・非該当)">NO (ベンダー確認済み・非該当)</option>
               <option value="NO (手動確認済み・非該当)">NO (手動確認済み・非該当)</option>
+              <option value="YES (ベンダー回答・該当あり)">YES (ベンダー回答・該当あり)</option>
               <option value="YES (該当あり・要対応)">YES (該当あり・要対応)</option>
+              <option value="要確認 (ベンダー回答待ち・調査中)">要確認 (ベンダー回答待ち・調査中)</option>
             </select>
           </div>
           <div>
@@ -908,7 +910,6 @@ HTML_PAGE = """<!DOCTYPE html>
                       }
 
                       const statusText = auditCp ? auditCp.status : '未検証';
-                      const canSignoff = !statusText.startsWith('YES');
 
                       const auditTd = `
                         <td>
@@ -917,15 +918,14 @@ HTML_PAGE = """<!DOCTYPE html>
                             `<div class="mt-1 font-mono text-xs" style="color: #991b1b; font-size: 10px;">
                               📍 ${escapeHtml(auditCp.matches[0].file_path)}:${auditCp.matches[0].line_number}
                             </div>` : ''}
-                          ${canSignoff ? `
-                            <button type="button" class="table-action-btn mt-2 btn-open-signoff"
-                                    data-cp-id="${escapeHtml(cp.check_point_id || '')}"
-                                    data-notice-hash="${escapeHtml(n.notice_hash || '')}"
-                                    data-question="${escapeHtml(cp.check_point_yes_no || '')}">
-                              <span>✎</span>
-                              <span>サインオフ作成</span>
-                            </button>
-                          ` : ''}
+                          <button type="button" class="table-action-btn mt-2 btn-open-signoff"
+                                  data-cp-id="${escapeHtml(cp.check_point_id || '')}"
+                                  data-notice-hash="${escapeHtml(n.notice_hash || '')}"
+                                  data-question="${escapeHtml(cp.check_point_yes_no || '')}"
+                                  data-current-status="${escapeHtml(statusText)}">
+                            <span>✎</span>
+                            <span>${auditCp && auditCp.attestation ? 'サインオフ更新' : 'サインオフ / 回答記録'}</span>
+                          </button>
                         </td>
                       `;
 
@@ -956,7 +956,7 @@ HTML_PAGE = """<!DOCTYPE html>
               ${n.sources && n.sources.length > 0 ? `
                 <div class="text-xs flex items-center space-x-2 pt-3" style="border-top: 1px solid var(--border-subtle); color: var(--text-dim); font-size: 11px;">
                   <span class="font-mono" style="color: var(--accent-gold-dark);">出典:</span>
-                  ${n.sources.map(s => `<a href="${s}" target="_blank" style="color: var(--accent-gold-dark); text-decoration: underline; font-family: var(--mono);">${s}</a>`).join(', ')}
+                  ${n.sources.map(formatSourceLink).join(', ')}
                 </div>
               ` : ''}
             </div>
@@ -972,14 +972,15 @@ HTML_PAGE = """<!DOCTYPE html>
       const cpId = btn.getAttribute('data-cp-id') || '';
       const noticeHash = btn.getAttribute('data-notice-hash') || '';
       const question = btn.getAttribute('data-question') || '';
-      openSignoffModal(cpId, noticeHash, question);
+      const currentStatus = btn.getAttribute('data-current-status') || '';
+      openSignoffModal(cpId, noticeHash, question, currentStatus);
     });
 
     document.getElementById('btn-close-modal').addEventListener('click', closeModal);
     document.getElementById('btn-cancel-modal').addEventListener('click', closeModal);
     document.getElementById('btn-save-signoff').addEventListener('click', applySignoff);
 
-    function openSignoffModal(cpId, noticeHash, question) {
+    function openSignoffModal(cpId, noticeHash, question, currentStatus) {
       document.getElementById('modal-cp-id').value = cpId;
       document.getElementById('modal-notice-hash').value = noticeHash;
       document.getElementById('modal-question').value = question;
@@ -988,6 +989,27 @@ HTML_PAGE = """<!DOCTYPE html>
       }
       document.getElementById('modal-date').value = new Date().toISOString().split('T')[0];
       document.getElementById('modal-evidence').value = '';
+
+      // Pre-select appropriate status based on currentStatus
+      const statusSelect = document.getElementById('modal-status');
+      let matched = false;
+      for (let i = 0; i < statusSelect.options.length; i++) {
+        if (statusSelect.options[i].value === currentStatus) {
+          statusSelect.selectedIndex = i;
+          matched = true;
+          break;
+        }
+      }
+      if (!matched) {
+        if (currentStatus && currentStatus.startsWith('YES')) {
+          statusSelect.value = "YES (ベンダー回答・該当あり)";
+        } else if (currentStatus && currentStatus.startsWith('NO')) {
+          statusSelect.value = "NO (ベンダー確認済み・非該当)";
+        } else {
+          statusSelect.value = "要確認 (ベンダー回答待ち・調査中)";
+        }
+      }
+
       document.getElementById('signoff-modal').classList.remove('hidden');
     }
 
@@ -1050,6 +1072,18 @@ HTML_PAGE = """<!DOCTYPE html>
         .replace(/"/g, '&quot;')
         .replace(/'/g, '&#039;');
     }
+
+    function formatSourceLink(rawUrl) {
+      if (!rawUrl) return '';
+      const str = String(rawUrl).trim();
+      const escaped = escapeHtml(str);
+      // Strictly allow only http:// and https:// URLs for clickable <a> links
+      if (/^https?:\\/\\//i.test(str)) {
+        return `<a href="${escaped}" target="_blank" rel="noopener noreferrer" style="color: var(--accent-gold-dark); text-decoration: underline; font-family: var(--mono);">${escaped}</a>`;
+      }
+      // Otherwise render as safe plain text (blocks javascript:, data:, etc.)
+      return `<span style="font-family: var(--mono);">${escaped}</span>`;
+    }
   </script>
 </body>
 </html>
@@ -1064,7 +1098,32 @@ class ThreadedHTTPServer(ThreadingMixIn, HTTPServer):
 class TriageDashboardHandler(BaseHTTPRequestHandler):
     """Secure HTTP request handler for the triage-agent dashboard."""
 
+    def _is_host_allowed(self) -> bool:
+        """Validate Host header against allowed local addresses to prevent DNS rebinding."""
+        server_port = getattr(self.server, "server_port", 8080)
+        allowed_hosts = {
+            f"127.0.0.1:{server_port}",
+            f"localhost:{server_port}",
+            "127.0.0.1",
+            "localhost",
+        }
+        host_header = self.headers.get("Host", "").strip()
+        return bool(host_header and host_header in allowed_hosts)
+
     def do_GET(self):
+        # 1. Host verification to prevent DNS rebinding attacks
+        if not self._is_host_allowed():
+            self.send_response(403)
+            self.send_header("Content-Type", "application/json; charset=utf-8")
+            self.end_headers()
+            self.wfile.write(
+                json.dumps(
+                    {"error": f"アクセス拒否: 不正な Host ヘッダーです ({self.headers.get('Host', '')})"},
+                    ensure_ascii=False,
+                ).encode("utf-8")
+            )
+            return
+
         if self.path == "/" or self.path == "/index.html":
             self.send_response(200)
             self.send_header("Content-Type", "text/html; charset=utf-8")
@@ -1101,25 +1160,19 @@ class TriageDashboardHandler(BaseHTTPRequestHandler):
             return
 
         # 2. Origin & Host verification (Strict localhost/127.0.0.1 validation)
-        server_port = getattr(self.server, "server_port", 8080)
-        allowed_hosts = {
-            f"127.0.0.1:{server_port}",
-            f"localhost:{server_port}",
-            "127.0.0.1",
-            "localhost",
-        }
-        host_header = self.headers.get("Host", "").strip()
-        if host_header and host_header not in allowed_hosts:
+        if not self._is_host_allowed():
             self.send_response(403)
             self.send_header("Content-Type", "application/json; charset=utf-8")
             self.end_headers()
             self.wfile.write(
-                json.dumps({"error": f"アクセス拒否: 不正な Host ヘッダーです ({host_header})"}, ensure_ascii=False).encode(
-                    "utf-8"
-                )
+                json.dumps(
+                    {"error": f"アクセス拒否: 不正な Host ヘッダーです ({self.headers.get('Host', '')})"},
+                    ensure_ascii=False,
+                ).encode("utf-8")
             )
             return
 
+        server_port = getattr(self.server, "server_port", 8080)
         origin_header = self.headers.get("Origin", "").strip()
         if origin_header:
             allowed_origins = {

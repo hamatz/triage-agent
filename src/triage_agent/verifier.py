@@ -280,20 +280,18 @@ def verify_codebase(
             if matched_attestation:
                 # Validate attestation status safely: only "NO..." counts as safe!
                 att_status = matched_attestation.status.strip()
+                status = matched_attestation.status
                 if att_status.upper().startswith("NO"):
-                    status = matched_attestation.status
                     total_safe += 1
-                    reason = f"【手動監査済】{matched_attestation.reviewer}（{matched_attestation.date}）: {matched_attestation.evidence}"
+                    reason = f"【安全確認済（サインオフ記録）】{matched_attestation.reviewer}（{matched_attestation.date}）: {matched_attestation.evidence}"
                 elif att_status.upper().startswith("YES"):
-                    status = "YES (手動監査・該当あり)"
                     has_yes = True
                     total_yes += 1
-                    reason = f"【手動監査にて該当】{matched_attestation.reviewer}（{matched_attestation.date}）: {matched_attestation.evidence}"
+                    reason = f"【該当あり（サインオフ記録）】{matched_attestation.reviewer}（{matched_attestation.date}）: {matched_attestation.evidence}"
                 else:
-                    status = matched_attestation.status
                     has_unverified = True
                     total_unverified += 1
-                    reason = f"【手動監査・要確認】{matched_attestation.reviewer}（{matched_attestation.date}）: {matched_attestation.evidence}"
+                    reason = f"【要確認（サインオフ記録）】{matched_attestation.reviewer}（{matched_attestation.date}）: {matched_attestation.evidence}"
                 advice = None
                 matches = []
             else:
