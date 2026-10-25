@@ -4,6 +4,9 @@
 
 ---
 
+![スクリーンショット](./docs/img/ss1.png)
+![スクリーンショット](./docs/img/ss2.png)
+
 ## 1. アーキテクチャ概要
 
 本システムは、過剰な独自コードや複雑なフレームワークを排し、Geminiのネイティブな **Function Calling**・**Google Search Grounding**・**Structured Outputs (Pydantic)** を最大限活用した3フェーズの自律型パイプラインです。

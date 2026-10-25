@@ -42,114 +42,390 @@ HTML_PAGE = """<!DOCTYPE html>
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>triage-agent Web Dashboard</title>
+  <title>triage-agent — DAWN Studio</title>
   <script src="https://cdn.tailwindcss.com"></script>
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
   <style>
-    .badge-critical { background-color: #fee2e2; color: #991b1b; border: 1px solid #f87171; }
-    .badge-high { background-color: #fef3c7; color: #92400e; border: 1px solid #fcd34d; }
-    .badge-normal { background-color: #d1fae5; color: #065f46; border: 1px solid #6ee7b7; }
-    .badge-unknown { background-color: #f3f4f6; color: #374151; border: 1px solid #d1d5db; }
+    :root {
+      --bg-app: #f6f1e8;
+      --bg-surface: #ffffff;
+      --bg-surface-subtle: #fcfaf6;
+      --text-main: #17243a;
+      --text-muted: #5e6d82;
+      --text-dim: #8c9ba5;
+      --accent-gold: #c49b49;
+      --accent-gold-dark: #9f752f;
+      --accent-gold-light: #faedd7;
+      --accent-gold-bg: #fff9ee;
+      --border-color: #d9c9af;
+      --border-subtle: #ebdcc5;
+      --bd-gold: #d9c9af;
+      --serif: Georgia, "Hiragino Mincho ProN", "BIZ UDPMincho", serif;
+      --mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+      --sh-panel: 0 4px 14px rgba(159, 117, 47, 0.08);
+      --sh-modal: 0 24px 64px rgba(7, 19, 41, 0.28);
+    }
+
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      background: var(--bg-app);
+      color: var(--text-main);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", sans-serif;
+      -webkit-font-smoothing: antialiased;
+    }
+
+    /* DAWN Typography & Utilities */
+    .eyeb {
+      font: 10px var(--mono);
+      letter-spacing: 2px;
+      color: var(--accent-gold-dark);
+      text-transform: uppercase;
+      font-weight: 700;
+    }
+    .serif-title {
+      font-family: var(--serif);
+      letter-spacing: -0.3px;
+    }
+
+    /* Surfaces & Glassmorphism */
+    .surface {
+      background: rgba(255, 255, 255, 0.82);
+      border: 1px solid var(--border-color);
+      border-radius: 16px;
+      box-shadow: var(--sh-panel);
+      backdrop-filter: blur(12px);
+    }
+    .surface-warm {
+      background: linear-gradient(135deg, rgba(255, 255, 255, 0.95) 0%, rgba(251, 248, 242, 0.9) 100%);
+      border: 1px solid var(--border-color);
+      border-radius: 16px;
+      box-shadow: var(--sh-panel);
+    }
+
+    /* Form Inputs */
+    .dawn-input {
+      background: #ffffff;
+      border: 1px solid var(--border-color);
+      border-radius: 8px;
+      padding: 8px 12px;
+      font-size: 12px;
+      color: var(--text-main);
+      font-family: var(--mono);
+      width: 100%;
+      transition: all 0.15s ease;
+    }
+    .dawn-input:focus {
+      outline: none;
+      border-color: var(--accent-gold-dark);
+      box-shadow: 0 0 0 2px rgba(159, 117, 47, 0.18);
+    }
+
+    /* Buttons */
+    .btn-dawn-primary {
+      background: var(--accent-gold-dark);
+      color: #ffffff;
+      border: 1px solid #846124;
+      border-radius: 10px;
+      padding: 10px 18px;
+      font-size: 13px;
+      font-weight: 600;
+      cursor: pointer;
+      box-shadow: 0 2px 8px rgba(159, 117, 47, 0.25);
+      transition: all 0.15s ease;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+    }
+    .btn-dawn-primary:hover {
+      background: #846124;
+      transform: translateY(-1px);
+      box-shadow: 0 4px 12px rgba(159, 117, 47, 0.32);
+    }
+    .btn-dawn-secondary {
+      background: #ffffff;
+      color: var(--text-main);
+      border: 1px solid var(--border-color);
+      border-radius: 8px;
+      padding: 6px 14px;
+      font-size: 12px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.15s ease;
+    }
+    .btn-dawn-secondary:hover {
+      background: #fbf8f2;
+      border-color: var(--accent-gold);
+      color: var(--accent-gold-dark);
+    }
+
+    /* Action Table Button */
+    .table-action-btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      padding: 4px 10px;
+      border: 1px solid var(--border-color);
+      background: #ffffff;
+      border-radius: 6px;
+      font-size: 11px;
+      font-weight: 600;
+      color: var(--accent-gold-dark);
+      cursor: pointer;
+      transition: all 0.15s ease;
+    }
+    .table-action-btn:hover {
+      background: var(--accent-gold-light);
+      border-color: var(--accent-gold);
+      color: #17243a;
+      transform: translateY(-1px);
+    }
+
+    /* Mode Subnav Tabs */
+    .subnav-tabs {
+      display: inline-flex;
+      border: 1px solid var(--border-color);
+      border-radius: 10px;
+      overflow: hidden;
+      background: #ffffff;
+      box-shadow: 0 1px 4px rgba(0, 0, 0, 0.04);
+      width: 100%;
+    }
+    .subnav-tab {
+      flex: 1;
+      text-align: center;
+      position: relative;
+    }
+    .subnav-label {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 8px 10px;
+      font-size: 12px;
+      font-weight: 500;
+      color: var(--text-muted);
+      cursor: pointer;
+      transition: all 0.15s ease;
+      user-select: none;
+    }
+    .subnav-tab input:checked + .subnav-label {
+      background: rgba(159, 117, 47, 0.12);
+      color: var(--text-main);
+      font-weight: 600;
+      box-shadow: inset 0 -2px 0 var(--accent-gold-dark);
+    }
+    .subnav-label:hover {
+      color: var(--text-main);
+      background: rgba(0, 0, 0, 0.02);
+    }
+
+    /* Badges & Pills */
+    .badge-pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      padding: 2px 10px;
+      border-radius: 999px;
+      font-size: 11px;
+      font-weight: 600;
+      letter-spacing: 0.2px;
+    }
+    .badge-critical {
+      background: #fdf2f2;
+      color: #991b1b;
+      border: 1px solid #fecaca;
+    }
+    .badge-high {
+      background: #fff9ed;
+      color: #92400e;
+      border: 1px solid #fde68a;
+    }
+    .badge-normal {
+      background: #f0fdf4;
+      color: #166534;
+      border: 1px solid #bbf7d0;
+    }
+    .badge-neutral {
+      background: #f8fafc;
+      color: #475569;
+      border: 1px solid #e2e8f0;
+    }
+
+    /* DAWN Spinner Ring Animation */
+    .generating-spinner {
+      position: relative;
+      width: 52px;
+      height: 52px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      margin: 0 auto;
+    }
+    .generating-ring {
+      position: absolute;
+      inset: 0;
+      border: 3px solid rgba(196, 155, 73, 0.2);
+      border-top-color: #c49b49;
+      border-right-color: #faedd7;
+      border-radius: 50%;
+      animation: spinRing 1s linear infinite;
+    }
+    @keyframes spinRing {
+      to { transform: rotate(360deg); }
+    }
+    .generating-icon {
+      font-size: 20px;
+      color: #c49b49;
+      animation: pulseIcon 1.5s ease-in-out infinite;
+    }
+    @keyframes pulseIcon {
+      0%, 100% { transform: scale(1); opacity: .9; }
+      50% { transform: scale(1.15); opacity: 1; }
+    }
+
+    /* Modal Overlay */
+    .modal-overlay {
+      background: rgba(7, 19, 41, 0.65);
+      backdrop-filter: blur(6px);
+    }
+    .modal-card {
+      background: #ffffff;
+      border: 1.5px solid var(--border-color);
+      border-radius: 20px;
+      box-shadow: var(--sh-modal);
+      max-width: 620px;
+      width: 100%;
+    }
+
+    /* Footer */
+    .app-footer {
+      height: 42px;
+      border-top: 1px solid var(--border-color);
+      padding: 0 24px;
+      font: 10px var(--mono);
+      color: var(--text-dim);
+      background: rgba(255, 255, 255, 0.75);
+      backdrop-filter: blur(10px);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
   </style>
 </head>
-<body class="bg-slate-50 text-slate-900 font-sans min-h-screen">
+<body class="min-h-screen flex flex-col justify-between">
 
-  <!-- Header -->
-  <header class="bg-slate-900 text-white shadow-lg sticky top-0 z-50">
-    <div class="max-w-7xl mx-auto px-4 py-3 flex items-center justify-between">
-      <div class="flex items-center space-x-3">
-        <i class="fa-solid fa-shield-halved text-cyan-400 text-2xl"></i>
-        <div>
-          <h1 class="text-lg font-bold tracking-tight">triage-agent <span class="text-xs font-normal bg-cyan-950 text-cyan-300 border border-cyan-700 px-2 py-0.5 rounded ml-2">Console</span></h1>
-          <p class="text-xs text-slate-400">Autonomous SBOM Vulnerability Intelligence & Triage</p>
+  <!-- App Header -->
+  <header class="h-16 px-6 border-b border-[#d9c9af] bg-white/80 backdrop-blur-md sticky top-0 z-40 flex items-center justify-between">
+    <div class="flex items-center space-x-4">
+      <div class="flex items-center space-x-2.5">
+        <span class="text-xl text-[#c49b49] leading-none">◈</span>
+        <div class="serif-title text-2xl text-[#17243a] font-normal leading-tight">
+          triage-agent <small class="font-mono text-[10px] tracking-[2px] text-[#9f752f] ml-2">DAWN / 0.1</small>
         </div>
       </div>
-      <div class="flex items-center space-x-4 text-xs">
-        <div id="llm-status" class="flex items-center space-x-1.5 bg-slate-800 px-3 py-1.5 rounded-full border border-slate-700">
-          <span class="w-2 h-2 rounded-full bg-yellow-400 animate-pulse"></span>
-          <span class="text-slate-300">Checking LLM...</span>
-        </div>
-        <span class="text-slate-500">|</span>
-        <a href="https://github.com" target="_blank" class="text-slate-400 hover:text-white transition"><i class="fa-brands fa-github text-base"></i></a>
+      <div class="hidden sm:block text-[11px] text-[#5e6d82] border-l border-[#d9c9af] pl-4 py-0.5">
+        Autonomous SBOM Vulnerability Intelligence &amp; Triage
       </div>
+    </div>
+    
+    <div class="flex items-center space-x-3 text-xs">
+      <div id="llm-status" class="flex items-center space-x-2 bg-white/90 px-3 py-1.5 rounded-full border border-[#d9c9af] shadow-sm font-mono text-[11px]">
+        <span class="w-2 h-2 rounded-full bg-yellow-400 animate-pulse"></span>
+        <span class="text-[#5e6d82]">Checking LLM...</span>
+      </div>
+      <a href="https://github.com" target="_blank" class="text-[#8c9ba5] hover:text-[#17243a] transition p-1.5" title="GitHub Repository">
+        <i class="fa-brands fa-github text-base"></i>
+      </a>
     </div>
   </header>
 
   <!-- Main Container -->
-  <main class="max-w-7xl mx-auto px-4 py-6 grid grid-cols-1 lg:grid-cols-12 gap-6">
+  <main class="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 py-8 grid grid-cols-1 lg:grid-cols-12 gap-8">
 
     <!-- Left Controls Panel (4 cols) -->
     <section class="lg:col-span-4 space-y-6">
-      <div class="bg-white p-5 rounded-xl shadow-sm border border-slate-200">
-        <h2 class="text-sm font-semibold uppercase tracking-wider text-slate-500 mb-4 flex items-center">
-          <i class="fa-solid fa-sliders text-indigo-500 mr-2"></i> スキャン & トリアージ設定
+      <div class="surface p-6">
+        <div class="eyeb mb-1">SCAN &amp; TRIAGE CONFIGURATION</div>
+        <h2 class="serif-title text-xl text-[#17243a] font-normal mb-5 flex items-center">
+          スキャン &amp; トリアージ設定
         </h2>
 
-        <form id="triage-form" class="space-y-4">
+        <form id="triage-form" class="space-y-5">
           <!-- Execution Mode -->
           <div>
-            <label class="block text-xs font-medium text-slate-700 mb-1">実行モード</label>
-            <div class="grid grid-cols-3 gap-2">
-              <label class="cursor-pointer">
-                <input type="radio" name="mode" value="demo" checked class="peer sr-only">
-                <div class="text-center py-2 px-1 text-xs rounded border border-slate-200 peer-checked:bg-indigo-50 peer-checked:border-indigo-500 peer-checked:text-indigo-700 peer-checked:font-semibold hover:bg-slate-50 transition">
-                  Demo
-                </div>
+            <div class="flex items-center justify-between mb-1.5">
+              <label class="text-xs font-semibold text-[#17243a]">実行モード</label>
+              <span class="text-[10px] font-mono text-[#9f752f]">PIPELINE MODE</span>
+            </div>
+            
+            <div class="subnav-tabs">
+              <label class="subnav-tab">
+                <input type="radio" name="mode" value="demo" checked class="sr-only">
+                <span class="subnav-label">Demo</span>
               </label>
-              <label class="cursor-pointer">
-                <input type="radio" name="mode" value="dry-run" class="peer sr-only">
-                <div class="text-center py-2 px-1 text-xs rounded border border-slate-200 peer-checked:bg-indigo-50 peer-checked:border-indigo-500 peer-checked:text-indigo-700 peer-checked:font-semibold hover:bg-slate-50 transition">
-                  Dry-Run
-                </div>
+              <label class="subnav-tab">
+                <input type="radio" name="mode" value="dry-run" class="sr-only">
+                <span class="subnav-label">Dry-Run</span>
               </label>
-              <label class="cursor-pointer">
-                <input type="radio" name="mode" value="live" class="peer sr-only">
-                <div class="text-center py-2 px-1 text-xs rounded border border-slate-200 peer-checked:bg-indigo-50 peer-checked:border-indigo-500 peer-checked:text-indigo-700 peer-checked:font-semibold hover:bg-slate-50 transition">
-                  Live Agent
-                </div>
+              <label class="subnav-tab">
+                <input type="radio" name="mode" value="live" class="sr-only">
+                <span class="subnav-label">Live Agent</span>
               </label>
             </div>
-            <p id="mode-desc" class="text-[11px] text-slate-500 mt-1">展示用データ（DEMO-*）で即座にUIを確認します。</p>
+            <p id="mode-desc" class="text-[11px] text-[#5e6d82] mt-2 leading-relaxed bg-[#fcfaf6] p-2.5 rounded-lg border border-[#ebdcc5]">
+              展示用合成データ（DEMO-*）で即座にUIを確認します。
+            </p>
           </div>
 
           <!-- SBOM File -->
           <div>
-            <label class="block text-xs font-medium text-slate-700 mb-1">SBOM ファイルパス</label>
-            <input type="text" id="sbom-path" value="sample_sbom.json" class="w-full text-xs font-mono px-3 py-2 border border-slate-300 rounded focus:ring-2 focus:ring-indigo-500 focus:outline-none">
-            <span class="text-[11px] text-slate-400">Syft CycloneDX JSON または Syft native JSON</span>
+            <label class="block text-xs font-semibold text-[#17243a] mb-1">SBOM ファイルパス</label>
+            <input type="text" id="sbom-path" value="sample_sbom.json" class="dawn-input" spellcheck="false">
+            <span class="text-[10.5px] text-[#8c9ba5] block mt-1">Syft CycloneDX JSON または Syft native JSON</span>
           </div>
 
           <!-- Codebase Path (for Verifier) -->
           <div>
-            <label class="block text-xs font-medium text-slate-700 mb-1">自社検証コードパス (任意)</label>
-            <input type="text" id="code-dir" value="demo_app" class="w-full text-xs font-mono px-3 py-2 border border-slate-300 rounded focus:ring-2 focus:ring-indigo-500 focus:outline-none">
-            <span class="text-[11px] text-slate-400">空欄でスキップ（外注委託システム向け指示書のみ）</span>
+            <label class="block text-xs font-semibold text-[#17243a] mb-1">自社検証コードパス (任意)</label>
+            <input type="text" id="code-dir" value="demo_app" class="dawn-input" spellcheck="false">
+            <span class="text-[10.5px] text-[#8c9ba5] block mt-1">空欄でスキップ（外注委託システム向け指示書のみ）</span>
           </div>
 
           <!-- Audit Sign-off File -->
           <div>
-            <label class="block text-xs font-medium text-slate-700 mb-1">手動監査サインオフパス (任意)</label>
-            <input type="text" id="audit-file" value="sample_audit_signoff.json" class="w-full text-xs font-mono px-3 py-2 border border-slate-300 rounded focus:ring-2 focus:ring-indigo-500 focus:outline-none">
+            <label class="block text-xs font-semibold text-[#17243a] mb-1">手動監査サインオフパス (任意)</label>
+            <input type="text" id="audit-file" value="sample_audit_signoff.json" class="dawn-input" spellcheck="false">
+            <span class="text-[10.5px] text-[#8c9ba5] block mt-1">SRE/インフラ合意済みの恒久安全判定ファイル</span>
           </div>
 
           <!-- Submit Button -->
-          <button type="submit" id="btn-run" class="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-medium py-2.5 px-4 rounded shadow transition flex items-center justify-center space-x-2 text-sm">
-            <i class="fa-solid fa-play"></i>
+          <button type="submit" id="btn-run" class="w-full btn-dawn-primary py-3">
+            <span>◈</span>
             <span>トリアージ実行</span>
           </button>
         </form>
       </div>
 
-      <!-- Quick Tips -->
-      <div class="bg-indigo-50/60 p-4 rounded-xl border border-indigo-100 text-xs text-indigo-900 space-y-2">
-        <div class="font-semibold flex items-center space-x-1.5 text-indigo-800">
-          <i class="fa-solid fa-lightbulb text-indigo-600"></i>
-          <span>トリアージ運用の3鉄則</span>
+      <!-- Quick Tips Box (DAWN Style) -->
+      <div class="surface-warm p-5 border-l-[3px] border-l-[#9f752f]">
+        <div class="eyeb mb-2 flex items-center space-x-1.5">
+          <span>TRIAGE OPERATING PRINCIPLES</span>
         </div>
-        <ul class="list-disc list-inside space-y-1 text-slate-700 text-[11px]">
-          <li><strong>分からないものを安全と言わない:</strong> コード内未検出は外部設定の要確認。</li>
-          <li><strong>正本管理:</strong> AI下書きを人間が承認し固定したJSONを正本とする。</li>
-          <li><strong>手動サインオフ:</strong> SRE/インフラの確認根拠を添えて安全（NO）に昇格。</li>
+        <div class="serif-title text-sm text-[#17243a] font-bold mb-2">トリアージ運用の3鉄則</div>
+        <ul class="space-y-2 text-[11.5px] text-[#5e6d82] leading-relaxed">
+          <li class="flex items-start">
+            <span class="text-[#9f752f] mr-1.5">•</span>
+            <span><strong class="text-[#17243a]">分からないものを安全と言わない:</strong> コード内未検出は外部設定の要確認。</span>
+          </li>
+          <li class="flex items-start">
+            <span class="text-[#9f752f] mr-1.5">•</span>
+            <span><strong class="text-[#17243a]">正本管理:</strong> AI下書きを人間が承認し固定したJSONを正本とする。</span>
+          </li>
+          <li class="flex items-start">
+            <span class="text-[#9f752f] mr-1.5">•</span>
+            <span><strong class="text-[#17243a]">手動サインオフ:</strong> 監査根拠を添えて安全（NO）に昇格。</span>
+          </li>
         </ul>
       </div>
     </section>
@@ -157,65 +433,79 @@ HTML_PAGE = """<!DOCTYPE html>
     <!-- Right Results Panel (8 cols) -->
     <section class="lg:col-span-8 space-y-6">
 
-      <!-- Status Indicator / Spinner -->
-      <div id="loading-spinner" class="hidden bg-white p-8 rounded-xl shadow-sm border border-slate-200 text-center space-y-3">
-        <i class="fa-solid fa-circle-notch fa-spin text-indigo-600 text-3xl"></i>
-        <p class="text-sm font-medium text-slate-700" id="loading-msg">エージェントが調査を実行中...</p>
+      <!-- Status Indicator / DAWN Gold Ring Spinner -->
+      <div id="loading-spinner" class="hidden surface p-10 text-center space-y-4">
+        <div class="generating-spinner">
+          <div class="generating-ring"></div>
+          <span class="generating-icon">◈</span>
+        </div>
+        <div>
+          <h3 class="serif-title text-lg text-[#17243a] font-normal" id="loading-msg">エージェントが調査を実行中...</h3>
+          <p class="text-xs text-[#5e6d82] mt-1">OSV.dev・GitHub Security Advisories・差分情報を精読しています</p>
+        </div>
       </div>
 
       <!-- Error Alert Panel -->
-      <div id="error-panel" class="hidden bg-red-50 border-l-4 border-red-500 p-4 rounded-r-xl shadow-sm">
-        <div class="flex items-start">
-          <i class="fa-solid fa-circle-exclamation text-red-600 text-lg mr-3 mt-0.5"></i>
-          <div class="text-xs">
-            <h3 class="font-bold text-red-800">実行時エラー</h3>
-            <p id="error-message" class="text-red-700 mt-1 whitespace-pre-wrap font-mono text-[11px]"></p>
+      <div id="error-panel" class="hidden bg-[#fdf2f2] border border-[#fecaca] border-l-4 border-l-[#991b1b] p-5 rounded-xl shadow-sm">
+        <div class="flex items-start space-x-3">
+          <i class="fa-solid fa-circle-exclamation text-[#991b1b] text-lg mt-0.5"></i>
+          <div class="text-xs flex-1">
+            <div class="eyeb text-[#991b1b] mb-1">EXECUTION ERROR</div>
+            <h3 class="font-bold text-[#991b1b] text-sm">実行時エラーが発生しました</h3>
+            <p id="error-message" class="text-[#7f1d1d] mt-2 whitespace-pre-wrap font-mono text-[11px] bg-white/70 p-3 rounded border border-[#fecaca]"></p>
           </div>
         </div>
       </div>
 
       <!-- Verification Audit Summary (If Codebase Scanned) -->
-      <div id="verification-panel" class="hidden bg-white p-5 rounded-xl shadow-sm border border-slate-200 space-y-4">
-        <div class="flex items-center justify-between border-b pb-3 border-slate-100">
+      <div id="verification-panel" class="hidden surface p-6 space-y-5">
+        <div class="flex items-center justify-between border-b border-[#ebdcc5] pb-4">
           <div>
-            <h2 class="text-sm font-bold text-slate-800 flex items-center space-x-2">
-              <i class="fa-solid fa-code-compare text-emerald-600"></i>
+            <div class="eyeb mb-1">AUDIT SUMMARY REPORT</div>
+            <h2 class="serif-title text-xl text-[#17243a] font-normal flex items-center space-x-2">
               <span>自社コードベース検証結果サマリ</span>
             </h2>
-            <p id="audit-code-dir" class="text-xs text-slate-500 font-mono mt-0.5"></p>
+            <p id="audit-code-dir" class="text-xs text-[#8c9ba5] font-mono mt-1"></p>
           </div>
-          <div id="audit-overall-badge" class="px-3 py-1 rounded-full text-xs font-bold"></div>
+          <div id="audit-overall-badge" class="badge-pill text-xs py-1 px-3"></div>
         </div>
 
-        <!-- Counts Grid -->
-        <div class="grid grid-cols-4 gap-3 text-center">
-          <div class="p-3 bg-slate-50 rounded border border-slate-200">
-            <span class="block text-xs text-slate-500">総検査項目</span>
-            <span id="count-total" class="text-lg font-bold text-slate-800">0</span>
+        <!-- Metric Counts Grid -->
+        <div class="grid grid-cols-2 sm:grid-cols-4 gap-3.5 text-center">
+          <div class="p-3.5 bg-white/90 rounded-xl border border-[#d9c9af] shadow-xs">
+            <div class="eyeb text-[9px] mb-1">TOTAL CHECKS</div>
+            <div id="count-total" class="serif-title text-3xl text-[#17243a] font-normal">0</div>
+            <span class="text-[10.5px] text-[#5e6d82]">総検査項目</span>
           </div>
-          <div class="p-3 bg-red-50 rounded border border-red-200">
-            <span class="block text-xs text-red-600 font-medium">YES (要対応)</span>
-            <span id="count-yes" class="text-lg font-bold text-red-700">0</span>
+          <div class="p-3.5 bg-[#fdf2f2] rounded-xl border border-[#fecaca]">
+            <div class="eyeb text-[9px] text-[#991b1b] mb-1">AFFECTED</div>
+            <div id="count-yes" class="serif-title text-3xl text-[#991b1b] font-normal">0</div>
+            <span class="text-[10.5px] text-[#991b1b] font-medium">YES (要対応)</span>
           </div>
-          <div class="p-3 bg-amber-50 rounded border border-amber-200">
-            <span class="block text-xs text-amber-600 font-medium">要確認 (外部設定)</span>
-            <span id="count-unverified" class="text-lg font-bold text-amber-700">0</span>
+          <div class="p-3.5 bg-[#fff9ed] rounded-xl border border-[#fde68a]">
+            <div class="eyeb text-[9px] text-[#92400e] mb-1">UNVERIFIED</div>
+            <div id="count-unverified" class="serif-title text-3xl text-[#92400e] font-normal">0</div>
+            <span class="text-[10.5px] text-[#92400e] font-medium">要確認 (外部設定)</span>
           </div>
-          <div class="p-3 bg-emerald-50 rounded border border-emerald-200">
-            <span class="block text-xs text-emerald-600 font-medium">NO (確認済安全)</span>
-            <span id="count-safe" class="text-lg font-bold text-emerald-700">0</span>
+          <div class="p-3.5 bg-[#f0fdf4] rounded-xl border border-[#bbf7d0]">
+            <div class="eyeb text-[9px] text-[#166534] mb-1">ATTESTED SAFE</div>
+            <div id="count-safe" class="serif-title text-3xl text-[#166534] font-normal">0</div>
+            <span class="text-[10.5px] text-[#166534] font-medium">NO (確認済安全)</span>
           </div>
         </div>
       </div>
 
       <!-- Unscanned / Errors Alert Banner -->
-      <div id="unscanned-panel" class="hidden bg-amber-50 border-l-4 border-amber-500 p-4 rounded-r-xl shadow-sm">
-        <div class="flex items-start">
-          <i class="fa-solid fa-triangle-exclamation text-amber-600 text-lg mr-3 mt-0.5"></i>
+      <div id="unscanned-panel" class="hidden bg-[#fff9ed] border border-[#fde68a] border-l-4 border-l-[#92400e] p-5 rounded-xl shadow-sm">
+        <div class="flex items-start space-x-3">
+          <i class="fa-solid fa-triangle-exclamation text-[#92400e] text-lg mt-0.5"></i>
           <div class="text-xs">
-            <h3 class="font-bold text-amber-800">【注意】調査不能・未調査コンポーネント</h3>
-            <p class="text-amber-700 mt-1">以下のコンポーネントは調査不能でした。未調査の項目を「安全」と誤認してはなりません。</p>
-            <ul id="unscanned-list" class="list-disc list-inside mt-2 space-y-1 font-mono text-[11px] text-amber-900"></ul>
+            <div class="eyeb text-[#92400e] mb-1">UNSCANNED WARNING</div>
+            <h3 class="font-bold text-[#92400e] text-sm">【注意】調査不能・未調査コンポーネント</h3>
+            <p class="text-[#78350f] mt-1 leading-relaxed">
+              以下のコンポーネントは調査不能でした。未調査の項目を「安全」と誤認してはなりません。
+            </p>
+            <ul id="unscanned-list" class="list-disc list-inside mt-2.5 space-y-1 font-mono text-[11px] text-[#78350f] bg-white/70 p-3 rounded-lg border border-[#fde68a]"></ul>
           </div>
         </div>
       </div>
@@ -223,62 +513,72 @@ HTML_PAGE = """<!DOCTYPE html>
       <!-- Notices Container -->
       <div id="notices-container" class="space-y-6">
         <!-- Empty Placeholder -->
-        <div class="bg-white p-12 rounded-xl shadow-sm border border-dashed border-slate-300 text-center space-y-3">
-          <i class="fa-solid fa-clipboard-list text-slate-300 text-4xl"></i>
-          <h3 class="text-sm font-semibold text-slate-600">レポートがまだありません</h3>
-          <p class="text-xs text-slate-400 max-w-sm mx-auto">左側のパネルから実行モードを選択し、「トリアージ実行」をクリックしてください。</p>
+        <div class="surface p-12 text-center space-y-3 border-dashed border-[#d9c9af]">
+          <div class="w-12 h-12 mx-auto rounded-full bg-[#faedd7]/50 flex items-center justify-center text-[#9f752f] text-xl">
+            ◈
+          </div>
+          <h3 class="serif-title text-base text-[#17243a] font-normal">レポートがまだありません</h3>
+          <p class="text-xs text-[#5e6d82] max-w-sm mx-auto leading-relaxed">
+            左側のパネルから実行モードを選択し、「トリアージ実行」をクリックしてください。
+          </p>
         </div>
       </div>
 
     </section>
   </main>
 
-  <!-- Signoff Modal -->
-  <div id="signoff-modal" class="hidden fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-    <div class="bg-white rounded-xl shadow-2xl border border-slate-200 max-w-lg w-full p-6 space-y-4">
-      <div class="flex items-center justify-between border-b pb-3">
-        <h3 class="text-base font-bold text-slate-800 flex items-center space-x-2">
-          <i class="fa-solid fa-signature text-indigo-600"></i>
-          <span>手動監査サインオフの作成</span>
-        </h3>
-        <button onclick="closeModal()" class="text-slate-400 hover:text-slate-600"><i class="fa-solid fa-xmark text-lg"></i></button>
+  <!-- Signoff Modal (DAWN Style) -->
+  <div id="signoff-modal" class="hidden fixed inset-0 modal-overlay z-50 flex items-center justify-center p-4">
+    <div class="modal-card p-6 sm:p-7 space-y-5">
+      <div class="flex items-start justify-between border-b border-[#ebdcc5] pb-3.5">
+        <div>
+          <div class="eyeb mb-1">AUDIT ATTESTATION (DEC-021)</div>
+          <h3 class="serif-title text-xl text-[#17243a] font-normal">手動監査サインオフの作成</h3>
+        </div>
+        <button onclick="closeModal()" class="text-[#8c9ba5] hover:text-[#17243a] transition p-1 text-lg">✕</button>
       </div>
 
-      <div class="space-y-3 text-xs">
+      <div class="space-y-3.5 text-xs">
         <div>
-          <label class="block font-medium text-slate-600 mb-0.5">対象確認ポイント ID</label>
-          <input type="text" id="modal-cp-id" readonly class="w-full font-mono bg-slate-100 px-3 py-1.5 border border-slate-300 rounded text-slate-600">
+          <label class="block font-semibold text-[#17243a] mb-1">対象確認ポイント ID</label>
+          <input type="text" id="modal-cp-id" readonly class="dawn-input bg-[#fcfaf6] text-[#5e6d82]">
         </div>
         <div>
-          <label class="block font-medium text-slate-600 mb-0.5">Notice Fingerprint (notice_hash)</label>
-          <input type="text" id="modal-notice-hash" readonly class="w-full font-mono bg-slate-100 px-3 py-1.5 border border-slate-300 rounded text-slate-600">
+          <label class="block font-semibold text-[#17243a] mb-1">Notice Fingerprint (notice_hash)</label>
+          <input type="text" id="modal-notice-hash" readonly class="dawn-input bg-[#fcfaf6] text-[#5e6d82]">
         </div>
         <div>
-          <label class="block font-medium text-slate-600 mb-0.5">確認ポイントの質問</label>
-          <textarea id="modal-question" readonly rows="2" class="w-full bg-slate-100 px-3 py-1.5 border border-slate-300 rounded text-slate-600"></textarea>
+          <label class="block font-semibold text-[#17243a] mb-1">確認ポイントの質問</label>
+          <textarea id="modal-question" readonly rows="2" class="dawn-input bg-[#fcfaf6] text-[#5e6d82]"></textarea>
         </div>
-        <div class="grid grid-cols-2 gap-3">
+        <div class="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
           <div>
-            <label class="block font-medium text-slate-700 mb-0.5">確認者 (氏名/チーム) *</label>
-            <input type="text" id="modal-reviewer" placeholder="例: SRE 山田" class="w-full px-3 py-1.5 border border-slate-300 rounded focus:ring-2 focus:ring-indigo-500">
+            <label class="block font-semibold text-[#17243a] mb-1">確認者 (氏名/チーム) *</label>
+            <input type="text" id="modal-reviewer" placeholder="例: SRE 山田" class="dawn-input">
           </div>
           <div>
-            <label class="block font-medium text-slate-700 mb-0.5">確認日付 *</label>
-            <input type="date" id="modal-date" class="w-full px-3 py-1.5 border border-slate-300 rounded focus:ring-2 focus:ring-indigo-500">
+            <label class="block font-semibold text-[#17243a] mb-1">確認日付 *</label>
+            <input type="date" id="modal-date" class="dawn-input">
           </div>
         </div>
         <div>
-          <label class="block font-medium text-slate-700 mb-0.5">確認根拠・エビデンス *</label>
-          <textarea id="modal-evidence" placeholder="例: 本番環境の server.xml を確認。該当コネクタはコメントアウトされており非該当。" rows="3" class="w-full px-3 py-1.5 border border-slate-300 rounded focus:ring-2 focus:ring-indigo-500"></textarea>
+          <label class="block font-semibold text-[#17243a] mb-1">確認根拠・エビデンス *</label>
+          <textarea id="modal-evidence" placeholder="例: 本番環境の server.xml を確認。該当コネクタはコメントアウトされており非該当。" rows="3" class="dawn-input font-sans"></textarea>
         </div>
       </div>
 
-      <div class="flex justify-end space-x-2 pt-3 border-t">
-        <button onclick="closeModal()" class="px-4 py-2 border border-slate-300 text-slate-700 rounded text-xs hover:bg-slate-50 transition">キャンセル</button>
-        <button onclick="applySignoff()" class="px-4 py-2 bg-indigo-600 text-white rounded text-xs hover:bg-indigo-700 transition font-medium">サインオフを適用・保存</button>
+      <div class="flex justify-end space-x-2.5 pt-3 border-t border-[#ebdcc5]">
+        <button onclick="closeModal()" class="btn-dawn-secondary">キャンセル</button>
+        <button onclick="applySignoff()" class="btn-dawn-primary text-xs py-2 px-4">サインオフを適用・保存</button>
       </div>
     </div>
   </div>
+
+  <!-- App Footer -->
+  <footer class="app-footer">
+    <span>NSTAR DESIGN SYSTEM · DAWN · TRIAGE AGENT STUDIO v0.1</span>
+    <span class="hidden sm:inline">AUTONOMOUS SECURITY INTELLIGENCE</span>
+  </footer>
 
   <script>
     let currentReport = null;
@@ -290,9 +590,9 @@ HTML_PAGE = """<!DOCTYPE html>
       .then(data => {
         const el = document.getElementById('llm-status');
         if (data.is_llm_configured) {
-          el.innerHTML = `<span class="w-2 h-2 rounded-full bg-emerald-400"></span><span class="text-slate-300">LLM Ready (${data.model})</span>`;
+          el.innerHTML = `<span class="w-2 h-2 rounded-full bg-emerald-500"></span><span class="text-[#17243a] font-medium">LLM Ready (${data.model})</span>`;
         } else {
-          el.innerHTML = `<span class="w-2 h-2 rounded-full bg-amber-400"></span><span class="text-slate-300">Offline / API Key Missing</span>`;
+          el.innerHTML = `<span class="w-2 h-2 rounded-full bg-amber-400"></span><span class="text-[#92400e]">Offline / API Key Missing</span>`;
         }
       });
 
@@ -355,6 +655,7 @@ HTML_PAGE = """<!DOCTYPE html>
 
     function renderReport(report, audit) {
       if (!report) return;
+
       // 1. Render Verification summary if available
       const vPanel = document.getElementById('verification-panel');
       if (audit) {
@@ -363,11 +664,11 @@ HTML_PAGE = """<!DOCTYPE html>
         const b = document.getElementById('audit-overall-badge');
         b.innerText = audit.overall_status;
         if (audit.overall_status.startsWith('YES')) {
-          b.className = 'px-3 py-1 rounded-full text-xs font-bold badge-critical';
+          b.className = 'badge-pill badge-critical text-xs';
         } else if (audit.overall_status.includes('確認')) {
-          b.className = 'px-3 py-1 rounded-full text-xs font-bold badge-high';
+          b.className = 'badge-pill badge-high text-xs';
         } else {
-          b.className = 'px-3 py-1 rounded-full text-xs font-bold badge-normal';
+          b.className = 'badge-pill badge-normal text-xs';
         }
 
         document.getElementById('count-total').innerText = audit.summary_counts.total_checks || 0;
@@ -392,10 +693,10 @@ HTML_PAGE = """<!DOCTYPE html>
       const container = document.getElementById('notices-container');
       if (!report.notices || report.notices.length === 0) {
         container.innerHTML = `
-          <div class="bg-white p-8 rounded-xl shadow-sm border border-slate-200 text-center">
-            <i class="fa-solid fa-circle-check text-emerald-500 text-3xl mb-2"></i>
-            <h3 class="text-sm font-bold text-slate-700">該当する要対応コンポーネントはありません</h3>
-            <p class="text-xs text-slate-400 mt-1">スキャンされたコンポーネントに対処必要なシグナルは検出されませんでした。</p>
+          <div class="surface p-10 text-center space-y-3">
+            <div class="text-2xl text-emerald-600 mb-2">◈</div>
+            <h3 class="serif-title text-base text-[#17243a] font-normal">該当する要対応コンポーネントはありません</h3>
+            <p class="text-xs text-[#5e6d82] mt-1">スキャンされたコンポーネントに対処必要なシグナルは検出されませんでした。</p>
           </div>
         `;
         return;
@@ -413,41 +714,46 @@ HTML_PAGE = """<!DOCTYPE html>
         else if (n.conclusion.includes('7日')) deadlineBadge = 'badge-high';
 
         return `
-          <article class="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
+          <article class="surface overflow-hidden">
             <!-- Notice Header -->
-            <div class="p-5 border-b border-slate-100 bg-slate-50/50">
-              <div class="flex items-start justify-between">
+            <div class="p-6 border-b border-[#ebdcc5] bg-white/70">
+              <div class="flex items-start justify-between flex-wrap gap-4">
                 <div>
-                  <div class="flex items-center space-x-2">
-                    <h3 class="text-base font-bold text-slate-900">${escapeHtml(n.product_name)}</h3>
-                    <span class="text-[10px] font-mono text-slate-400 bg-slate-100 px-2 py-0.5 rounded">hash: ${n.notice_hash || 'none'}</span>
+                  <div class="eyeb mb-1">SECURITY NOTICE 0${idx + 1}</div>
+                  <div class="flex items-center space-x-3">
+                    <h3 class="serif-title text-2xl text-[#17243a] font-semibold">${escapeHtml(n.product_name)}</h3>
+                    <span class="text-[10px] font-mono text-[#9f752f] bg-[#faedd7] px-2 py-0.5 rounded border border-[#ebdcc5]">
+                      hash: ${n.notice_hash ? n.notice_hash.substring(0, 12) + '...' : 'none'}
+                    </span>
                   </div>
-                  <p class="text-xs text-slate-500 mt-0.5">公開日: ${escapeHtml(n.announcement_date)} | 修正版: <strong class="text-slate-700">${escapeHtml(n.fixed_versions)}</strong></p>
+                  <p class="text-xs text-[#5e6d82] mt-1 font-mono">
+                    公開日: ${escapeHtml(n.announcement_date)} &nbsp;|&nbsp; 修正版: <strong class="text-[#17243a]">${escapeHtml(n.fixed_versions)}</strong>
+                  </p>
                 </div>
-                <span class="text-xs font-bold px-3 py-1 rounded-full ${deadlineBadge}">
-                  ${n.severity_note || '要確認'}
+                <span class="badge-pill ${deadlineBadge} text-xs py-1 px-3">
+                  ${escapeHtml(n.severity_note || '要確認')}
                 </span>
               </div>
 
               <!-- Conclusion Box -->
-              <div class="mt-3 p-3 bg-white rounded-lg border border-slate-200 text-xs">
-                <strong class="text-slate-800">【結論】</strong> ${escapeHtml(n.conclusion)}
+              <div class="mt-4 p-4 bg-[#fff9ee] rounded-xl border border-[#d9c9af] border-l-4 border-l-[#9f752f] text-xs leading-relaxed text-[#17243a]">
+                <strong class="font-semibold text-[#9f752f]">【結論】</strong> ${escapeHtml(n.conclusion)}
               </div>
             </div>
 
             <!-- Check Points Table -->
-            <div class="p-5 space-y-4">
+            <div class="p-6 space-y-5">
               <div class="overflow-x-auto">
                 <table class="w-full text-left text-xs border-collapse">
                   <thead>
-                    <tr class="bg-slate-100 text-slate-600 font-semibold border-b border-slate-200">
-                      <th class="p-2.5 w-1/5">対象 / CVE (CVSS)</th>
-                      <th class="p-2.5 w-1/4">確認ポイント (Yes/No)</th>
-                      <th class="p-2.5 w-1/3">具体的確認方法</th>
-                      ${audit ? '<th class="p-2.5 w-1/5">自社判定 / サインオフ</th>' : ''}
+                    <tr class="bg-[#fcfaf6] text-[#9f752f] font-mono text-[10.5px] tracking-wider uppercase border-b border-[#d9c9af]">
+                      <th class="p-3 w-1/5">対象 / CVE (CVSS)</th>
+                      <th class="p-3 w-1/4">確認ポイント (Yes/No)</th>
+                      <th class="p-3 w-1/3">具体的確認方法</th>
+                      ${audit ? '<th class="p-3 w-1/5">自社判定 / サインオフ</th>' : ''}
                     </tr>
                   </thead>
-                  <tbody class="divide-y divide-slate-100 text-slate-700">
+                  <tbody class="divide-y divide-[#eee5d8] text-[#17243a]">
                     ${n.check_points.map((cp, cpIdx) => {
                       let auditCp = null;
                       if (auditNotice && auditNotice.results) {
@@ -456,26 +762,26 @@ HTML_PAGE = """<!DOCTYPE html>
 
                       let auditTd = '';
                       if (audit) {
-                        let stBadge = 'bg-slate-100 text-slate-700';
+                        let stBadge = 'badge-neutral';
                         if (auditCp) {
-                          if (auditCp.status.startsWith('YES')) stBadge = 'badge-critical font-bold';
-                          else if (auditCp.status.startsWith('NO')) stBadge = 'badge-normal font-bold';
-                          else stBadge = 'badge-high font-bold';
+                          if (auditCp.status.startsWith('YES')) stBadge = 'badge-critical';
+                          else if (auditCp.status.startsWith('NO')) stBadge = 'badge-normal';
+                          else stBadge = 'badge-high';
                         }
 
                         const statusText = auditCp ? auditCp.status : '未検証';
                         const isUnverified = statusText.includes('未検出') || statusText.includes('要手動確認');
 
                         auditTd = `
-                          <td class="p-2.5">
-                            <span class="inline-block px-2 py-0.5 rounded text-[11px] ${stBadge}">${statusText}</span>
+                          <td class="p-3">
+                            <span class="badge-pill ${stBadge} text-[11px]">${escapeHtml(statusText)}</span>
                             ${auditCp && auditCp.matches && auditCp.matches.length > 0 ? 
-                              `<div class="mt-1 text-[10px] font-mono text-red-600">
+                              `<div class="mt-1.5 text-[10px] font-mono text-[#991b1b]">
                                 📍 ${escapeHtml(auditCp.matches[0].file_path)}:${auditCp.matches[0].line_number}
                               </div>` : ''}
                             ${isUnverified ? `
-                              <button onclick="openSignoffModal('${escapeHtml(cp.check_point_id)}', '${escapeHtml(n.notice_hash)}', '${escapeHtml(cp.check_point_yes_no)}')" class="mt-1.5 text-[10px] bg-slate-100 hover:bg-indigo-50 hover:text-indigo-600 text-slate-600 px-2 py-0.5 rounded border border-slate-200 transition flex items-center space-x-1">
-                                <i class="fa-solid fa-pen-to-square"></i>
+                              <button onclick="openSignoffModal('${escapeHtml(cp.check_point_id)}', '${escapeHtml(n.notice_hash)}', '${escapeHtml(cp.check_point_yes_no)}')" class="table-action-btn mt-2">
+                                <i class="fa-solid fa-pen-nib"></i>
                                 <span>サインオフ作成</span>
                               </button>
                             ` : ''}
@@ -484,13 +790,13 @@ HTML_PAGE = """<!DOCTYPE html>
                       }
 
                       return `
-                        <tr class="hover:bg-slate-50/50">
-                          <td class="p-2.5 font-medium">
-                            <div>${escapeHtml(cp.target_or_cve)}</div>
-                            <div class="text-[10px] text-slate-400 font-mono">${escapeHtml(cp.check_point_id || '')}</div>
+                        <tr class="hover:bg-[#faedd7]/20 transition-colors">
+                          <td class="p-3 font-medium">
+                            <div class="text-[#17243a]">${escapeHtml(cp.target_or_cve)}</div>
+                            <div class="text-[10px] text-[#8c9ba5] font-mono mt-0.5">${escapeHtml(cp.check_point_id || '')}</div>
                           </td>
-                          <td class="p-2.5 font-medium text-slate-800">${escapeHtml(cp.check_point_yes_no)}</td>
-                          <td class="p-2.5 text-slate-600 font-mono text-[11px]">${escapeHtml(cp.verification_method)}</td>
+                          <td class="p-3 font-medium text-[#17243a] leading-relaxed">${escapeHtml(cp.check_point_yes_no)}</td>
+                          <td class="p-3 text-[#5e6d82] font-mono text-[11px] leading-relaxed bg-[#fcfaf6]/50 rounded">${escapeHtml(cp.verification_method)}</td>
                           ${auditTd}
                         </tr>
                       `;
@@ -501,16 +807,16 @@ HTML_PAGE = """<!DOCTYPE html>
 
               <!-- Workaround & Unconfirmed -->
               ${n.workaround ? `
-                <div class="text-xs bg-emerald-50/60 p-3 rounded-lg border border-emerald-100 text-emerald-900">
+                <div class="text-xs bg-[#f0fdf4] p-3.5 rounded-xl border border-[#bbf7d0] text-[#166534] leading-relaxed">
                   <strong>💡 推奨回避策:</strong> ${escapeHtml(n.workaround)}
                 </div>
               ` : ''}
 
               <!-- Sources -->
               ${n.sources && n.sources.length > 0 ? `
-                <div class="text-[11px] text-slate-400 flex items-center space-x-2 pt-2 border-t border-slate-100">
-                  <span class="font-semibold text-slate-500">出典:</span>
-                  ${n.sources.map(s => `<a href="${s}" target="_blank" class="text-indigo-600 hover:underline truncate max-w-xs">${s}</a>`).join(', ')}
+                <div class="text-[11px] text-[#8c9ba5] flex items-center space-x-2 pt-3 border-t border-[#ebdcc5] flex-wrap gap-y-1">
+                  <span class="font-mono text-[#9f752f] uppercase">出典:</span>
+                  ${n.sources.map(s => `<a href="${s}" target="_blank" class="text-[#9f752f] hover:underline hover:text-[#17243a] truncate max-w-xs transition font-mono">${s}</a>`).join(', ')}
                 </div>
               ` : ''}
             </div>
