@@ -1,10 +1,11 @@
 import argparse
+import ast
 import hashlib
 import json
 import os
 import re
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Set, Tuple
 from pydantic import BaseModel, Field
 
 from rich.console import Console
@@ -33,6 +34,7 @@ class MatchSnippet(BaseModel):
     line_number: int
     line_content: str
     context_content: Optional[str] = None
+    is_test: bool = False
 
 
 class AuditAttestation(BaseModel):
@@ -151,6 +153,62 @@ def extract_keywords_from_method(text: str) -> List[str]:
     return list(patterns)
 
 
+TEST_DIR_PATTERNS = {"test", "tests", "spec", "specs", "__tests__", "mock", "mocks", "fixtures"}
+TEST_FILE_REGEX = re.compile(
+    r"(^|[\b_\.-])(test|spec|mock)[\b_\.-]|_test\.[a-z0-9]+$|\.test\.[a-z0-9]+$|\.spec\.[a-z0-9]+$|Test\.[a-z0-9]+$",
+    re.IGNORECASE,
+)
+
+
+def is_test_path(rel_path: str) -> bool:
+    """Check if the file path belongs to test, mock, or fixture code."""
+    path_obj = Path(rel_path)
+    for part in path_obj.parts[:-1]:
+        if part.lower() in TEST_DIR_PATTERNS:
+            return True
+    filename = path_obj.parts[-1] if path_obj.parts else ""
+    return bool(TEST_FILE_REGEX.search(filename))
+
+
+def extract_python_ast_call_lines(code_str: str, patterns: List[str]) -> Optional[Set[int]]:
+    """Inspect Python code with AST. Returns line numbers where patterns appear in AST Calls/Attributes/Keywords.
+    Returns None if AST parsing fails, allowing fallback to text scan."""
+    try:
+        tree = ast.parse(code_str)
+    except Exception:
+        return None
+
+    matched_lines = set()
+
+    class PatternVisitor(ast.NodeVisitor):
+        def visit_Call(self, node):
+            func_name = ""
+            if isinstance(node.func, ast.Name):
+                func_name = node.func.id
+            elif isinstance(node.func, ast.Attribute):
+                val_id = getattr(node.func.value, "id", "")
+                func_name = f"{val_id}.{node.func.attr}" if val_id else node.func.attr
+
+            for p in patterns:
+                p_clean = p.rstrip("(")
+                if p_clean in func_name:
+                    matched_lines.add(node.lineno)
+                for kw in node.keywords:
+                    if kw.arg and p_clean in kw.arg:
+                        matched_lines.add(node.lineno)
+            self.generic_visit(node)
+
+        def visit_Attribute(self, node):
+            for p in patterns:
+                p_clean = p.rstrip("(")
+                if p_clean in node.attr:
+                    matched_lines.add(node.lineno)
+            self.generic_visit(node)
+
+    PatternVisitor().visit(tree)
+    return matched_lines
+
+
 def scan_directory_for_patterns(code_dir: Path, patterns: List[str], max_matches: int = 500) -> List[MatchSnippet]:
     """Scan code directory for occurrences of patterns, returning line and surrounding context snippets."""
     if not patterns:
@@ -167,18 +225,39 @@ def scan_directory_for_patterns(code_dir: Path, patterns: List[str], max_matches
 
             if suffix in TARGET_EXTENSIONS or fname in TARGET_EXTENSIONS:
                 try:
-                    with open(fpath, "r", encoding="utf-8", errors="ignore") as f:
-                        all_lines = f.readlines()
+                    raw_content = fpath.read_text(encoding="utf-8", errors="ignore")
+                    all_lines = raw_content.splitlines(keepends=True)
+                    rel_path = str(fpath.relative_to(code_dir))
+                    is_test = is_test_path(rel_path)
 
+                    # Python AST high-precision filter
+                    ast_matched_lines = None
+                    if suffix == ".py":
+                        ast_matched_lines = extract_python_ast_call_lines(raw_content, patterns)
+
+                    in_block_comment = False
                     for line_no, raw_line in enumerate(all_lines, 1):
                         line_str = raw_line.strip()
+
+                        # Block comment tracking (/* ... */) for C-style languages
+                        if "/*" in line_str and "*/" not in line_str:
+                            in_block_comment = True
+                            continue
+                        elif in_block_comment:
+                            if "*/" in line_str:
+                                in_block_comment = False
+                            continue
+
+                        # Line comment skipping
                         if not line_str or line_str.startswith("#") or line_str.startswith("//"):
+                            continue
+
+                        # If Python AST parsing was successful, only match lines recognized by AST
+                        if ast_matched_lines is not None and line_no not in ast_matched_lines:
                             continue
 
                         for p in patterns:
                             if p in raw_line:
-                                rel_path = str(fpath.relative_to(code_dir))
-                                # Capture surrounding context (1 line before, 6 lines after) for multi-line argument drift detection
                                 start_idx = max(0, line_no - 2)
                                 end_idx = min(len(all_lines), line_no + 6)
                                 context_snippet = "".join(all_lines[start_idx:end_idx]).strip()
@@ -187,8 +266,9 @@ def scan_directory_for_patterns(code_dir: Path, patterns: List[str], max_matches
                                     MatchSnippet(
                                         file_path=rel_path,
                                         line_number=line_no,
-                                        line_content=line_str,  # Full untruncated line
-                                        context_content=context_snippet,  # Multi-line context
+                                        line_content=line_str,
+                                        context_content=context_snippet,
+                                        is_test=is_test,
                                     )
                                 )
                                 if len(matches) >= max_matches:
@@ -387,14 +467,32 @@ def verify_codebase(
                     else:
                         matches = code_matches
                         if matches:
-                            status = "YES (発火関連コード検出・要実地確認)"
-                            has_yes = True
-                            total_yes += 1
-                            reason = (
-                                f"自社リポジトリ内で発火関連キーワード（{', '.join(scan_patterns)}）の呼び出しを {len(matches)} 箇所検出しました。"
-                                f"テストコードや到達不能パスの可能性も含め、現場で実際の引数・オプション設定の実地確認が必要です。"
-                            )
-                            advice = f"検出箇所（{matches[0].file_path}:{matches[0].line_number} 等）を確認し、発火条件に合致する場合は修正・パッチ適用、影響を受けない設計やテストコードの場合はサインオフ（誤検知・許容）を記録してください。"
+                            prod_matches = [m for m in matches if not m.is_test]
+                            test_matches = [m for m in matches if m.is_test]
+
+                            if prod_matches:
+                                status = "YES (本番コード内検出・要実地確認)"
+                                has_yes = True
+                                total_yes += 1
+                                test_note = f"（他にテストコード内: {len(test_matches)} 件）" if test_matches else ""
+                                reason = (
+                                    f"自社リポジトリ内の本番コードで発火関連キーワード（{', '.join(scan_patterns)}）の呼び出しを "
+                                    f"{len(prod_matches)} 箇所検出しました{test_note}。現場で実際の引数・オプション設定の実地確認が必要です。"
+                                )
+                                advice = (
+                                    f"本番コード検出箇所（{prod_matches[0].file_path}:{prod_matches[0].line_number} 等）を確認し、"
+                                    f"発火条件に合致する場合は修正・パッチ適用、影響を受けない設計の場合はサインオフ（誤検知・許容）を記録してください。"
+                                )
+                            else:
+                                status = "YES (テストコード内のみ検出・本番未検出)"
+                                has_yes = True
+                                total_yes += 1
+                                reason = (
+                                    f"自社リポジトリ内のテスト・モックコード（{', '.join([m.file_path for m in test_matches[:3]])} 等）で "
+                                    f"{len(test_matches)} 箇所検出されましたが、本番コード内での呼び出しは未検出です。"
+                                    f"本番ビルドに含まれないテスト専用ファイルであることを確認の上、サインオフ（許容）の記録を推奨します。"
+                                )
+                                advice = f"テストコード検出箇所（{test_matches[0].file_path}:{test_matches[0].line_number} 等）を確認し、本番影響がなければサインオフを登録してください。"
                         else:
                             status = "コード内未検出 (外部設定・既定値の要確認)"
                             has_unverified = True
@@ -506,7 +604,10 @@ def format_verification_markdown(audit: CodebaseAuditReport) -> str:
 
             if c_res.matches:
                 match_desc = "<br>".join(
-                    [f"• `{m.file_path}:{m.line_number}`: `{m.line_content[:100]}`" for m in c_res.matches[:5]]
+                    [
+                        f"• `{'[TEST] ' if m.is_test else ''}{m.file_path}:{m.line_number}`: `{m.line_content[:100]}`"
+                        for m in c_res.matches[:5]
+                    ]
                 )
                 if len(c_res.matches) > 5:
                     match_desc += f"<br>• ...他 {len(c_res.matches) - 5} 箇所"
