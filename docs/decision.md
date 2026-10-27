@@ -5,7 +5,7 @@
 ---
 
 ## ADR-001: 開発言語およびコアSDKの選定
-- **決定:** Python 3.9+、Google公式 `google-genai` SDK、および `pydantic` v2 を採用する。
+- **決定:** Python 3.11+（初期は3.9+、ADR-015にてEOL対応およびパフォーマンス向上のため3.11+へ引き上げ）、Google公式 `google-genai` SDK、および `pydantic` v2 を採用する。
 - **背景:**
   - Geminiの最新機能（Function Calling, Google Search Grounding, Structured Outputs）を最も手軽かつ型安全に扱える。
   - セキュリティツール（Syft, Trivy, OSV）やデータ解析エコシステムとの親和性が高い。
@@ -158,3 +158,16 @@
   - **完全トークンレス（Tokenless）:** APIキーや個人トークンが一切不要。レート制限も極めて緩く、バッチ照会（1回で数百パッケージ）が無償・無制限で実行可能。
   - **データの完全網羅性:** GitHub Security Advisories (GHSA) の全データがリアルタイムで OSV にミラーリングされているほか、NVD、PyPI、npm、Go、Rust、Maven、Linuxディストリビューション等の全エコシステムを網羅している。
   - **シークレット管理の極小化:** ツールが扱うクレデンシャルを「LLM推論用（Gemini API Key または GCP Vertex AI 認証）」のみに絞り込むことで、攻撃対象領域とシークレット管理コストをゼロにする。
+
+---
+
+## ADR-015: 稼働ランタイム環境の Python 3.11+ への引き上げ
+- **決定:**
+  - `requires-python` を `>=3.9` から **`>=3.11`** に引き上げ、公式サポート対象を Python 3.11+（推奨: Python 3.12+）とする。
+- **背景:**
+  - Python 3.9 は 2025年10月に公式サポート（セキュリティ修正を含む EOL）が終了しており、主要ライブラリ（`google-auth` 等）で EOL 警告（FutureWarning）が発生する状態となっていた。
+  - セキュリティ製品である `triage-agent` 自体が EOL のランタイムに依存し続けることは、組織のセキュリティガバナンス上不適切である。
+- **メリット:**
+  - **パフォーマンス向上:** Python 3.11 で導入された Faster CPython（Specializing Adaptive Interpreter）により、大規模 SBOM の JSON パースや AST 構文木解析の処理速度が大幅に向上する。
+  - **将来的な保守性:** `google-genai` SDK や `pydantic` v2 の最新機能との完全な互換性を確保し、将来の脆弱性パッチ適用を保証する。
+  - **最新の型ヒント:** `str | None` や組み込みジェネリクス `list[str]` 等のモダンな型記述を完全標準化。

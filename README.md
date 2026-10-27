@@ -67,7 +67,7 @@ flowchart TD
 ## 2. セットアップ
 
 ### 必要要件
-- Python 3.9+
+- Python 3.11+
 - Gemini API Key (または Vertex AI / ADC)
 - **GitHub Token 不要 (Tokenless)**: OSV.dev を使用するためトークン設定なしですぐに動作します。
 
