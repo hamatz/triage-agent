@@ -594,9 +594,9 @@ HTML_PAGE = """<!DOCTYPE html>
               <span class="text-xs" style="color: var(--text-muted); font-size: 11px;">総検査項目</span>
             </div>
             <div class="p-3 text-center" style="background: #fdf2f2; border: 1px solid #fecaca; border-radius: 12px;">
-              <div class="eyeb" style="font-size: 9px; color: #991b1b; margin-bottom: 4px;">AFFECTED</div>
+              <div class="eyeb" style="font-size: 9px; color: #991b1b; margin-bottom: 4px;">AFFECTED / NEED CHECK</div>
               <div id="count-yes" class="serif-title text-3xl font-normal" style="color: #991b1b;">0</div>
-              <span class="text-xs font-medium" style="color: #991b1b; font-size: 11px;">YES (要対応)</span>
+              <span class="text-xs font-medium" style="color: #991b1b; font-size: 11px;">YES (要実地確認)</span>
             </div>
             <div class="p-3 text-center" style="background: #fff9ed; border: 1px solid #fde68a; border-radius: 12px;">
               <div class="eyeb" style="font-size: 9px; color: #92400e; margin-bottom: 4px;">UNVERIFIED</div>

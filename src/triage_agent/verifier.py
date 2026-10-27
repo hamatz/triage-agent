@@ -387,13 +387,16 @@ def verify_codebase(
                     else:
                         matches = code_matches
                         if matches:
-                            status = "YES (該当・要対応)"
+                            status = "YES (発火関連コード検出・要実地確認)"
                             has_yes = True
                             total_yes += 1
-                            reason = f"自社リポジトリ内で発火キーワード（{', '.join(scan_patterns)}）の利用を {len(matches)} 箇所検出しました。"
-                            advice = f"該当箇所（{matches[0].file_path}:{matches[0].line_number} 等）の設定および呼び出し引数を修正してください。"
+                            reason = (
+                                f"自社リポジトリ内で発火関連キーワード（{', '.join(scan_patterns)}）の呼び出しを {len(matches)} 箇所検出しました。"
+                                f"テストコードや到達不能パスの可能性も含め、現場で実際の引数・オプション設定の実地確認が必要です。"
+                            )
+                            advice = f"検出箇所（{matches[0].file_path}:{matches[0].line_number} 等）を確認し、発火条件に合致する場合は修正・パッチ適用、影響を受けない設計やテストコードの場合はサインオフ（誤検知・許容）を記録してください。"
                         else:
-                            status = "コード内未検出 (外部設定/既定値の要確認)"
+                            status = "コード内未検出 (外部設定・既定値の要確認)"
                             has_unverified = True
                             total_unverified += 1
                             reason = (
@@ -416,10 +419,11 @@ def verify_codebase(
             )
 
         if has_yes:
-            overall_status = "YES (該当・要対応)"
+            overall_status = "YES (発火関連コード検出・要実地確認)"
             deadline_advice = (
-                f"【緊急対応要】自社コード内に発火条件を検知しました。"
-                f"外部公開システムはルールに従い（Critical: {TRIAGE_RULES['CRITICAL_DEADLINE']}、High: {TRIAGE_RULES['HIGH_DEADLINE']}）に修正または回避策を適用してください。"
+                f"【要実地確認】自社コード内に発火関連キーワードを検知しました。"
+                f"発火条件に合致する場合は運用ルール（Critical: {TRIAGE_RULES['CRITICAL_DEADLINE']}、High: {TRIAGE_RULES['HIGH_DEADLINE']}）に従い修正または回避策を適用、"
+                f"影響を受けない設計やテストコード等の場合はサインオフを記録してください。"
             )
         elif has_unverified:
             overall_status = "要確認 (外部設定・環境設定の確認要)"
@@ -441,7 +445,7 @@ def verify_codebase(
         )
 
     if total_yes > 0:
-        overall_codebase_status = "YES (該当あり・緊急対応要)"
+        overall_codebase_status = "YES (発火関連コード検出・要実地確認)"
     elif total_unverified > 0:
         overall_codebase_status = "要確認 (ベンダー照会・回答待ち)" if code_dir is None else "要確認 (外部設定・環境設定の確認要)"
     else:
@@ -474,8 +478,8 @@ def format_verification_markdown(audit: CodebaseAuditReport) -> str:
         "",
         "## 1. 検証サマリ",
         f"- **総検査項目数:** {audit.summary_counts.get('total_checks', 0)} 件",
-        f"- **判定: YES (自社コード内該当・要対応):** {audit.summary_counts.get('yes_count', 0)} 件",
-        f"- **判定: コード内未検出 (外部設定/既定値の要確認):** {audit.summary_counts.get('unverified_count', 0)} 件",
+        f"- **判定: YES (発火関連コード検出・要実地確認):** {audit.summary_counts.get('yes_count', 0)} 件",
+        f"- **判定: コード内未検出 (外部設定・既定値の要確認):** {audit.summary_counts.get('unverified_count', 0)} 件",
         f"- **判定: NO (非該当・手動監査サインオフ済):** {audit.summary_counts.get('safe_count', 0)} 件",
         "",
         "---",
