@@ -21,12 +21,11 @@
 
 ---
 
-## 1. 近日対応予定（Near-term / Quick Wins: v0.2）
+## 1. v0.2 実装完了（Completed: v0.2.0）
 
-- [ ] **SPDX JSON形式へのネイティブ対応拡充**
-  - 現在は CycloneDX JSON および Syft native JSON が中心。SPDX 2.3 / 3.0 JSON形式の直接読み込みパーサーを追加。
-- [ ] **GitHub Enterprise / GitLab 対応**
-  - 社内閉域網で稼働している GitHub Enterprise Server や GitLab のリポジトリ・Advisory APIへの接続オプション追加。
+- [x] **SPDX JSON 形式（ISO/IEC 5962）へのネイティブ対応拡充（v0.2対応完了 / ADR-017）**
+  - CycloneDX JSON に加え、SPDX 2.2 / 2.3 / 3.0 JSON 形式（`spdxVersion`/`packages`/`externalRefs`）の直接パースに対応。
+  - Trivy、Docker Scout、cnspec 等の出力もそのまま受け入れ可能になり、SBOM 2大国際標準を完全網羅。
 - [x] **Web GUI リアルタイムプログレスバー & 進捗ストリーミング（v0.2対応完了 / ADR-016）**
   - Python標準ライブラリの `http.server` で Server-Sent Events (SSE) `/api/run-stream` を実装。
   - DAWN デザインに調和したグラデーションプログレスバー、パーセンテージ（0〜100%）、3段階 Phase インジケーター（Recon Planner → Researcher → Triage Agent）、リアルタイムの調査対象ライブラリ名表示を実装し、調査待機時間のストレスを大幅に軽減。
@@ -34,6 +33,8 @@
   - GITHUB_TOKEN の設定・管理を不要にし、PAT漏洩や権限昇格リスクをアーキテクチャから根本排除。
   - 完全無料・認証不要・オープンな OSV.dev (OSV-Scanner バックエンド) をプライマリに採用し、CVE alias、CVSS score、影響・修正バージョン、修正コミット/アドバイザリ参照URLを高精度取得。
   - GitHub API レート制限（403）に起因する不要な未調査警告（UNSCANNED WARNING）を解消し、未認証環境でも即座に高品質なトリアージを実行可能に。
+- [x] **ランタイム環境の Python 3.11+ / 3.12 移行（v0.2対応完了 / ADR-015）**
+  - Python 3.9 EOL に伴うサポート終了警告を解消し、Faster CPython による AST 解析・JSON パースを大幅高速化。
 - [x] **Verifier判定文言の精緻化（v0.2対応完了）**
   - 単なるキーワード照合結果を断定的な「該当・要対応」と決めつけず、画面およびレポート上で `YES (本番コード内検出・要実地確認)` / `YES (テストコード内のみ検出・本番未検出)` と客観的に明示。
   - 理由欄にもテストコードや到達不能パスの可能性を明記し、発火時は修正、影響を受けない場合はサインオフ（誤検知・許容）を促す誠実なガイダンスへ刷新。AST/到達可能性解析による完全証明との境界線を明確化。
@@ -43,6 +44,13 @@
 - [x] **Python AST（抽象構文木）解析エンジンの導入（v0.2対応完了）**
   - Pythonファイル走査において、標準 `ast` モジュールによる構文木解析を導入。docstring やコメント内の文字列を完全無視し、実際の関数呼び出し（`Call`）やキーワード引数（`keywords`）のみを高精度検出。
   - C/JS/TS系言語における `/* ... */` ブロックコメントの自動スキップにも対応。
+
+---
+
+## 2. 今後の検討課題（Backlog: v0.3〜）
+
+- [ ] **GitHub Enterprise / GitLab 対応**
+  - 社内閉域網で稼働している GitHub Enterprise Server や GitLab のリポジトリ・Advisory APIへの接続オプション追加。
 
 ---
 

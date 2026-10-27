@@ -113,10 +113,10 @@ GEMINI_MODEL="gemini-3.5-flash"
 > 本番環境にデプロイするコンテナイメージ全体をスキャンすることを強く推奨します。
 
 ```bash
-# 【推奨】コンテナイメージ全体をスキャン (OSパッケージ + ランタイム + アプリ依存を全網羅)
+# 【推奨】コンテナイメージ全体をスキャン (CycloneDX JSON または SPDX JSON)
 syft scan docker:my-org/my-app:latest -o cyclonedx-json > my_sbom.json
-# またはレジストリ直接
-syft scan registry:my-org/my-app:latest -o cyclonedx-json > my_sbom.json
+# または SPDX JSON (ISO/IEC 5962 国際標準形式)
+syft scan docker:my-org/my-app:latest -o spdx-json > my_spdx_sbom.json
 
 # 【簡易】ソースコードディレクトリのみのスキャン (言語ライブラリのみ)
 syft scan dir:. -o cyclonedx-json > my_sbom.json
