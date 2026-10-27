@@ -103,7 +103,7 @@ def main():
         "--model",
         type=str,
         default=None,
-        help="Override Gemini model name (default: reads GEMINI_MODEL or gemini-2.5-flash)",
+        help="Override Gemini model name (default: reads GEMINI_MODEL or gemini-3.5-flash)",
     )
     parser.add_argument(
         "--max-targets",

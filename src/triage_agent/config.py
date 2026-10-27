@@ -16,7 +16,7 @@ def get_model_name(role: str = "default") -> str:
       - 'researcher'
       - 'triage'
     """
-    default_model = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
+    default_model = os.getenv("GEMINI_MODEL", "gemini-3.5-flash")
     if role == "default":
         return default_model
     env_key = f"GEMINI_MODEL_{role.upper()}"

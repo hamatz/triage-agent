@@ -150,8 +150,27 @@ def run_triage_agent(
                         )
                     )
 
-                else:
-                    q_text = f"{target.name} の特定脆弱機能（外部入力受付・非同期処理）を有効にしているか"
+                elif "axios" in target.name.lower():
+                    title_lower = f.title.lower()
+                    if "pre-release" in f.id.lower() or "pre-release" in title_lower:
+                        q_text = "axios の先行リリース版（RC版・ベータ版）を本番環境で直接利用しているか"
+                        method_text = "package.json 等で axios のバージョンを確認。正式安定版のみ利用していれば NO（非該当）。"
+                    elif "toformdata" in title_lower:
+                        q_text = "axios で toFormData オプションを使用し、外部から渡された未検証オブジェクトを送信しているか"
+                        method_text = "コードベースを toFormData: { または FormData で検索。通常の JSON 送信（application/json）のみであれば NO（非該当）。"
+                    elif "http/2" in title_lower or "http2" in title_lower:
+                        q_text = "axios で HTTP/2 通信オプション（http2: true 等）または http2-wrapper を明示的に有効化しているか"
+                        method_text = "コードベースで http2: true や http2-wrapper を検索。Node.js既定の http/https アダプタのみ使用していれば NO（非該当）。"
+                    elif "proxy" in title_lower or "shouldbypassproxy" in title_lower:
+                        q_text = "axios の proxy 設定または環境変数 NO_PROXY を指定し、かつ外部URLへのリダイレクトを自動追従させているか"
+                        method_text = "コードベースで proxy: {、axios.defaults.proxy、または環境変数 NO_PROXY を検索。プロキシ未使用または maxRedirects: 0 であれば NO（非該当）。"
+                    elif "fromdatauri" in title_lower or "data:" in title_lower:
+                        q_text = "axios に外部入力由来の data: URI スキームを渡して処理させているか"
+                        method_text = "コードベースで axios.get や axios( の引数に data: URL が渡されうる箇所を検索。http/https 固定であれば NO（非該当）。"
+                    else:
+                        q_text = "外部入力を検証せずに axios のリクエストパラメータや設定オプションに直接渡しているか"
+                        method_text = "コード内で axios.create( や axios.request( の呼び出し箇所を検索。固定URL・固定パラメータへのリクエストのみであれば NO（非該当）。"
+
                     check_points.append(
                         CheckPointItem(
                             check_point_id=compute_check_point_id(target.name, f.id, q_text),
@@ -160,7 +179,72 @@ def run_triage_agent(
                             content_summary=f.title,
                             affected_versions=f.affected_versions or f"約 {target.version}",
                             check_point_yes_no=q_text,
-                            verification_method=f"設定ファイルおよび依存コードで {target.name} の設定ディレクティブを grep 検索",
+                            verification_method=method_text,
+                        )
+                    )
+
+                elif "fastapi" in target.name.lower():
+                    title_lower = f.title.lower()
+                    if "csrf" in title_lower:
+                        q_text = "FastAPI アプリケーションで Cookie 認証等のステートフルセッションを使い、CSRF トークン検証を省略しているか"
+                        method_text = "コードベースで Cookie 認証処理を確認。Stateless な Bearer/JWT 認証のみ、または CSRF ミドルウェア導入済みなら NO（非該当）。"
+                    else:
+                        q_text = "外部入力を型アノテーションなしで直接エンドポイントの引数に受け取っているか"
+                        method_text = "コードベースで @app.get / @app.post の関数定義を確認。Pydantic モデルで厳格にバリデーションされていれば NO（非該当）。"
+
+                    check_points.append(
+                        CheckPointItem(
+                            check_point_id=compute_check_point_id(target.name, f.id, q_text),
+                            target_or_cve=display_cve,
+                            cvss=cvss_label,
+                            content_summary=f.title,
+                            affected_versions=f.affected_versions or f"約 {target.version}",
+                            check_point_yes_no=q_text,
+                            verification_method=method_text,
+                        )
+                    )
+
+                elif "express" in target.name.lower():
+                    title_lower = f.title.lower()
+                    if "pre-release" in f.id.lower() or "pre-release" in title_lower:
+                        q_text = "express の先行リリース版（RC版・ベータ版）を本番環境で直接利用しているか"
+                        method_text = "package.json 等で express のバージョンを確認。v4 系の正式安定版のみ利用していれば NO（非該当）。"
+                    elif "redirect" in title_lower:
+                        q_text = "res.redirect() のリダイレクト先URLに外部からの入力値をエスケープや検証なしで直接渡しているか"
+                        method_text = "コードベースで res.redirect( を検索。引数に req.query や req.body の入力値が直接渡されている箇所がなければ NO（非該当）。"
+                    elif "query" in title_lower:
+                        q_text = "req.query のプロパティを未検証のままオブジェクトのキーや内部ロジックに直接代入しているか"
+                        method_text = "コードベースで req.query を検索。型安全にバリデーション（zod, joi 等）していれば NO（非該当）。"
+                    else:
+                        q_text = "外部入力を直接 express のルーティングハンドラやテンプレートにエスケープなしで渡しているか"
+                        method_text = "コードベースで app.use や app.get のミドルウェア設定を検索。入力サニタイズ処理があれば NO（非該当）。"
+
+                    check_points.append(
+                        CheckPointItem(
+                            check_point_id=compute_check_point_id(target.name, f.id, q_text),
+                            target_or_cve=display_cve,
+                            cvss=cvss_label,
+                            content_summary=f.title,
+                            affected_versions=f.affected_versions or f"約 {target.version}",
+                            check_point_yes_no=q_text,
+                            verification_method=method_text,
+                        )
+                    )
+
+                else:
+                    # Extract potential function or keyword tokens from title (e.g. from words with parentheses, colons, or camelCase)
+                    tokens = [w.strip("(),:;`'\"") for w in f.title.split() if any(c.isupper() for c in w) or "(" in w or "_" in w]
+                    target_token = tokens[0] if tokens else target.name
+                    q_text = f"{target.name} において {target_token} に関連する機能・APIを直接呼び出しているか"
+                    check_points.append(
+                        CheckPointItem(
+                            check_point_id=compute_check_point_id(target.name, f.id, q_text),
+                            target_or_cve=display_cve,
+                            cvss=cvss_label,
+                            content_summary=f.title,
+                            affected_versions=f.affected_versions or f"約 {target.version}",
+                            check_point_yes_no=q_text,
+                            verification_method=f"コードベースを {target_token} で検索。呼び出しや該当設定が一切存在しなければ NO（非該当）。",
                         )
                     )
 

@@ -42,7 +42,7 @@ def search_github_security_signals(
 
     headers = _get_headers()
 
-    with httpx.Client(timeout=10.0, headers=headers) as client:
+    with httpx.Client(timeout=10.0, headers=headers, follow_redirects=True) as client:
         # 1. Check Security Advisories
         try:
             adv_url = f"{GITHUB_API_BASE}/repos/{repo}/security-advisories"
@@ -140,7 +140,7 @@ def get_github_commit_or_advisory_detail(repo: str, ref_or_ghsa_id: str) -> Dict
     repo = repo.strip().strip("/")
     headers = _get_headers()
 
-    with httpx.Client(timeout=10.0, headers=headers) as client:
+    with httpx.Client(timeout=10.0, headers=headers, follow_redirects=True) as client:
         # Check if ref is a GHSA advisory
         if ref_or_ghsa_id.upper().startswith("GHSA-"):
             url = f"{GITHUB_API_BASE}/repos/{repo}/security-advisories/{ref_or_ghsa_id}"

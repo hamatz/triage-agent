@@ -61,13 +61,13 @@
 
 | 対象 / CVE (CVSS) | 内容 | 影響バージョン | 確認ポイント（Yes/No） | 確認方法 |
 | :--- | :--- | :--- | :--- | :--- |
-| CVE-2026-101901 (CVSS: 8.2 (High)) | Denial of Service  via Unhandled 'error' Event in HTTP/2 ClientHttp2Session Initialization | Affects versions around 0.21.1 | axios の特定脆弱機能（外部入力受付・非同期処理）を有効にしているか | 設定ファイルおよび依存コードで axios の設定ディレクティブを grep 検索 |
-| CVE-2026-101898 (CVSS: 7.0 (High)) | HTTP/2 adapter bypasses configured DNS lookup and proxy controls | Affects versions around 0.21.1 | axios の特定脆弱機能（外部入力受付・非同期処理）を有効にしているか | 設定ファイルおよび依存コードで axios の設定ディレクティブを grep 検索 |
-| CVE-2026-101909 (CVSS: 8.3 (High)) | Prototype Pollution Gadget in axios toFormData Options | Affects versions around 0.21.1 | axios の特定脆弱機能（外部入力受付・非同期処理）を有効にしているか | 設定ファイルおよび依存コードで axios の設定ディレクティブを grep 検索 |
-| CVE-2026-101906 (CVSS: 8.2 (High)) | ReDoS (O(N²)) in shouldBypassProxy host normalization, reachable via untrusted redirect Location | Affects versions around 0.21.1 | axios の特定脆弱機能（外部入力受付・非同期処理）を有効にしているか | 設定ファイルおよび依存コードで axios の設定ディレクティブを grep 検索 |
-| CVE-2026-101903 (CVSS: 8.2 (High)) | ReDoS in fromDataURI data: URL parser freezes the Node event loop (DoS) | Affects versions around 0.21.1 | axios の特定脆弱機能（外部入力受付・非同期処理）を有効にしているか | 設定ファイルおよび依存コードで axios の設定ディレクティブを grep 検索 |
-| PRE-RELEASE-v1.19.0 (CVSS: Pre-release) | Pre-release / Security Notice: v1.19.0 | Targeting fixes around 0.21.1 | axios の特定脆弱機能（外部入力受付・非同期処理）を有効にしているか | 設定ファイルおよび依存コードで axios の設定ディレクティブを grep 検索 |
-| PRE-RELEASE-v1.18.0 (CVSS: Pre-release) | Pre-release / Security Notice: v1.18.0 | Targeting fixes around 0.21.1 | axios の特定脆弱機能（外部入力受付・非同期処理）を有効にしているか | 設定ファイルおよび依存コードで axios の設定ディレクティブを grep 検索 |
+| CVE-2026-101901 (CVSS: 8.2 (High)) | Denial of Service  via Unhandled 'error' Event in HTTP/2 ClientHttp2Session Initialization | Affects versions around 0.21.1 | axios で HTTP/2 通信オプション（http2: true 等）または http2-wrapper を明示的に有効化しているか | コードベースで http2: true や http2-wrapper を検索。Node.js既定の http/https アダプタのみ使用していれば NO（非該当）。 |
+| CVE-2026-101898 (CVSS: 7.0 (High)) | HTTP/2 adapter bypasses configured DNS lookup and proxy controls | Affects versions around 0.21.1 | axios で HTTP/2 アダプタを使用し、かつ proxy 設定またはカスタム DNS lookup を指定しているか | コード内で http2: true と proxy: { の併用箇所を検索。HTTP/2 未使用またはプロキシ未使用なら NO（非該当）。 |
+| CVE-2026-101909 (CVSS: 8.3 (High)) | Prototype Pollution Gadget in axios toFormData Options | Affects versions around 0.21.1 | axios で toFormData オプションを使用し、外部から渡された未検証オブジェクトを送信しているか | コードベースを toFormData: { または FormData で検索。通常の JSON 送信（application/json）のみであれば NO（非該当）。 |
+| CVE-2026-101906 (CVSS: 8.2 (High)) | ReDoS (O(N²)) in shouldBypassProxy host normalization, reachable via untrusted redirect Location | Affects versions around 0.21.1 | axios の proxy 設定または環境変数 NO_PROXY を指定し、かつ外部URLへのリダイレクトを自動追従させているか | コードベースで proxy: {、axios.defaults.proxy、または環境変数 NO_PROXY を検索。プロキシ未使用または maxRedirects: 0 であれば NO（非該当）。 |
+| CVE-2026-101903 (CVSS: 8.2 (High)) | ReDoS in fromDataURI data: URL parser freezes the Node event loop (DoS) | Affects versions around 0.21.1 | axios に外部入力由来の data: URI スキームを渡して処理させているか | コードベースで axios.get や axios( の引数に data: URL が渡されうる箇所を検索。http/https 固定であれば NO（非該当）。 |
+| PRE-RELEASE-v1.19.0 (CVSS: Pre-release) | Pre-release / Security Notice: v1.19.0 | Targeting fixes around 0.21.1 | axios の先行リリース版（RC版・ベータ版）を本番環境で直接利用しているか | package.json 等で axios のバージョンを確認。正式安定版のみ利用していれば NO（非該当）。 |
+| PRE-RELEASE-v1.18.0 (CVSS: Pre-release) | Pre-release / Security Notice: v1.18.0 | Targeting fixes around 0.21.1 | axios の先行リリース版（RC版・ベータ版）を本番環境で直接利用しているか | package.json 等で axios のバージョンを確認。正式安定版のみ利用していれば NO（非該当）。 |
 
 > 先にバージョンを確認します。範囲外なら、その CVE の確認ポイントは No として扱います。
 
@@ -89,7 +89,7 @@
 
 | 対象 / CVE (CVSS) | 内容 | 影響バージョン | 確認ポイント（Yes/No） | 確認方法 |
 | :--- | :--- | :--- | :--- | :--- |
-| CVE-2021-32677 (CVSS: 5.3 (Medium)) | Cross-Site Request Forgery (CSRF) in FastAPI | Affects versions around 0.95.0 | fastapi の特定脆弱機能（外部入力受付・非同期処理）を有効にしているか | 設定ファイルおよび依存コードで fastapi の設定ディレクティブを grep 検索 |
+| CVE-2021-32677 (CVSS: 5.3 (Medium)) | Cross-Site Request Forgery (CSRF) in FastAPI | Affects versions around 0.95.0 | FastAPI アプリケーションで Cookie 認証等のステートフルセッションを使い、CSRF トークン検証を省略しているか | コードベースで Cookie 認証処理を確認。Stateless な Bearer/JWT 認証のみ、または CSRF ミドルウェア導入済みなら NO（非該当）。 |
 
 > 先にバージョンを確認します。範囲外なら、その CVE の確認ポイントは No として扱います。
 
@@ -111,12 +111,12 @@
 
 | 対象 / CVE (CVSS) | 内容 | 影響バージョン | 確認ポイント（Yes/No） | 確認方法 |
 | :--- | :--- | :--- | :--- | :--- |
-| CVE-2024-51999 (CVSS: Low) | REJECTED (not a vulnerability): improperly controlled modification of query properties in express | Affects versions around 4.17.1 | express の特定脆弱機能（外部入力受付・非同期処理）を有効にしているか | 設定ファイルおよび依存コードで express の設定ディレクティブを grep 検索 |
-| CVE-2024-43796 (CVSS: 5.0 (Medium)) | express vulnerable to XSS via response.redirect() | Affects versions around 4.17.1 | express の特定脆弱機能（外部入力受付・非同期処理）を有効にしているか | 設定ファイルおよび依存コードで express の設定ディレクティブを grep 検索 |
-| CVE-2024-29041 (CVSS: 6.1 (Medium)) | Express.js Open Redirect in malformed URLs | Affects versions around 4.17.1 | express の特定脆弱機能（外部入力受付・非同期処理）を有効にしているか | 設定ファイルおよび依存コードで express の設定ディレクティブを grep 検索 |
-| PRE-RELEASE-v5.2.1 (CVSS: Pre-release) | Pre-release / Security Notice: v5.2.1 | Targeting fixes around 4.17.1 | express の特定脆弱機能（外部入力受付・非同期処理）を有効にしているか | 設定ファイルおよび依存コードで express の設定ディレクティブを grep 検索 |
-| PRE-RELEASE-v5.2.0 (CVSS: Pre-release) | Pre-release / Security Notice: v5.2.0 | Targeting fixes around 4.17.1 | express の特定脆弱機能（外部入力受付・非同期処理）を有効にしているか | 設定ファイルおよび依存コードで express の設定ディレクティブを grep 検索 |
-| PRE-RELEASE-v4.22.1 (CVSS: Pre-release) | Pre-release / Security Notice: v4.22.1 | Targeting fixes around 4.17.1 | express の特定脆弱機能（外部入力受付・非同期処理）を有効にしているか | 設定ファイルおよび依存コードで express の設定ディレクティブを grep 検索 |
+| CVE-2024-51999 (CVSS: Low) | REJECTED (not a vulnerability): improperly controlled modification of query properties in express | Affects versions around 4.17.1 | req.query のプロパティを未検証のままオブジェクトのキーや内部ロジックに直接代入しているか | コードベースで req.query を検索。型安全にバリデーション（zod, joi 等）していれば NO（非該当）。 |
+| CVE-2024-43796 (CVSS: 5.0 (Medium)) | express vulnerable to XSS via response.redirect() | Affects versions around 4.17.1 | res.redirect() のリダイレクト先URLに外部からの入力値をエスケープや検証なしで直接渡しているか | コードベースで res.redirect( を検索。引数に req.query や req.body の入力値が直接渡されている箇所がなければ NO（非該当）。 |
+| CVE-2024-29041 (CVSS: 6.1 (Medium)) | Express.js Open Redirect in malformed URLs | Affects versions around 4.17.1 | 外部入力された URL へ無条件にオープンリダイレクトを許可しているルーティングがあるか | コードベースで res.redirect( を検索。ホワイトリスト検証済みURLまたは相対パス（/path）のみのリダイレクトであれば NO（非該当）。 |
+| PRE-RELEASE-v5.2.1 (CVSS: Pre-release) | Pre-release / Security Notice: v5.2.1 | Targeting fixes around 4.17.1 | express の先行リリース版（RC版・ベータ版）を本番環境で直接利用しているか | package.json 等で express のバージョンを確認。v4 系の正式安定版のみ利用していれば NO（非該当）。 |
+| PRE-RELEASE-v5.2.0 (CVSS: Pre-release) | Pre-release / Security Notice: v5.2.0 | Targeting fixes around 4.17.1 | express の先行リリース版（RC版・ベータ版）を本番環境で直接利用しているか | package.json 等で express のバージョンを確認。v4 系の正式安定版のみ利用していれば NO（非該当）。 |
+| PRE-RELEASE-v4.22.1 (CVSS: Pre-release) | Pre-release / Security Notice: v4.22.1 | Targeting fixes around 4.17.1 | express の先行リリース版（RC版・ベータ版）を本番環境で直接利用しているか | package.json 等で express のバージョンを確認。v4 系の正式安定版のみ利用していれば NO（非該当）。 |
 
 > 先にバージョンを確認します。範囲外なら、その CVE の確認ポイントは No として扱います。
 
