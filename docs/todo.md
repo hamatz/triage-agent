@@ -27,6 +27,9 @@
   - 現在は CycloneDX JSON および Syft native JSON が中心。SPDX 2.3 / 3.0 JSON形式の直接読み込みパーサーを追加。
 - [ ] **GitHub Enterprise / GitLab 対応**
   - 社内閉域網で稼働している GitHub Enterprise Server や GitLab のリポジトリ・Advisory APIへの接続オプション追加。
+- [x] **Web GUI リアルタイムプログレスバー & 進捗ストリーミング（v0.2対応完了 / ADR-016）**
+  - Python標準ライブラリの `http.server` で Server-Sent Events (SSE) `/api/run-stream` を実装。
+  - DAWN デザインに調和したグラデーションプログレスバー、パーセンテージ（0〜100%）、3段階 Phase インジケーター（Recon Planner → Researcher → Triage Agent）、リアルタイムの調査対象ライブラリ名表示を実装し、調査待機時間のストレスを大幅に軽減。
 - [x] **GitHub Token 完全撤廃と OSV-Scanner / OSV.dev への脆弱性調査一本化（Tokenless Architecture / ADR-014対応完了）**
   - GITHUB_TOKEN の設定・管理を不要にし、PAT漏洩や権限昇格リスクをアーキテクチャから根本排除。
   - 完全無料・認証不要・オープンな OSV.dev (OSV-Scanner バックエンド) をプライマリに採用し、CVE alias、CVSS score、影響・修正バージョン、修正コミット/アドバイザリ参照URLを高精度取得。

@@ -382,6 +382,24 @@ HTML_PAGE = """<!DOCTYPE html>
       50% { transform: scale(1.15); opacity: 1; }
     }
 
+    /* Phase Pills for Progress Bar */
+    .phase-pill-active {
+      border-color: var(--accent-gold-dark) !important;
+      background: var(--accent-gold-bg) !important;
+      box-shadow: 0 2px 8px rgba(159, 117, 47, 0.12);
+    }
+    .phase-pill-active .eyeb {
+      color: var(--accent-gold-dark) !important;
+      font-weight: 700;
+    }
+    .phase-pill-completed {
+      border-color: #a7f3d0 !important;
+      background: #f0fdf4 !important;
+    }
+    .phase-pill-completed .eyeb {
+      color: #059669 !important;
+    }
+
     /* Table Styles */
     table { width: 100%; border-collapse: collapse; text-align: left; }
     table thead tr { background: #fcfaf6; border-bottom: 1.5px solid var(--border-color); }
@@ -551,15 +569,53 @@ HTML_PAGE = """<!DOCTYPE html>
       <!-- Right Results Panel -->
       <section class="space-y-6 flex-1">
 
-        <!-- Status Indicator / DAWN Gold Ring Spinner -->
-        <div id="loading-spinner" class="hidden surface p-10 text-center space-y-4">
-          <div class="generating-spinner">
-            <div class="generating-ring"></div>
-            <span class="generating-icon">◈</span>
+        <!-- Status Indicator / DAWN Gold Ring Spinner & Realtime Progress Bar -->
+        <div id="loading-spinner" class="hidden surface p-8 space-y-6">
+          <div class="flex items-center justify-between" style="border-bottom: 1px solid var(--border-subtle); padding-bottom: 14px;">
+            <div class="flex items-center space-x-3">
+              <div class="generating-spinner" style="width: 36px; height: 36px;">
+                <div class="generating-ring"></div>
+                <span class="generating-icon" style="font-size: 16px;">◈</span>
+              </div>
+              <div>
+                <div class="eyeb" id="loading-eyebrow" style="font-size: 9px; margin-bottom: 2px;">AUTONOMOUS INVESTIGATION IN PROGRESS</div>
+                <h3 class="serif-title text-base font-normal" id="loading-msg">エージェントが調査を実行中...</h3>
+              </div>
+            </div>
+            <div class="text-right">
+              <div id="progress-percent" class="serif-title text-3xl font-normal" style="color: var(--accent-gold-dark); line-height: 1;">0%</div>
+              <span id="progress-step-text" class="text-xs" style="color: var(--text-dim); font-size: 10px;">Phase 1 / 3</span>
+            </div>
           </div>
-          <div>
-            <h3 class="serif-title text-lg font-normal" id="loading-msg">エージェントが調査を実行中...</h3>
-            <p class="text-xs mt-1" style="color: var(--text-muted);">OSV.dev・GitHub Security Advisories・差分情報を精読しています</p>
+
+          <!-- Progress Bar Fill -->
+          <div class="space-y-2">
+            <div style="width: 100%; height: 10px; background: var(--border-subtle); border-radius: 999px; overflow: hidden; position: relative;">
+              <div id="progress-bar-fill" style="width: 0%; height: 100%; background: linear-gradient(90deg, var(--accent-gold) 0%, var(--accent-gold-dark) 100%); border-radius: 999px; transition: width 0.35s ease-out;"></div>
+            </div>
+            <div class="flex items-center justify-between text-xs" style="color: var(--text-muted); font-size: 11px;">
+              <span id="progress-detail" class="font-mono">準備中...</span>
+              <span id="progress-target" class="font-mono" style="color: var(--accent-gold-dark); font-weight: 600;"></span>
+            </div>
+          </div>
+
+          <!-- Phase Indicator Pills -->
+          <div class="grid grid-cols-3 gap-3 text-center text-xs pt-1">
+            <div id="phase-pill-1" class="p-3 rounded-lg border border-subtle bg-surface-subtle" style="transition: all 0.3s;">
+              <div class="eyeb" style="font-size: 9px; margin-bottom: 2px;">PHASE 1</div>
+              <div class="font-semibold text-xs" style="color: var(--text-main);">Recon Planner</div>
+              <div class="text-xs mt-1" style="font-size: 10px; color: var(--text-dim);">SBOM解析 & 戦略</div>
+            </div>
+            <div id="phase-pill-2" class="p-3 rounded-lg border border-subtle bg-surface-subtle" style="transition: all 0.3s;">
+              <div class="eyeb" style="font-size: 9px; margin-bottom: 2px;">PHASE 2</div>
+              <div class="font-semibold text-xs" style="color: var(--text-main);">Researcher</div>
+              <div class="text-xs mt-1" style="font-size: 10px; color: var(--text-dim);">OSV & Web動的調査</div>
+            </div>
+            <div id="phase-pill-3" class="p-3 rounded-lg border border-subtle bg-surface-subtle" style="transition: all 0.3s;">
+              <div class="eyeb" style="font-size: 9px; margin-bottom: 2px;">PHASE 3</div>
+              <div class="font-semibold text-xs" style="color: var(--text-main);">Triage Agent</div>
+              <div class="text-xs mt-1" style="font-size: 10px; color: var(--text-dim);">発火条件 & 指示書</div>
+            </div>
           </div>
         </div>
 
@@ -753,6 +809,50 @@ HTML_PAGE = """<!DOCTYPE html>
       errPanel.classList.remove('hidden');
     }
 
+    function updateProgress(data) {
+      if (!data) return;
+      const pct = Math.min(100, Math.max(0, data.percent !== undefined ? data.percent : 0));
+      document.getElementById('progress-bar-fill').style.width = pct + '%';
+      document.getElementById('progress-percent').innerText = pct + '%';
+
+      if (data.message) {
+        document.getElementById('progress-detail').innerText = data.message;
+      }
+      if (data.current_target) {
+        document.getElementById('progress-target').innerText = '▸ ' + data.current_target;
+      } else {
+        document.getElementById('progress-target').innerText = '';
+      }
+
+      // Update Phase pills
+      const phase = (data.phase || '').toLowerCase();
+      const p1 = document.getElementById('phase-pill-1');
+      const p2 = document.getElementById('phase-pill-2');
+      const p3 = document.getElementById('phase-pill-3');
+      const stepText = document.getElementById('progress-step-text');
+      const loadingMsg = document.getElementById('loading-msg');
+
+      if (phase.includes('recon') || pct <= 15) {
+        p1.className = 'p-3 rounded-lg border phase-pill-active';
+        p2.className = 'p-3 rounded-lg border border-subtle bg-surface-subtle';
+        p3.className = 'p-3 rounded-lg border border-subtle bg-surface-subtle';
+        stepText.innerText = 'Phase 1 / 3: Recon Planner';
+        loadingMsg.innerText = 'SBOM解析 & 巡回戦略を立案中...';
+      } else if (phase.includes('researcher') || (pct > 15 && pct <= 75)) {
+        p1.className = 'p-3 rounded-lg border phase-pill-completed';
+        p2.className = 'p-3 rounded-lg border phase-pill-active';
+        p3.className = 'p-3 rounded-lg border border-subtle bg-surface-subtle';
+        stepText.innerText = 'Phase 2 / 3: Dynamic Researcher';
+        loadingMsg.innerText = '各コンポーネントの脆弱性・パッチ差分を動的調査中...';
+      } else {
+        p1.className = 'p-3 rounded-lg border phase-pill-completed';
+        p2.className = 'p-3 rounded-lg border phase-pill-completed';
+        p3.className = 'p-3 rounded-lg border phase-pill-active';
+        stepText.innerText = 'Phase 3 / 3: Triage Agent';
+        loadingMsg.innerText = '発火条件特定・現場即応指示書を生成中...';
+      }
+    }
+
     // Form Submit
     document.getElementById('triage-form').addEventListener('submit', async (e) => {
       e.preventDefault();
@@ -767,8 +867,11 @@ HTML_PAGE = """<!DOCTYPE html>
       document.getElementById('verification-panel').classList.add('hidden');
       document.getElementById('unscanned-panel').classList.add('hidden');
 
+      // Initialize progress bar
+      updateProgress({ percent: 2, phase: 'Recon Planner', message: 'パイプライン初期化中...' });
+
       try {
-        const res = await fetch('/api/run', {
+        const res = await fetch('/api/run-stream', {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
@@ -776,20 +879,55 @@ HTML_PAGE = """<!DOCTYPE html>
           },
           body: JSON.stringify({ mode, sbom, code_dir: codeDir, audit_file: auditFile })
         });
-        const data = await res.json();
 
-        if (!res.ok || data.error || !data.report) {
-          const msg = data.error || ('HTTP ' + res.status + ': ' + res.statusText);
-          showError(msg);
-          return;
+        if (!res.ok) {
+          const errData = await res.json().catch(() => ({}));
+          throw new Error(errData.error || ('HTTP ' + res.status + ': ' + res.statusText));
         }
 
-        currentReport = data.report;
-        currentAudit = data.audit;
+        const reader = res.body.getReader();
+        const decoder = new TextDecoder('utf-8');
+        let buffer = '';
+        let completed = false;
 
-        renderReport(currentReport, currentAudit);
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          buffer += decoder.decode(value, { stream: true });
+
+          const events = buffer.split('\n\n');
+          buffer = events.pop(); // keep remainder
+
+          for (const ev of events) {
+            const trimmed = ev.trim();
+            if (!trimmed.startsWith('data: ')) continue;
+            const jsonStr = trimmed.slice(6);
+            try {
+              const payload = JSON.parse(jsonStr);
+              if (payload.type === 'progress') {
+                updateProgress(payload);
+              } else if (payload.type === 'complete') {
+                completed = true;
+                updateProgress({ percent: 100, phase: 'Complete', message: '調査完了！レポートを表示します。' });
+                currentReport = payload.report;
+                currentAudit = payload.audit;
+                // Brief pause for visual smoothness before switching view
+                await new Promise(r => setTimeout(r, 200));
+                renderReport(currentReport, currentAudit);
+              } else if (payload.type === 'error') {
+                throw new Error(payload.error || '不明なエラー');
+              }
+            } catch (pErr) {
+              if (pErr.message && !pErr.message.includes('JSON')) throw pErr;
+            }
+          }
+        }
+
+        if (!completed && !currentReport) {
+          throw new Error('サーバーからの応答が完了前に終了しました。');
+        }
       } catch (err) {
-        showError('通信または実行エラー: ' + err.message);
+        showError('実行時エラー: ' + err.message);
       } finally {
         document.getElementById('loading-spinner').classList.add('hidden');
         document.getElementById('notices-container').classList.remove('hidden');
@@ -1233,7 +1371,8 @@ class TriageDashboardHandler(BaseHTTPRequestHandler):
             )
             return
 
-        if self.path == "/api/run":
+        if self.path in ("/api/run", "/api/run-stream"):
+            is_stream = (self.path == "/api/run-stream")
             mode = req_data.get("mode", "demo")
             sbom_path = req_data.get("sbom", "sample_sbom.json").strip()
             code_dir = req_data.get("code_dir", "").strip() or None
@@ -1245,27 +1384,74 @@ class TriageDashboardHandler(BaseHTTPRequestHandler):
                 safe_code = str(resolve_safe_path(code_dir)) if code_dir else None
                 safe_audit = str(resolve_safe_path(audit_file)) if audit_file else None
 
-                triage_report, audit_report = execute_triage_pipeline(
-                    sbom_path=safe_sbom,
-                    mode=mode,
-                    code_dir=safe_code,
-                    audit_file_path=safe_audit,
-                )
+                if is_stream:
+                    self.send_response(200)
+                    self.send_header("Content-Type", "text/event-stream; charset=utf-8")
+                    self.send_header("Cache-Control", "no-cache")
+                    self.send_header("Connection", "keep-alive")
+                    self.send_header("X-Accel-Buffering", "no")
+                    self.end_headers()
 
-                self.send_response(200)
-                self.send_header("Content-Type", "application/json; charset=utf-8")
-                self.end_headers()
-                response_payload = {
-                    "report": triage_report.model_dump(),
-                    "audit": audit_report.model_dump() if audit_report else None,
-                }
-                self.wfile.write(json.dumps(response_payload, ensure_ascii=False).encode("utf-8"))
+                    def send_progress(msg: str, percent: int = 0, phase: str = "Init", **kwargs):
+                        evt = {
+                            "type": "progress",
+                            "message": msg,
+                            "percent": percent,
+                            "phase": phase,
+                            **kwargs,
+                        }
+                        try:
+                            self.wfile.write(f"data: {json.dumps(evt, ensure_ascii=False)}\n\n".encode("utf-8"))
+                            self.wfile.flush()
+                        except (BrokenPipeError, ConnectionResetError):
+                            pass
+
+                    triage_report, audit_report = execute_triage_pipeline(
+                        sbom_path=safe_sbom,
+                        mode=mode,
+                        code_dir=safe_code,
+                        audit_file_path=safe_audit,
+                        progress_callback=send_progress,
+                    )
+
+                    complete_evt = {
+                        "type": "complete",
+                        "report": triage_report.model_dump(),
+                        "audit": audit_report.model_dump() if audit_report else None,
+                    }
+                    self.wfile.write(f"data: {json.dumps(complete_evt, ensure_ascii=False)}\n\n".encode("utf-8"))
+                    self.wfile.flush()
+
+                else:
+                    triage_report, audit_report = execute_triage_pipeline(
+                        sbom_path=safe_sbom,
+                        mode=mode,
+                        code_dir=safe_code,
+                        audit_file_path=safe_audit,
+                    )
+
+                    self.send_response(200)
+                    self.send_header("Content-Type", "application/json; charset=utf-8")
+                    self.end_headers()
+                    response_payload = {
+                        "report": triage_report.model_dump(),
+                        "audit": audit_report.model_dump() if audit_report else None,
+                    }
+                    self.wfile.write(json.dumps(response_payload, ensure_ascii=False).encode("utf-8"))
 
             except Exception as e:
-                self.send_response(400)
-                self.send_header("Content-Type", "application/json; charset=utf-8")
-                self.end_headers()
-                self.wfile.write(json.dumps({"error": str(e)}, ensure_ascii=False).encode("utf-8"))
+                if is_stream:
+                    err_evt = {"type": "error", "error": str(e)}
+                    try:
+                        self.wfile.write(f"data: {json.dumps(err_evt, ensure_ascii=False)}\n\n".encode("utf-8"))
+                        self.wfile.flush()
+                    except (BrokenPipeError, ConnectionResetError):
+                        pass
+                else:
+                    self.send_response(400)
+                    self.send_header("Content-Type", "application/json; charset=utf-8")
+                    self.end_headers()
+                    self.wfile.write(json.dumps({"error": str(e)}, ensure_ascii=False).encode("utf-8"))
 
         elif self.path == "/api/create-signoff":
             audit_file_path = req_data.get("audit_file", "sample_audit_signoff.json").strip()

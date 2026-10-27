@@ -41,21 +41,27 @@ def execute_triage_pipeline(
     Returns:
         Tuple of (TriageReport, Optional[CodebaseAuditReport])
     """
-    def log(msg: str):
+    def log(msg: str, percent: int = 0, phase: str = "Init", **kwargs):
         if progress_callback:
-            progress_callback(msg)
+            try:
+                progress_callback(msg, percent=percent, phase=phase, **kwargs)
+            except TypeError:
+                progress_callback(msg)
 
     # 1. Handle Demo mode
     if mode == "demo":
-        log("Executing Demo Showcase mode (synthetic DEMO-* data)...")
+        log("展示用合成データ（DEMO-*）で即座に指示書を生成中...", percent=10, phase="Recon Planner")
         triage_report = generate_demo_report()
+        log("DEMO 調査完了。発火条件指示書を構成中...", percent=70, phase="Triage Agent")
         audit_report = None
         if code_dir or audit_file_path:
+            log("自社検証 / ベンダー監査判定を実行中...", percent=90, phase="Verifier")
             audit_report = verify_codebase(
                 triage_report,
                 code_dir_path=code_dir,
                 audit_file_path=audit_file_path,
             )
+        log("すべての処理が完了しました。", percent=100, phase="Complete")
         return triage_report, audit_report
 
     # 2. Check SBOM existence and handle typo fallback with explicit warning
@@ -85,9 +91,10 @@ def execute_triage_pipeline(
     # -------------------------------------------------------------
     # Phase 1: Recon Planner
     # -------------------------------------------------------------
-    log("[1/3] Recon Planner: SBOM解析および巡回戦略策定中...")
+    log("[1/3] Recon Planner: SBOM解析および巡回戦略策定中...", percent=5, phase="Recon Planner", step=1, total_steps=3)
     components = load_sbom_summary(sbom_path)
     osv_hits, osv_errors = query_osv_batch(components)
+    log(f"OSV.dev 一括照会完了 ({len(osv_hits)} 件のヒット)。深層調査対象を選定中...", percent=15, phase="Recon Planner", step=1, total_steps=3)
 
     if osv_errors:
         unscanned_items.append(f"OSV.dev 一括照会失敗: {'; '.join(osv_errors)}")
@@ -143,11 +150,22 @@ def execute_triage_pipeline(
     # -------------------------------------------------------------
     # Phase 2: Dynamic Researcher (Target-by-Target)
     # -------------------------------------------------------------
-    log(f"[2/3] Researcher: {len(recon_plan.targets)} コンポーネントの動的調査・事前予告探索中...")
+    total_targets = len(recon_plan.targets)
+    log(f"[2/3] Researcher: {total_targets} コンポーネントの動的調査・事前予告探索中...", percent=20, phase="Researcher", step=2, total_steps=3, total_targets=total_targets)
     research_results: List[TargetResearchResult] = []
 
     for idx, target in enumerate(recon_plan.targets, 1):
-        log(f"  [{idx}/{len(recon_plan.targets)}] 調査中: {target.name} ({target.version})...")
+        target_pct = int(20 + ((idx - 1) / max(total_targets, 1)) * 55)
+        log(
+            f"  [{idx}/{total_targets}] 調査中: {target.name} ({target.version})...",
+            percent=target_pct,
+            phase="Researcher",
+            step=2,
+            total_steps=3,
+            current_target=f"{target.name} ({target.version})",
+            target_index=idx,
+            total_targets=total_targets,
+        )
         try:
             res = run_researcher(target, dry_run=is_dry_run)
             research_results.append(res)
@@ -160,23 +178,25 @@ def execute_triage_pipeline(
     # -------------------------------------------------------------
     # Phase 3: Triage & Action Generation
     # -------------------------------------------------------------
-    log("[3/3] Triage Agent: 発火条件特定・現場即応指示書生成中...")
+    log("[3/3] Triage Agent: 発火条件特定・現場即応指示書生成中...", percent=78, phase="Triage Agent", step=3, total_steps=3)
     triage_report = run_triage_agent(
         research_results=research_results,
         unscanned_components=unscanned_items,
         dry_run=is_dry_run,
     )
+    log("指示書生成完了。検証判定を実行中...", percent=90, phase="Triage Agent", step=3, total_steps=3)
 
     # -------------------------------------------------------------
     # Phase 4: Codebase / Vendor Verification Audit
     # -------------------------------------------------------------
     audit_report = None
     if code_dir or audit_file_path:
-        log("自社検証 / ベンダー監査判定を実行中...")
+        log("自社検証 / ベンダー監査判定を実行中...", percent=94, phase="Verifier", step=3, total_steps=3)
         audit_report = verify_codebase(
             triage_report,
             code_dir_path=code_dir,
             audit_file_path=audit_file_path,
         )
 
+    log("すべての処理が完了しました。", percent=100, phase="Complete", step=3, total_steps=3)
     return triage_report, audit_report
