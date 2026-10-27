@@ -7,6 +7,7 @@
 ## 1. アーキテクチャ概要
 
 本システムは、過剰な独自コードや複雑なフレームワークを排し、Geminiのネイティブな **Function Calling**・**Google Search Grounding**・**Structured Outputs (Pydantic)** を最大限活用した3フェーズの自律型パイプラインです。
+また、**Tokenless Architecture (ADR-014)** を採用しており、GitHub PAT（Personal Access Token）の管理・漏洩リスクを排除し、完全無料・オープンな **OSV.dev / OSV-Scanner** を脆弱性調査の第一線に配置しています。
 
 ```mermaid
 flowchart TD
@@ -15,9 +16,9 @@ flowchart TD
     subgraph Phase1["1. Recon Planner (戦略立案)"]
         RP["Recon Planner"]
         T_SBOM["Tool: load_sbom_summary"]
-        T_OSV["Tool: query_osv_batch (OSV.dev一括)"]
+        T_OSV1["Tool: query_osv_batch (OSV.dev一括・Tokenless)"]
         RP <--> T_SBOM
-        RP <--> T_OSV
+        RP <--> T_OSV1
     end
 
     RP -->|"ReconPlan (JSON)"| Dispatcher["並列ディスパッチャ"]
@@ -25,10 +26,13 @@ flowchart TD
     subgraph Phase2["2. Researcher (動的調査 × N並列)"]
         Dispatcher --> R1["Researcher Worker #1"]
         Dispatcher --> R2["Researcher Worker #2"]
+        T_OSV2["Tool: OSV.dev (CVE/CVSS/修正バージョン詳細)"]
         T_WEB["Tool: google_search / fetch_webpage_text"]
-        T_GH["Tool: search_github_security_signals"]
+        T_GH["Tool: search_github_security_signals (補足シグナル)"]
+        R1 <--> T_OSV2
         R1 <--> T_WEB
         R1 <--> T_GH
+        R2 <--> T_OSV2
         R2 <--> T_WEB
         R2 <--> T_GH
     end
@@ -38,7 +42,7 @@ flowchart TD
 
     subgraph Phase3["3. Triage Agent (トリアージ＆指示書作成)"]
         TR["Triage Agent"]
-        T_DIFF["Tool: get_github_commit_or_advisory_detail"]
+        T_DIFF["Tool: get_github_commit_or_advisory_detail / OSV Refs"]
         TR <--> T_DIFF
     end
 
@@ -53,10 +57,10 @@ flowchart TD
 ```
 
 ### コンポーネント・エージェントの役割
-1. **Recon Planner（戦略立案）:** SBOMから推移的依存を解析し、無料・高速な `OSV.dev` 一括照会結果を組み合わせ、攻撃対象領域とRCE傾向から「今すぐ深層調査すべきTop Nコンポーネント」と検索戦略（Pre-announcement事前予告探索を含む）を決定。
-2. **Researcher（動的調査）:** GitHub Advisories、直近リリース・RC版、セキュリティ修正コミット、Gemini Google Search Groundingを駆使し、公式パッチ予告や直近シグナルを能動的に調査。
+1. **Recon Planner（戦略立案）:** SBOMから推移的依存を解析し、認証不要・高速な `OSV.dev` 一括照会結果を組み合わせ、攻撃対象領域とRCE傾向から「今すぐ深層調査すべきTop Nコンポーネント」と検索戦略（Pre-announcement事前予告探索を含む）を決定。
+2. **Researcher（動的調査）:** OSV.dev による確定CVE・CVSS・影響/修正バージョンの高精度取得に加え、Gemini Google Search GroundingやGitHub公開シグナルを駆使し、公式パッチ予告や直近シグナルを能動的に調査。
 3. **Triage Agent（発火条件特定・指示書作成）:** パッチのコミット差分（Diff）やAdvisory本文を精読し、「どの設定値（`config.xxx = true` 等）が有効な時に発火するか」を特定。CVSSスコア付きの現場即応指示書を出力。
-4. **Verifier（補助CLI: 自社コードベース自動検証）:** 指示書内の「確認ポイント（Yes/No）」に基づき、自社リポジトリを自動走査して「自社で本当に発火条件を踏んでいるか」を自動判定し、該当行付きの自社検証結果レポートを出力。
+4. **Verifier（補助CLI: 自社コードベース自動検証）:** 指示書内の「確認ポイント（Yes/No）」に基づき、自社リポジトリを自動走査して「自社で本当に発火条件を踏んでいるか」をAST構文解析およびテストコード分離により自動判定し、該当行付きの自社検証結果レポートを出力。
 
 ---
 
@@ -64,7 +68,8 @@ flowchart TD
 
 ### 必要要件
 - Python 3.9+
-- Gemini API Key
+- Gemini API Key (または Vertex AI / ADC)
+- **GitHub Token 不要 (Tokenless)**: OSV.dev を使用するためトークン設定なしですぐに動作します。
 
 ### インストール
 ```bash
@@ -86,16 +91,16 @@ cp .env.example .env
 # .env
 GEMINI_API_KEY="your-gemini-api-key"
 
-# ベースモデル（環境に合わせて柔軟に切り替え可能）
-GEMINI_MODEL="gemini-2.5-flash"
+# ベースモデル（高速・安定・最新の gemini-3.5-flash 推奨）
+GEMINI_MODEL="gemini-3.5-flash"
 
 # （任意）役割ごとにモデルを分けたい場合のみ設定
 # GEMINI_MODEL_PLANNER="gemini-2.5-pro"
-# GEMINI_MODEL_RESEARCHER="gemini-2.5-flash"
+# GEMINI_MODEL_RESEARCHER="gemini-3.5-flash"
 # GEMINI_MODEL_TRIAGE="gemini-2.5-pro"
 
-# GitHub Token (任意: GitHub APIのレート制限緩和用)
-GITHUB_TOKEN=""
+# GitHub Token (完全任意: 通常は未設定でOK。OSV.devによりトークンレスで動作します)
+# GITHUB_TOKEN=""
 ```
 
 ---

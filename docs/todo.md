@@ -27,6 +27,10 @@
   - 現在は CycloneDX JSON および Syft native JSON が中心。SPDX 2.3 / 3.0 JSON形式の直接読み込みパーサーを追加。
 - [ ] **GitHub Enterprise / GitLab 対応**
   - 社内閉域網で稼働している GitHub Enterprise Server や GitLab のリポジトリ・Advisory APIへの接続オプション追加。
+- [x] **GitHub Token 完全撤廃と OSV-Scanner / OSV.dev への脆弱性調査一本化（Tokenless Architecture / ADR-014対応完了）**
+  - GITHUB_TOKEN の設定・管理を不要にし、PAT漏洩や権限昇格リスクをアーキテクチャから根本排除。
+  - 完全無料・認証不要・オープンな OSV.dev (OSV-Scanner バックエンド) をプライマリに採用し、CVE alias、CVSS score、影響・修正バージョン、修正コミット/アドバイザリ参照URLを高精度取得。
+  - GitHub API レート制限（403）に起因する不要な未調査警告（UNSCANNED WARNING）を解消し、未認証環境でも即座に高品質なトリアージを実行可能に。
 - [x] **Verifier判定文言の精緻化（v0.2対応完了）**
   - 単なるキーワード照合結果を断定的な「該当・要対応」と決めつけず、画面およびレポート上で `YES (本番コード内検出・要実地確認)` / `YES (テストコード内のみ検出・本番未検出)` と客観的に明示。
   - 理由欄にもテストコードや到達不能パスの可能性を明記し、発火時は修正、影響を受けない場合はサインオフ（誤検知・許容）を促す誠実なガイダンスへ刷新。AST/到達可能性解析による完全証明との境界線を明確化。

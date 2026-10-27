@@ -55,6 +55,7 @@ class ReconTarget(BaseModel):
     name: str = Field(description="Package name to investigate")
     version: str = Field(description="Current in-use version")
     ecosystem: str = Field(description="Ecosystem (PyPI, npm, Maven, etc.)")
+    purl: Optional[str] = Field(default=None, description="Package URL (purl) if available")
     github_repo: Optional[str] = Field(default=None, description="GitHub repository owner/repo if known or inferred")
     priority: str = Field(description="Priority: CRITICAL, HIGH, MEDIUM, LOW")
     rationale: str = Field(description="Why this component was selected for deep dynamic reconnaissance")

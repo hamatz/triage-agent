@@ -29,7 +29,12 @@ def get_gemini_api_key() -> Optional[str]:
 
 
 def get_github_token() -> Optional[str]:
-    """Get GitHub Token from environment (optional)."""
+    """Get GitHub Token from environment (Optional).
+    
+    In v0.2+ (ADR-014 Tokenless Architecture), OSV.dev and OSV-Scanner are used
+    as the primary vulnerability data source, eliminating the requirement for a GitHub PAT.
+    If provided, it is used only as an optional secondary boost for public GitHub commit/release rate limits.
+    """
     return os.getenv("GITHUB_TOKEN")
 
 

@@ -70,19 +70,20 @@ flowchart TD
 | エージェント | 責務 | 入力 | 出力スキーマ | 主なツール / 実行方式 |
 | :--- | :--- | :--- | :--- | :--- |
 | **Recon Planner** | SBOMを全件走査し、OSV一括照会結果と外部露出度から調査優先度（CRITICAL/HIGH）と検索クエリリストを策定 | SBOM JSON, 自社特性（任意） | `ReconPlan` | `load_sbom_summary`<br>`query_osv_batch` (CLI側で1回取得して注入) |
-| **Researcher** | 特定されたターゲットごとに、Google検索で事前予告・ブログを探索し、GitHub Advisories、直近Release/RC、修正コミットを取得した上で2段階推論 | `ReconTarget` | `TargetResearchResult`<br>（`ResearchFinding` リスト） | **2段階実行:**<br>1. `google_search` + GitHub API<br>2. `response_schema` による構造化合成 |
+| **Researcher** | 特定されたターゲットごとに、Google検索で事前予告・ブログを探索し、OSV.dev / OSV-Scannerの脆弱性シグナルと直近リリース情報を取得した上で2段階推論 | `ReconTarget` | `TargetResearchResult`<br>（`ResearchFinding` リスト） | **2段階実行:**<br>1. `google_search` + OSV.dev<br>2. `response_schema` による構造化合成 |
 | **Triage Agent** | 収集したシグナルとパッチ差分（Diff）を精読し、発火する具体的設定値・API利用条件を特定。現場指示書を生成 | `List[TargetResearchResult]` | `TriageReport`<br>（`TriageNotice` リスト） | **2段階実行:**<br>1. Commit Diff & 詳細アドバイザリ取得<br>2. `response_schema` による構造化指示書合成 |
 | **Verifier (補助CLI)** | 指示書の確認ポイントに基づき、自社コードベース内を走査してYes/Noの自社判定レポートを自動生成。手動監査サインオフ突合に対応 | `TriageReport (JSON)`<br>自社コードディレクトリ<br>`AuditAttestation` (任意) | `CodebaseAuditReport` | `extract_keywords_from_method`<br>`scan_directory_for_patterns`<br>厳格サインオフ突合（ID・版・NO検証） |
 
 ---
 
-## 4. ツールセット設計（APIキー・レートリミット対策・堅牢性）
+## 4. ツールセット設計（完全トークンレス・堅牢性）
 
-1. **OSV.dev API (`query_osv_batch`):**
-   - 無料・認証不要。数千件のパッケージを一括で1リクエスト（`POST /v1/querybatch`）で照会可能。CLI起動時に1回だけ取得し、プランナーおよびレポートに注入。
-2. **GitHub API (`search_github_security_signals`, `get_github_commit_or_advisory_detail`):**
-   - トークン未設定時は公開IPレートリミット（60回/時）、`GITHUB_TOKEN` 設定時は 5,000回/時。
-   - Advisories, Releases, Commits, Diffを一元取得。403/429レート制限等の非200応答は例外を飲み込まず `errors` に記録し、レポート警告に集約。
+1. **OSV.dev API / OSV-Scanner 統合 (`query_osv_batch`):**
+   - 無料・認証不要（Tokenless）。数千件のパッケージを一括で1リクエスト（`POST /v1/querybatch`）で照会可能。GitHub Security Advisories (GHSA)、NVD、PyPI、npm、Go、Rust、Maven、Linux等の脆弱性を完全網羅。
+   - CLI起動時に1回だけ取得し、プランナーおよびレポートに注入。
+2. **完全トークンレス設計（Tokenless Architecture with Public Diff）:**
+   - 外部SaaSのトークン漏洩リスクやシークレット管理コストをゼロにするため、`GITHUB_TOKEN` を完全撤廃。
+   - パッチコミット差分（Diff）は、OSV レコード内の `references` から特定した公開 `.diff`（認証不要の公開HTTP取得）または Gemini Google Search Grounding で安全に取得。
 3. **Gemini Google Search Grounding (`google_search`):**
    - Gemini APIネイティブのグラウンディング機能。追加のSerpAPI / Tavily等の有料APIキーを不要とし、低コストで事前予告ニュースやブログを検索。
 4. **2段階実行アーキテクチャ (2-Stage Synthesis):**

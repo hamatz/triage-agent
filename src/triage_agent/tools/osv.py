@@ -1,8 +1,9 @@
-from typing import Any, Dict, List, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 import httpx
 from triage_agent.schemas import ComponentInfo
 
 OSV_BATCH_ENDPOINT = "https://api.osv.dev/v1/querybatch"
+OSV_VULN_ENDPOINT = "https://api.osv.dev/v1/vulns"
 
 
 def query_osv_batch(
@@ -41,7 +42,7 @@ def query_osv_batch(
     errors: List[str] = []
 
     try:
-        with httpx.Client(timeout=15.0) as client:
+        with httpx.Client(timeout=15.0, follow_redirects=True) as client:
             resp = client.post(OSV_BATCH_ENDPOINT, json={"queries": queries})
             if resp.status_code == 200:
                 data = resp.json()
@@ -50,15 +51,39 @@ def query_osv_batch(
                     vulns = res.get("vulns", [])
                     comp_name = components[idx].name
                     if vulns:
-                        results_by_component[comp_name] = [
-                            {
+                        parsed_vulns = []
+                        for v in vulns:
+                            # Extract aliases (e.g. CVE-2026-XXXX)
+                            aliases = v.get("aliases", [])
+                            cve_id = next((a for a in aliases if a.startswith("CVE-")), None)
+                            
+                            # Extract severity / score
+                            score = None
+                            for sev in v.get("severity", []):
+                                if sev.get("type") in ("CVSS_V3", "CVSS_V4"):
+                                    score = sev.get("score")
+                                    break
+                            
+                            # Extract affected version events (fixed versions)
+                            fixed_versions = []
+                            for aff in v.get("affected", []):
+                                for r in aff.get("ranges", []):
+                                    for ev in r.get("events", []):
+                                        if "fixed" in ev:
+                                            fixed_versions.append(ev["fixed"])
+
+                            parsed_vulns.append({
                                 "id": v.get("id"),
+                                "cve_id": cve_id,
+                                "aliases": aliases,
                                 "summary": v.get("summary", ""),
-                                "details": (v.get("details", "") or "")[:200],
+                                "details": (v.get("details", "") or "")[:400],
+                                "score": score,
+                                "fixed_versions": fixed_versions,
+                                "references": [ref.get("url") for ref in v.get("references", []) if ref.get("url")],
                                 "modified": v.get("modified"),
-                            }
-                            for v in vulns
-                        ]
+                            })
+                        results_by_component[comp_name] = parsed_vulns
             else:
                 err_msg = f"OSV.dev API HTTP {resp.status_code}: {resp.text[:150]}"
                 errors.append(err_msg)
@@ -71,3 +96,53 @@ def query_osv_batch(
             raise RuntimeError(err_msg) from e
 
     return results_by_component, errors
+
+
+def get_osv_vulnerability_detail(vuln_id: str) -> Optional[Dict[str, Any]]:
+    """Retrieve full vulnerability details from OSV.dev API without authentication.
+    
+    Args:
+        vuln_id: Vulnerability ID (e.g. 'GHSA-542g-h47m-68v8' or 'CVE-2024-43796')
+        
+    Returns:
+        Full vulnerability detail dict or None if not found/error
+    """
+    if not vuln_id:
+        return None
+    url = f"{OSV_VULN_ENDPOINT}/{vuln_id}"
+    try:
+        with httpx.Client(timeout=10.0, follow_redirects=True) as client:
+            resp = client.get(url)
+            if resp.status_code == 200:
+                return resp.json()
+    except Exception:
+        pass
+    return None
+
+
+def query_osv_single(
+    name: str,
+    version: Optional[str] = None,
+    ecosystem: Optional[str] = None,
+    purl: Optional[str] = None,
+) -> Tuple[List[Dict[str, Any]], List[str]]:
+    """Query OSV.dev for a single component's known vulnerabilities without any authentication token.
+    
+    Args:
+        name: Component name (e.g. 'fastapi')
+        version: In-use version (e.g. '0.100.0')
+        ecosystem: Package ecosystem (e.g. 'PyPI', 'npm', 'Go', 'Maven')
+        purl: Package URL if available (e.g. 'pkg:pypi/fastapi@0.100.0')
+        
+    Returns:
+        Tuple of (list of vulnerability entries, list of errors)
+    """
+    comp = ComponentInfo(
+        name=name,
+        version=version or "unknown",
+        ecosystem=ecosystem or "unknown",
+        purl=purl,
+    )
+    res_dict, errors = query_osv_batch([comp], raise_on_error=False)
+    return res_dict.get(name, []), errors
+

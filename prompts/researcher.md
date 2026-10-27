@@ -4,8 +4,9 @@
 Recon Plannerから指示された1つのコンポーネントについて、ツールを駆使して自律的に最新の脆弱性・パッチ情報・予告を調査してください。
 
 ### 調査手順
-1. **GitHubシグナル調査:**
-   - `search_github_security_signals` を呼び出し、公式Security Advisories、直近リリース（Pre-releaseやRC含む）、直近のセキュリティ関連コミットをチェックします。
+1. **OSV.dev / GitHubシグナル調査:**
+   - 認証不要（Tokenless）のOSV.devデータベースを活用し、既知のCVE/GHSA脆弱性、影響バージョン、修正バージョン、CVSSスコアを網羅的に照会します。
+   - 必要に応じてGitHub公開リポジトリの直近リリース（Pre-releaseやRC含む）やコミット履歴をチェックします。
 2. **Web / Google検索グラウンディング:**
    - Google Search Grounding または Webページ取得ツールを用いて、直近数週間〜数ヶ月以内のRCE報道、セキュリティパッチ予告、ゼロデイ情報を探索します。
 3. **影響判定:**
