@@ -20,3 +20,9 @@ triage-ui = "triage_agent.web_ui:main"
 [build-system]
 requires = ["setuptools"]
 build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+"triage_agent.ui" = ["templates/*.html", "static/*.css", "static/*.js"]

@@ -1,0 +1,465 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>triage-agent — DAWN Studio</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+
+  <!-- App Header -->
+  <header style="height: 64px; padding: 0 24px; border-bottom: 1px solid var(--border-color); background: rgba(255, 255, 255, 0.85); backdrop-filter: blur(16px); position: sticky; top: 0; z-index: 40;" class="flex items-center justify-between">
+    <div class="flex items-center space-x-4">
+      <div class="flex items-center space-x-2">
+        <span style="font-size: 22px; color: var(--accent-gold);">◈</span>
+        <div class="serif-title" style="font-size: 22px; color: var(--text-main);">
+          triage-agent <small class="eyeb" style="margin-left: 8px;">DAWN / 0.2.5</small>
+        </div>
+      </div>
+      <div style="font-size: 11px; color: var(--text-muted); border-left: 1px solid var(--border-color); padding-left: 16px;">
+        Autonomous SBOM Vulnerability Intelligence &amp; Triage
+      </div>
+    </div>
+    
+    <div class="flex items-center space-x-3 text-xs">
+      <div id="llm-status" class="flex items-center space-x-2 bg-white px-3 py-1 rounded-full border border-[#d9c9af] shadow-xs font-mono text-xs">
+        <span style="width: 8px; height: 8px; border-radius: 50%; background: #eab308; display: inline-block;"></span>
+        <span style="color: var(--text-muted);">Checking Status...</span>
+      </div>
+    </div>
+  </header>
+
+  <!-- Main Container -->
+  <main class="w-full max-w-7xl mx-auto px-6 py-8 flex-1">
+    <div class="main-grid">
+
+      <!-- Left Controls Panel -->
+      <section class="space-y-6">
+        <div class="surface p-6">
+          <div class="eyeb mb-1">SCAN &amp; TRIAGE CONFIGURATION</div>
+          <h2 class="serif-title text-xl font-normal mb-5">
+            スキャン &amp; トリアージ設定
+          </h2>
+
+          <form id="triage-form" onsubmit="return false;" class="space-y-5">
+            <!-- Execution Mode -->
+            <div>
+              <div class="flex items-center justify-between mb-1">
+                <label class="text-xs font-semibold">実行モード</label>
+                <span class="eyeb" style="font-size: 9px;">PIPELINE MODE</span>
+              </div>
+              
+              <div class="subnav-tabs">
+                <label class="subnav-tab">
+                  <input type="radio" name="mode" value="demo" checked style="position: absolute; opacity: 0;">
+                  <span class="subnav-label">Demo</span>
+                </label>
+                <label class="subnav-tab">
+                  <input type="radio" name="mode" value="dry-run" style="position: absolute; opacity: 0;">
+                  <span class="subnav-label">Dry-Run</span>
+                </label>
+                <label class="subnav-tab">
+                  <input type="radio" name="mode" value="live" style="position: absolute; opacity: 0;">
+                  <span class="subnav-label">Live Agent</span>
+                </label>
+              </div>
+              <p id="mode-desc" class="text-xs mt-2" style="color: var(--text-muted); background: var(--bg-surface-subtle); padding: 10px; border-radius: 8px; border: 1px solid var(--border-subtle); line-height: 1.6;">
+                展示用合成データ（DEMO-*）で即座にUIを確認します。
+              </p>
+            </div>
+
+            <!-- SBOM File -->
+            <div>
+              <label class="block text-xs font-semibold mb-1">SBOM ファイルパス</label>
+              <input type="text" id="sbom-path" value="sample_sbom.json" class="dawn-input" spellcheck="false">
+              <span class="text-xs block mt-1" style="color: var(--text-dim); font-size: 11px;">Syft CycloneDX JSON または Syft native JSON</span>
+            </div>
+
+            <!-- Codebase Path (for Verifier) -->
+            <div>
+              <label class="block text-xs font-semibold mb-1">自社検証コードパス (外注時は空欄)</label>
+              <input type="text" id="code-dir" value="demo_app" class="dawn-input" spellcheck="false">
+              <span class="text-xs block mt-1" style="color: var(--text-dim); font-size: 11px;">空欄の場合はベンダー委託システムとして手動・ベンダー回答を記録</span>
+            </div>
+
+            <!-- Audit Sign-off File -->
+            <div>
+              <label class="block text-xs font-semibold mb-1">手動/ベンダー監査サインオフパス</label>
+              <input type="text" id="audit-file" value="sample_audit_signoff.json" class="dawn-input" spellcheck="false">
+              <span class="text-xs block mt-1" style="color: var(--text-dim); font-size: 11px;">SRE・ベンダー合意済みの恒久安全判定ファイル</span>
+            </div>
+
+            <!-- Submit Button -->
+            <button type="submit" id="btn-run" class="w-full btn-dawn-primary py-3">
+              <span>◈</span>
+              <span>トリアージ実行</span>
+            </button>
+
+            <!-- Load Previous Report Button -->
+            <button type="button" id="btn-open-load-modal" class="w-full btn-dawn-outline py-2.5 mt-2 flex items-center justify-center space-x-2">
+              <span>📂</span>
+              <span>以前のレポートを読込（継続編集）</span>
+            </button>
+          </form>
+        </div>
+
+        <!-- Operating Principles Box -->
+        <div class="surface-warm p-5" style="border-left: 3px solid var(--accent-gold-dark);">
+          <div class="eyeb mb-1">TRIAGE OPERATING PRINCIPLES</div>
+          <div class="serif-title font-bold text-sm mb-2">トリアージ運用の3鉄則</div>
+          <ul class="space-y-2 text-xs" style="color: var(--text-muted); line-height: 1.6; list-style: none;">
+            <li class="flex items-start">
+              <span style="color: var(--accent-gold-dark); margin-right: 6px;">•</span>
+              <span><strong>分からないものを安全と言わない:</strong> コード内未検出や外注システムは外部設定・ベンダーの要確認。</span>
+            </li>
+            <li class="flex items-start">
+              <span style="color: var(--accent-gold-dark); margin-right: 6px;">•</span>
+              <span><strong>正本管理:</strong> AI下書きを人間が承認・固定したJSONを正本とする。</span>
+            </li>
+            <li class="flex items-start">
+              <span style="color: var(--accent-gold-dark); margin-right: 6px;">•</span>
+              <span><strong>監査サインオフ:</strong> ベンダー回答・根拠を添えて安全（NO）に昇格。</span>
+            </li>
+          </ul>
+        </div>
+      </section>
+
+      <!-- Right Results Panel -->
+      <section class="space-y-6 flex-1">
+
+        <!-- Status Indicator / DAWN Gold Ring Spinner & Realtime Progress Bar -->
+        <div id="loading-spinner" class="hidden surface p-8 space-y-6">
+          <div class="flex items-center justify-between" style="border-bottom: 1px solid var(--border-subtle); padding-bottom: 14px;">
+            <div class="flex items-center space-x-3">
+              <div class="generating-spinner" style="width: 36px; height: 36px;">
+                <div class="generating-ring"></div>
+                <span class="generating-icon" style="font-size: 16px;">◈</span>
+              </div>
+              <div>
+                <div class="eyeb" id="loading-eyebrow" style="font-size: 9px; margin-bottom: 2px;">AUTONOMOUS INVESTIGATION IN PROGRESS</div>
+                <h3 class="serif-title text-base font-normal" id="loading-msg">エージェントが調査を実行中...</h3>
+              </div>
+            </div>
+            <div class="text-right">
+              <div id="progress-percent" class="serif-title text-3xl font-normal" style="color: var(--accent-gold-dark); line-height: 1;">0%</div>
+              <span id="progress-step-text" class="text-xs" style="color: var(--text-dim); font-size: 10px;">Phase 1 / 3</span>
+            </div>
+          </div>
+
+          <!-- Progress Bar Fill -->
+          <div class="space-y-2">
+            <div style="width: 100%; height: 10px; background: var(--border-subtle); border-radius: 999px; overflow: hidden; position: relative;">
+              <div id="progress-bar-fill" style="width: 0%; height: 100%; background: linear-gradient(90deg, var(--accent-gold) 0%, var(--accent-gold-dark) 100%); border-radius: 999px; transition: width 0.35s ease-out;"></div>
+            </div>
+            <div class="flex items-center justify-between text-xs" style="color: var(--text-muted); font-size: 11px;">
+              <span id="progress-detail" class="font-mono">準備中...</span>
+              <span id="progress-target" class="font-mono" style="color: var(--accent-gold-dark); font-weight: 600;"></span>
+            </div>
+          </div>
+
+          <!-- Phase Indicator Pills -->
+          <div class="grid grid-cols-3 gap-3 text-center text-xs pt-1">
+            <div id="phase-pill-1" class="p-3 rounded-lg border border-subtle bg-surface-subtle" style="transition: all 0.3s;">
+              <div class="eyeb" style="font-size: 9px; margin-bottom: 2px;">PHASE 1</div>
+              <div class="font-semibold text-xs" style="color: var(--text-main);">Recon Planner</div>
+              <div class="text-xs mt-1" style="font-size: 10px; color: var(--text-dim);">SBOM解析 & 戦略</div>
+            </div>
+            <div id="phase-pill-2" class="p-3 rounded-lg border border-subtle bg-surface-subtle" style="transition: all 0.3s;">
+              <div class="eyeb" style="font-size: 9px; margin-bottom: 2px;">PHASE 2</div>
+              <div class="font-semibold text-xs" style="color: var(--text-main);">Researcher</div>
+              <div class="text-xs mt-1" style="font-size: 10px; color: var(--text-dim);">OSV & Web動的調査</div>
+            </div>
+            <div id="phase-pill-3" class="p-3 rounded-lg border border-subtle bg-surface-subtle" style="transition: all 0.3s;">
+              <div class="eyeb" style="font-size: 9px; margin-bottom: 2px;">PHASE 3</div>
+              <div class="font-semibold text-xs" style="color: var(--text-main);">Triage Agent</div>
+              <div class="text-xs mt-1" style="font-size: 10px; color: var(--text-dim);">発火条件 & 指示書</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Error Alert Panel -->
+        <div id="error-panel" class="hidden p-5" style="background: #fdf2f2; border: 1px solid #fecaca; border-left: 4px solid #991b1b; border-radius: 12px;">
+          <div class="flex items-start space-x-3">
+            <span style="font-size: 20px; line-height: 1; color: #991b1b;">🚨</span>
+            <div class="text-xs flex-1">
+              <div class="eyeb" style="color: #991b1b; margin-bottom: 4px;">EXECUTION ERROR</div>
+              <h3 class="font-bold text-sm" style="color: #991b1b;">実行時エラーが発生しました</h3>
+              <p id="error-message" class="font-mono mt-2 p-3 text-xs" style="white-space: pre-wrap; background: rgba(255, 255, 255, 0.8); border: 1px solid #fecaca; border-radius: 6px; color: #7f1d1d;"></p>
+            </div>
+          </div>
+        </div>
+
+        <!-- Report Action Bar (Save & Export) -->
+        <div id="report-action-bar" class="hidden surface p-4 flex items-center justify-between" style="border: 1.5px solid var(--border-color); border-radius: 14px;">
+          <div class="flex items-center space-x-3">
+            <span style="font-size: 18px; color: var(--accent-gold);">◈</span>
+            <div>
+              <div class="eyeb" style="font-size: 9px;">REPORT WORKSPACE &amp; EXPORT</div>
+              <div class="text-xs font-semibold" id="report-action-title">トリアージ指示書 &amp; 監査データ</div>
+            </div>
+          </div>
+          <div class="flex items-center space-x-2">
+            <button type="button" id="btn-open-save-modal" class="btn-dawn-primary text-xs py-2 px-3 flex items-center space-x-1.5">
+              <span>💾</span>
+              <span>ファイルに保存</span>
+            </button>
+            <button type="button" id="btn-dl-md" class="btn-dawn-outline text-xs py-2 px-3 flex items-center space-x-1.5">
+              <span>📥</span>
+              <span>指示書 (MD)</span>
+            </button>
+            <button type="button" id="btn-dl-json" class="btn-dawn-outline text-xs py-2 px-3 flex items-center space-x-1.5">
+              <span>📥</span>
+              <span>JSON</span>
+            </button>
+            <button type="button" id="btn-dl-audit" class="btn-dawn-outline text-xs py-2 px-3 flex items-center space-x-1.5 hidden">
+              <span>📥</span>
+              <span>検証結果 (MD)</span>
+            </button>
+          </div>
+        </div>
+
+        <!-- Verification Audit Summary -->
+        <div id="verification-panel" class="hidden surface p-6 space-y-5">
+          <div class="flex items-center justify-between" style="border-bottom: 1px solid var(--border-subtle); padding-bottom: 16px;">
+            <div>
+              <div class="eyeb mb-1" id="audit-eyebrow">AUDIT SUMMARY REPORT</div>
+              <h2 class="serif-title text-xl font-normal" id="audit-title">自社コードベース検証結果サマリ</h2>
+              <p id="audit-code-dir" class="text-xs font-mono mt-1" style="color: var(--text-dim);"></p>
+            </div>
+            <div id="audit-overall-badge" class="badge-pill text-xs py-1 px-3"></div>
+          </div>
+
+          <!-- Metric Counts Grid -->
+          <div class="grid grid-cols-2 gap-3" style="grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));">
+            <div class="p-3 text-center" style="background: #ffffff; border: 1px solid var(--border-color); border-radius: 12px;">
+              <div class="eyeb" style="font-size: 9px; margin-bottom: 4px;">TOTAL CHECKS</div>
+              <div id="count-total" class="serif-title text-3xl font-normal">0</div>
+              <span class="text-xs" style="color: var(--text-muted); font-size: 11px;">総検査項目</span>
+            </div>
+            <div class="p-3 text-center" style="background: #fdf2f2; border: 1px solid #fecaca; border-radius: 12px;">
+              <div class="eyeb" style="font-size: 9px; color: #991b1b; margin-bottom: 4px;">AFFECTED / NEED CHECK</div>
+              <div id="count-yes" class="serif-title text-3xl font-normal" style="color: #991b1b;">0</div>
+              <span class="text-xs font-medium" style="color: #991b1b; font-size: 11px;">YES (要実地確認)</span>
+            </div>
+            <div class="p-3 text-center" style="background: #fff9ed; border: 1px solid #fde68a; border-radius: 12px;">
+              <div class="eyeb" style="font-size: 9px; color: #92400e; margin-bottom: 4px;">UNVERIFIED</div>
+              <div id="count-unverified" class="serif-title text-3xl font-normal" style="color: #92400e;">0</div>
+              <span class="text-xs font-medium" style="color: #92400e; font-size: 11px;">要確認 (外部/照会)</span>
+            </div>
+            <div class="p-3 text-center" style="background: #f0fdf4; border: 1px solid #bbf7d0; border-radius: 12px;">
+              <div class="eyeb" style="font-size: 9px; color: #166534; margin-bottom: 4px;">ATTESTED SAFE</div>
+              <div id="count-safe" class="serif-title text-3xl font-normal" style="color: #166534;">0</div>
+              <span class="text-xs font-medium" style="color: #166534; font-size: 11px;">NO (確認済安全)</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Unscanned / Warnings Alert Banner -->
+        <div id="unscanned-panel" class="hidden p-5" style="background: #fff9ed; border: 1px solid #fde68a; border-left: 4px solid #92400e; border-radius: 12px;">
+          <div class="flex items-start space-x-3">
+            <span style="font-size: 20px; line-height: 1; color: #92400e;">⚠</span>
+            <div class="text-xs flex-1">
+              <div class="eyeb" style="color: #92400e; margin-bottom: 4px;">UNSCANNED WARNING</div>
+              <h3 class="font-bold text-sm" style="color: #92400e;">【注意】調査不能・未調査コンポーネント</h3>
+              <p style="color: #78350f; margin-top: 4px; line-height: 1.6;">
+                以下のコンポーネントは調査不能または未調査です。未調査の項目を「安全」と誤認してはなりません。
+              </p>
+              <ul id="unscanned-list" class="font-mono text-xs mt-2 p-3 space-y-1" style="background: rgba(255, 255, 255, 0.7); border: 1px solid #fde68a; border-radius: 8px; color: #78350f; list-style-position: inside;"></ul>
+            </div>
+          </div>
+        </div>
+
+        <!-- Report Action Bar (Save & Export) -->
+        <div id="report-action-bar" class="hidden surface p-4 flex items-center justify-between" style="border: 1.5px solid var(--border-color); border-radius: 14px;">
+          <div class="flex items-center space-x-3">
+            <span style="font-size: 18px; color: var(--accent-gold);">◈</span>
+            <div>
+              <div class="eyeb" style="font-size: 9px;">REPORT WORKSPACE &amp; EXPORT</div>
+              <div class="text-xs font-semibold" id="report-action-title">トリアージ指示書 &amp; 監査データ</div>
+            </div>
+          </div>
+          <div class="flex items-center space-x-2">
+            <button type="button" id="btn-open-save-modal" class="btn-dawn-primary text-xs py-2 px-3 flex items-center space-x-1.5">
+              <span>💾</span>
+              <span>ファイルに保存</span>
+            </button>
+            <button type="button" id="btn-dl-md" class="btn-dawn-outline text-xs py-2 px-3 flex items-center space-x-1.5">
+              <span>📥</span>
+              <span>指示書 (MD)</span>
+            </button>
+            <button type="button" id="btn-dl-json" class="btn-dawn-outline text-xs py-2 px-3 flex items-center space-x-1.5">
+              <span>📥</span>
+              <span>JSON</span>
+            </button>
+            <button type="button" id="btn-dl-audit" class="btn-dawn-outline text-xs py-2 px-3 flex items-center space-x-1.5 hidden">
+              <span>📥</span>
+              <span>検証結果 (MD)</span>
+            </button>
+          </div>
+        </div>
+
+        <!-- Notices Container -->
+        <div id="notices-container" class="space-y-6">
+          <!-- Empty Placeholder -->
+          <div class="surface p-12 text-center space-y-3" style="border-style: dashed;">
+            <div style="width: 48px; height: 48px; margin: 0 auto; border-radius: 50%; background: rgba(250, 237, 215, 0.5); display: flex; align-items: center; justify-content: center; color: var(--accent-gold-dark); font-size: 22px;">
+              ◈
+            </div>
+            <h3 class="serif-title text-base font-normal">レポートがまだありません</h3>
+            <p class="text-xs" style="color: var(--text-muted); max-width: 360px; margin: 0 auto; line-height: 1.6;">
+              左側のパネルから実行モードを選択し、「トリアージ実行」をクリックしてください。
+            </p>
+          </div>
+        </div>
+
+      </section>
+    </div>
+  </main>
+
+  <!-- Signoff Modal (DAWN Style, XSS-proof, Vendor-friendly) -->
+  <div id="signoff-modal" class="hidden modal-overlay">
+    <div class="modal-card p-6 space-y-5">
+      <div class="flex items-start justify-between" style="border-bottom: 1px solid var(--border-subtle); padding-bottom: 14px;">
+        <div>
+          <div class="eyeb mb-1">AUDIT ATTESTATION (DEC-021)</div>
+          <h3 class="serif-title text-xl font-normal">手動/ベンダー監査サインオフの作成</h3>
+        </div>
+        <button type="button" id="btn-close-modal" class="text-lg" style="background: none; border: none; cursor: pointer; color: var(--text-dim); padding: 4px;">✕</button>
+      </div>
+
+      <div class="space-y-4 text-xs">
+        <div>
+          <label class="block font-semibold mb-1">対象確認ポイント ID</label>
+          <input type="text" id="modal-cp-id" readonly class="dawn-input" style="background: var(--bg-surface-subtle); color: var(--text-muted);">
+        </div>
+        <div>
+          <label class="block font-semibold mb-1">Notice Fingerprint (notice_hash)</label>
+          <input type="text" id="modal-notice-hash" readonly class="dawn-input" style="background: var(--bg-surface-subtle); color: var(--text-muted);">
+          <input type="hidden" id="modal-matches-hash">
+        </div>
+        <div>
+          <label class="block font-semibold mb-1">確認ポイントの質問</label>
+          <textarea id="modal-question" readonly rows="2" class="dawn-input" style="background: var(--bg-surface-subtle); color: var(--text-muted); resize: none;"></textarea>
+        </div>
+        <div id="modal-drift-note" class="hidden p-3" style="background: #fff9ed; border: 1px solid #fde68a; border-left: 4px solid #d97706; border-radius: 8px; color: #92400e; font-size: 11px; line-height: 1.5;">
+          <strong>🛡️ コードドリフト保護（自動照合）:</strong> 現在検出されているコード箇所のフィンガープリント（ハッシュ）を同時に記録します。今後コードが変更された場合は、安全のため自動的に再確認対象に戻ります。
+        </div>
+        <div class="grid grid-cols-2 gap-3">
+          <div>
+            <label class="block font-semibold mb-1">判定ステータス *</label>
+            <select id="modal-status" class="dawn-input">
+              <option value="NO (ベンダー確認済み・非該当)">NO (ベンダー確認済み・非該当)</option>
+              <option value="NO (手動確認済み・非該当)">NO (手動確認済み・非該当)</option>
+              <option value="YES (ベンダー回答・該当あり)">YES (ベンダー回答・該当あり)</option>
+              <option value="YES (該当あり・要対応)">YES (該当あり・要対応)</option>
+              <option value="要確認 (ベンダー回答待ち・調査中)">要確認 (ベンダー回答待ち・調査中)</option>
+            </select>
+          </div>
+          <div>
+            <label class="block font-semibold mb-1">確認日付 *</label>
+            <input type="date" id="modal-date" class="dawn-input">
+          </div>
+        </div>
+        <div>
+          <label class="block font-semibold mb-1">確認者 (氏名・所属) *</label>
+          <input type="text" id="modal-reviewer" placeholder="例: 山田 (システム担当)" class="dawn-input">
+          <span style="font-size: 10px; color: var(--text-dim); display: block; margin-top: 2px;">※ 本番運用時は社内ID/LDAP認証ログと照合されます</span>
+        </div>
+        <div>
+          <label class="block font-semibold mb-1">確認根拠・エビデンス *</label>
+          <textarea id="modal-evidence" placeholder="例: ベンダー窓口（2026/10/25回答）にて、本番アプライアンスはHTTP/2無効化設定済みと確認。" rows="3" class="dawn-input" style="font-family: inherit; resize: vertical;"></textarea>
+        </div>
+      </div>
+
+      <div class="flex justify-end space-x-2 pt-3" style="border-top: 1px solid var(--border-subtle);">
+        <button type="button" id="btn-cancel-modal" class="btn-dawn-secondary">キャンセル</button>
+        <button type="button" id="btn-save-signoff" class="btn-dawn-primary" style="font-size: 12px; padding: 8px 16px;">サインオフを適用・保存</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Load Previous Report Modal -->
+  <div id="load-modal" class="modal-overlay hidden">
+    <div class="modal-card p-6 space-y-5">
+      <div class="flex items-center justify-between" style="border-bottom: 1.5px solid var(--border-color); padding-bottom: 12px;">
+        <div>
+          <div class="eyeb" style="font-size: 9px;">LOAD PREVIOUS REPORT</div>
+          <h3 class="serif-title text-lg font-normal">以前のレポートを読込（継続編集）</h3>
+        </div>
+        <button type="button" id="btn-close-load-modal" class="text-lg" style="background: none; border: none; cursor: pointer; color: var(--text-dim); padding: 4px;">✕</button>
+      </div>
+
+      <div class="space-y-4 text-xs">
+        <p style="color: var(--text-muted); line-height: 1.6;">
+          以前実行して保存されたトリアージ指示書（JSON）を読み込みます。外部API照会を行わずに即座に結果を復元し、サインオフの追加やコード検証の更新を行えます。
+        </p>
+        <div>
+          <label class="block font-semibold mb-1">レポート JSON ファイルパス *</label>
+          <input type="text" id="load-report-path" value="triage_report.json" class="dawn-input" spellcheck="false">
+          <span style="font-size: 10px; color: var(--text-dim); display: block; margin-top: 2px;">作業ディレクトリ内の .json ファイル（例: triage_report.json）</span>
+        </div>
+      </div>
+
+      <div class="flex justify-end space-x-2 pt-3" style="border-top: 1px solid var(--border-subtle);">
+        <button type="button" id="btn-cancel-load-modal" class="btn-dawn-secondary">キャンセル</button>
+        <button type="button" id="btn-submit-load" class="btn-dawn-primary" style="font-size: 12px; padding: 8px 16px;">
+          <span>📂</span>
+          <span>読込実行</span>
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Save Report Modal -->
+  <div id="save-modal" class="modal-overlay hidden">
+    <div class="modal-card p-6 space-y-5">
+      <div class="flex items-center justify-between" style="border-bottom: 1.5px solid var(--border-color); padding-bottom: 12px;">
+        <div>
+          <div class="eyeb" style="font-size: 9px;">SAVE REPORT TO WORKSPACE</div>
+          <h3 class="serif-title text-lg font-normal">レポートを作業ディレクトリに保存</h3>
+        </div>
+        <button type="button" id="btn-close-save-modal" class="text-lg" style="background: none; border: none; cursor: pointer; color: var(--text-dim); padding: 4px;">✕</button>
+      </div>
+
+      <div class="space-y-4 text-xs">
+        <p style="color: var(--text-muted); line-height: 1.6;">
+          画面上に表示されているトリアージ指示書および検証レポートをローカルファイルに書き出します。
+        </p>
+        <div>
+          <label class="block font-semibold mb-1">指示書 Markdown 出力先</label>
+          <input type="text" id="save-md-path" value="triage_report.md" class="dawn-input" spellcheck="false">
+        </div>
+        <div>
+          <label class="block font-semibold mb-1">指示書 JSON 出力先（継続編集用）</label>
+          <input type="text" id="save-json-path" value="triage_report.json" class="dawn-input" spellcheck="false">
+        </div>
+        <div id="save-audit-group">
+          <label class="block font-semibold mb-1">検証結果 Markdown 出力先</label>
+          <input type="text" id="save-audit-path" value="verification_audit_report.md" class="dawn-input" spellcheck="false">
+        </div>
+      </div>
+
+      <div class="flex justify-end space-x-2 pt-3" style="border-top: 1px solid var(--border-subtle);">
+        <button type="button" id="btn-cancel-save-modal" class="btn-dawn-secondary">キャンセル</button>
+        <button type="button" id="btn-submit-save" class="btn-dawn-primary" style="font-size: 12px; padding: 8px 16px;">
+          <span>💾</span>
+          <span>保存する</span>
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- App Footer -->
+  <footer class="app-footer">
+    <span>NSTAR DESIGN SYSTEM · DAWN · TRIAGE AGENT STUDIO v0.2.5</span>
+    <span class="eyeb" style="font-size: 9px;">ZERO CDN · OFFLINE ENTERPRISE READY</span>
+  </footer>
+
+  <script>
+    window.CSRF_TOKEN = "__CSRF_TOKEN__";
+    window.DEFAULT_REVIEWER = "__DEFAULT_REVIEWER__";
+  </script>
+  <script src="/static/app.js"></script>
+</body>
+</html>
