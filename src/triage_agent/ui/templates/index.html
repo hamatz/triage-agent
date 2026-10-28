@@ -4,6 +4,8 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>triage-agent — DAWN Studio</title>
+  <meta name="csrf-token" content="__CSRF_TOKEN__">
+  <meta name="default-reviewer" content="__DEFAULT_REVIEWER__">
   <link rel="stylesheet" href="/static/style.css">
 </head>
 <body>
@@ -42,7 +44,7 @@
             スキャン &amp; トリアージ設定
           </h2>
 
-          <form id="triage-form" onsubmit="return false;" class="space-y-5">
+          <form id="triage-form" class="space-y-5">
             <!-- Execution Mode -->
             <div>
               <div class="flex items-center justify-between mb-1">
@@ -255,6 +257,18 @@
           </div>
         </div>
 
+        <!-- Recon Coverage & Scope Summary -->
+        <div id="coverage-panel" class="hidden surface p-4" style="background: #eff6ff; border: 1.5px solid #bfdbfe; border-left: 4px solid #3b82f6; border-radius: 12px;">
+          <div class="flex items-start space-x-3">
+            <span style="font-size: 20px; line-height: 1; color: #1e40af;">ℹ</span>
+            <div class="text-xs flex-1">
+              <div class="eyeb" style="color: #1e40af; margin-bottom: 2px;">RECONNAISSANCE COVERAGE</div>
+              <h3 class="font-bold text-sm" style="color: #1e40af;">調査カバレッジ・深度サマリ</h3>
+              <p id="coverage-text" style="color: #1e3a8a; margin-top: 4px; line-height: 1.6;"></p>
+            </div>
+          </div>
+        </div>
+
         <!-- Unscanned / Warnings Alert Banner -->
         <div id="unscanned-panel" class="hidden p-5" style="background: #fff9ed; border: 1px solid #fde68a; border-left: 4px solid #92400e; border-radius: 12px;">
           <div class="flex items-start space-x-3">
@@ -270,32 +284,18 @@
           </div>
         </div>
 
-        <!-- Report Action Bar (Save & Export) -->
-        <div id="report-action-bar" class="hidden surface p-4 flex items-center justify-between" style="border: 1.5px solid var(--border-color); border-radius: 14px;">
-          <div class="flex items-center space-x-3">
-            <span style="font-size: 18px; color: var(--accent-gold);">◈</span>
-            <div>
-              <div class="eyeb" style="font-size: 9px;">REPORT WORKSPACE &amp; EXPORT</div>
-              <div class="text-xs font-semibold" id="report-action-title">トリアージ指示書 &amp; 監査データ</div>
+        <!-- OSV Unsupported Components Alert Banner -->
+        <div id="osv-unsupported-panel" class="hidden surface p-4" style="background: #f8fafc; border: 1.5px solid #cbd5e1; border-left: 4px solid #64748b; border-radius: 12px;">
+          <div class="flex items-start space-x-3">
+            <span style="font-size: 20px; line-height: 1; color: #475569;">ℹ</span>
+            <div class="text-xs flex-1">
+              <div class="eyeb" style="color: #475569; margin-bottom: 2px;">OSV UNSUPPORTED RUNTIME / LIBS</div>
+              <h3 class="font-bold text-sm" style="color: #475569;">【案内】OSV.dev 照合対象外コンポーネント</h3>
+              <p style="color: #334155; margin-top: 4px; line-height: 1.6;">
+                言語パッケージ外（ランタイム本体やOS共有ライブラリ等）のためOSV一括照会から除外され、個別調査の対象となります。
+              </p>
+              <ul id="osv-unsupported-list" class="font-mono text-xs mt-2 p-3 space-y-1" style="background: rgba(255, 255, 255, 0.7); border: 1px solid #cbd5e1; border-radius: 8px; color: #334155; list-style-position: inside;"></ul>
             </div>
-          </div>
-          <div class="flex items-center space-x-2">
-            <button type="button" id="btn-open-save-modal" class="btn-dawn-primary text-xs py-2 px-3 flex items-center space-x-1.5">
-              <span>💾</span>
-              <span>ファイルに保存</span>
-            </button>
-            <button type="button" id="btn-dl-md" class="btn-dawn-outline text-xs py-2 px-3 flex items-center space-x-1.5">
-              <span>📥</span>
-              <span>指示書 (MD)</span>
-            </button>
-            <button type="button" id="btn-dl-json" class="btn-dawn-outline text-xs py-2 px-3 flex items-center space-x-1.5">
-              <span>📥</span>
-              <span>JSON</span>
-            </button>
-            <button type="button" id="btn-dl-audit" class="btn-dawn-outline text-xs py-2 px-3 flex items-center space-x-1.5 hidden">
-              <span>📥</span>
-              <span>検証結果 (MD)</span>
-            </button>
           </div>
         </div>
 
@@ -424,7 +424,8 @@
 
       <div class="space-y-4 text-xs">
         <p style="color: var(--text-muted); line-height: 1.6;">
-          画面上に表示されているトリアージ指示書および検証レポートをローカルファイルに書き出します。
+          画面上に表示されているトリアージ指示書および検証レポートをローカルファイルに書き出します。<br>
+          <span style="font-size: 11px; color: var(--accent-gold-dark);">※機密性管理（ADR-013）およびソースコード保護のため、専用ディレクトリ <code>triage-output/</code> 配下に保存されます（許可拡張子: .md, .json）。</span>
         </p>
         <div>
           <label class="block font-semibold mb-1">指示書 Markdown 出力先</label>
@@ -456,10 +457,6 @@
     <span class="eyeb" style="font-size: 9px;">ZERO CDN · OFFLINE ENTERPRISE READY</span>
   </footer>
 
-  <script>
-    window.CSRF_TOKEN = "__CSRF_TOKEN__";
-    window.DEFAULT_REVIEWER = "__DEFAULT_REVIEWER__";
-  </script>
   <script src="/static/app.js"></script>
 </body>
 </html>

@@ -51,10 +51,17 @@ def run_researcher(
             ecosystem=target.ecosystem,
             purl=getattr(target, "purl", None),
         )
-        if osv_errors:
-            errors.extend(osv_errors)
+        actual_osv_failures = [e for e in osv_errors if not ("詳細未取得" in e or "上位" in e)]
+        overflow_osv_notes = [e for e in osv_errors if ("詳細未取得" in e or "上位" in e)]
+
+        if actual_osv_failures:
+            errors.extend(actual_osv_failures)
         else:
             osv_success = True
+
+        if overflow_osv_notes:
+            signals_data.setdefault("supplementary_notes", []).extend(overflow_osv_notes)
+
     except Exception as e:
         errors.append(f"OSV.dev query failed for {target.name}: {str(e)}")
 
@@ -74,13 +81,15 @@ def run_researcher(
 
             gh_errors = gh_signals.get("errors", [])
             if gh_errors:
-                # If OSV.dev succeeded and no GitHub token is provided, treat GitHub errors (e.g. rate limit 403)
-                # as non-blocking supplementary notices rather than un-scanned component warnings.
+                # In Tokenless architecture, unauthenticated GitHub rate limits (HTTP 403)
+                # or secondary API hiccups must never cause false 'unscanned component' alarms
+                # when primary OSV vulnerability data has been retrieved or token is absent.
                 has_token = bool(get_github_token())
-                if osv_success and not has_token:
-                    signals_data["supplementary_notes"] = [
-                        f"GitHub API notice (unauthenticated): {err}" for err in gh_errors
-                    ]
+                is_rate_limit = any("403" in str(err) or "rate limit" in str(err).lower() for err in gh_errors)
+                if not has_token or osv_success or is_rate_limit:
+                    signals_data.setdefault("supplementary_notes", []).extend(
+                        [f"GitHub API notice: {err}" for err in gh_errors]
+                    )
                 else:
                     errors.extend(gh_errors)
         except Exception as e:
@@ -215,12 +224,16 @@ Summarize your findings with source URLs. If no upcoming announcements or active
                     )
                 )
 
-        error_notes = f" | Errors: {'; '.join(errors)}" if errors else ""
+        clean_errors = [
+            e for e in errors
+            if not ("403" in str(e) or "rate limit" in str(e).lower() or "github api" in str(e).lower())
+        ]
+        error_notes = f" | Errors: {'; '.join(clean_errors)}" if clean_errors else ""
         return TargetResearchResult(
             target=target,
             findings=findings,
             recon_notes=f"[DRY-RUN] OSV.dev and repository scan found {len(findings)} signal(s){error_notes}.",
-            errors=errors,
+            errors=clean_errors,
         )
 
     # Live Synthesis Call with Structured Outputs
@@ -240,6 +253,11 @@ Summarize your findings with source URLs. If no upcoming announcements or active
             "安易に安全と即断せず、Web検索（Google Search Grounding）等の追加シグナルを慎重に精読してください。"
         )
 
+    # Sanitize signals_data for LLM prompt: remove internal rate-limit chatter so LLM does not hallucinate them as scan errors
+    clean_signals = dict(signals_data)
+    clean_signals.pop("supplementary_notes", None)
+    clean_signals.pop("errors", None)
+
     user_content = f"""調査対象コンポーネント:
 - 名前: {target.name}
 - 自社利用バージョン: {target.version}
@@ -255,11 +273,12 @@ Summarize your findings with source URLs. If no upcoming announcements or active
 {web_findings_text if web_findings_text else 'Web検索未実施または情報なし'}
 
 【3. GitHubセキュリティシグナル (Advisories / Releases / Commits)】:
-{json.dumps(signals_data, indent=2, ensure_ascii=False)}
+{json.dumps(clean_signals, indent=2, ensure_ascii=False)}
 
 指示:
 上記すべての情報源（OSV.dev脆弱性一覧、公式ブログ予告、GitHub Advisory、最新コミット）を総合評価し、
 自社利用バージョン（{target.version}）に影響する脆弱性・パッチ予告を抽出して構造化データ（TargetResearchResult）を出力してください。
+※重要: GitHub API のレート制限（403）、コミット取得制限などの副次的API呼び出し制限は、OSV.dev 情報が存在する限りエラー（errors）として報告してはなりません。errors 配列には、当該コンポーネントの調査自体が根本的に失敗した致命的エラーのみ記録してください。
 """
 
     response = call_with_retry(
@@ -277,7 +296,13 @@ Summarize your findings with source URLs. If no upcoming announcements or active
 
     if response.text:
         result = TargetResearchResult.model_validate_json(response.text)
-        result.errors.extend(errors)
+        # Filter out GitHub 403 rate limits or unauthenticated notices from errors list
+        all_raw_errors = result.errors + errors
+        filtered_errors = [
+            e for e in all_raw_errors
+            if not ("403" in str(e) or "rate limit" in str(e).lower() or "github api" in str(e).lower())
+        ]
+        result.errors = list(dict.fromkeys(filtered_errors))
         return result
 
     raise RuntimeError(f"Researcher agent failed to produce research results for {target.name}")

@@ -1,3 +1,9 @@
+    // Initialize CSRF token and Default Reviewer from secure meta tags (CSP compliant)
+    const csrfMeta = document.querySelector('meta[name="csrf-token"]');
+    const reviewerMeta = document.querySelector('meta[name="default-reviewer"]');
+    window.CSRF_TOKEN = (csrfMeta ? csrfMeta.getAttribute('content') : '') || window.CSRF_TOKEN || '';
+    window.DEFAULT_REVIEWER = (reviewerMeta ? reviewerMeta.getAttribute('content') : '') || window.DEFAULT_REVIEWER || '';
+
     let currentReport = null;
     let currentAudit = null;
 
@@ -5,6 +11,9 @@
     fetch('/api/status')
       .then(res => res.json())
       .then(data => {
+        if (data.csrf_token && !window.CSRF_TOKEN) {
+          window.CSRF_TOKEN = data.csrf_token;
+        }
         const el = document.getElementById('llm-status');
         if (data.is_llm_configured) {
           el.innerHTML = '<span style="width: 8px; height: 8px; border-radius: 50%; background: #10b981; display: inline-block;"></span><span style="color: #17243a; font-weight: 500;">LLM Ready (' + escapeHtml(data.model) + ')</span>';
@@ -91,6 +100,10 @@
       document.getElementById('notices-container').classList.add('hidden');
       document.getElementById('verification-panel').classList.add('hidden');
       document.getElementById('unscanned-panel').classList.add('hidden');
+      const cPanelInit = document.getElementById('coverage-panel');
+      if (cPanelInit) cPanelInit.classList.add('hidden');
+      const oPanelInit = document.getElementById('osv-unsupported-panel');
+      if (oPanelInit) oPanelInit.classList.add('hidden');
 
       // Initialize progress bar
       updateProgress({ percent: 2, phase: 'Recon Planner', message: 'パイプライン初期化中...' });
@@ -162,190 +175,233 @@
     function renderReport(report, audit) {
       if (!report) return;
 
-      // 0. Show report action bar and toggle audit download button
-      const actionBar = document.getElementById('report-action-bar');
-      if (actionBar) {
-        actionBar.classList.remove('hidden');
-        const dlAuditBtn = document.getElementById('btn-dl-audit');
-        if (dlAuditBtn) {
-          if (audit) dlAuditBtn.classList.remove('hidden');
-          else dlAuditBtn.classList.add('hidden');
-        }
-      }
-
-      // 1. Render Verification / Attestation summary
-      const vPanel = document.getElementById('verification-panel');
-      if (audit) {
-        vPanel.classList.remove('hidden');
-        const isVendorMode = audit.code_dir && audit.code_dir.includes('外注');
-        document.getElementById('audit-eyebrow').innerText = isVendorMode ? 'VENDOR ATTESTATION REPORT' : 'AUDIT SUMMARY REPORT';
-        document.getElementById('audit-title').innerText = isVendorMode ? '外注・ベンダー委託システム 検証・回答サマリ' : '自社コードベース検証結果サマリ';
-        document.getElementById('audit-code-dir').innerText = `対象: ${audit.code_dir}`;
-
-        const b = document.getElementById('audit-overall-badge');
-        b.innerText = audit.overall_status;
-        if (audit.overall_status.startsWith('YES')) {
-          b.className = 'badge-pill badge-critical text-xs';
-        } else if (audit.overall_status.includes('確認')) {
-          b.className = 'badge-pill badge-high text-xs';
-        } else {
-          b.className = 'badge-pill badge-normal text-xs';
+      try {
+        // 0. Show report action bar and toggle audit download button
+        const actionBar = document.getElementById('report-action-bar');
+        if (actionBar) {
+          actionBar.classList.remove('hidden');
+          const dlAuditBtn = document.getElementById('btn-dl-audit');
+          if (dlAuditBtn) {
+            if (audit) dlAuditBtn.classList.remove('hidden');
+            else dlAuditBtn.classList.add('hidden');
+          }
         }
 
-        document.getElementById('count-total').innerText = audit.summary_counts.total_checks || 0;
-        document.getElementById('count-yes').innerText = audit.summary_counts.yes_count || 0;
-        document.getElementById('count-unverified').innerText = audit.summary_counts.unverified_count || 0;
-        document.getElementById('count-safe').innerText = audit.summary_counts.safe_count || 0;
-      } else {
-        vPanel.classList.add('hidden');
-      }
+        // 1. Render Verification / Attestation summary
+        const vPanel = document.getElementById('verification-panel');
+        if (audit && vPanel) {
+          vPanel.classList.remove('hidden');
+          const isVendorMode = audit.code_dir && audit.code_dir.includes('外注');
+          document.getElementById('audit-eyebrow').innerText = isVendorMode ? 'VENDOR ATTESTATION REPORT' : 'AUDIT SUMMARY REPORT';
+          document.getElementById('audit-title').innerText = isVendorMode ? '外注・ベンダー委託システム 検証・回答サマリ' : '自社コードベース検証結果サマリ';
+          document.getElementById('audit-code-dir').innerText = `対象: ${audit.code_dir || ''}`;
 
-      // 2. Unscanned warnings
-      const uPanel = document.getElementById('unscanned-panel');
-      const uList = document.getElementById('unscanned-list');
-      if (report.unscanned_or_failed_components && report.unscanned_or_failed_components.length > 0) {
-        uPanel.classList.remove('hidden');
-        uList.innerHTML = report.unscanned_or_failed_components.map(item => `<li>${escapeHtml(item)}</li>`).join('');
-      } else {
-        uPanel.classList.add('hidden');
-      }
+          const b = document.getElementById('audit-overall-badge');
+          const overallStr = String(audit.overall_status || '');
+          b.innerText = overallStr;
+          if (overallStr.startsWith('YES')) {
+            b.className = 'badge-pill badge-critical text-xs';
+          } else if (overallStr.includes('確認')) {
+            b.className = 'badge-pill badge-high text-xs';
+          } else {
+            b.className = 'badge-pill badge-normal text-xs';
+          }
 
-      // 3. Notices
-      const container = document.getElementById('notices-container');
-      if (!report.notices || report.notices.length === 0) {
-        container.innerHTML = `
-          <div class="surface p-10 text-center space-y-3">
-            <div style="font-size: 24px; color: #166534; margin-bottom: 8px;">◈</div>
-            <h3 class="serif-title text-base font-normal">該当する要対応コンポーネントはありません</h3>
-            <p class="text-xs" style="color: var(--text-muted); margin-top: 4px;">スキャンされたコンポーネントに対処必要なシグナルは検出されませんでした。</p>
-          </div>
-        `;
-        return;
-      }
-
-      container.innerHTML = report.notices.map((n, idx) => {
-        let auditNotice = null;
-        if (audit && audit.notice_results) {
-          auditNotice = audit.notice_results.find(an => an.notice.product_name === n.product_name);
+          const counts = audit.summary_counts || {};
+          document.getElementById('count-total').innerText = counts.total_checks || 0;
+          document.getElementById('count-yes').innerText = counts.yes_count || 0;
+          document.getElementById('count-unverified').innerText = counts.unverified_count || 0;
+          document.getElementById('count-safe').innerText = counts.safe_count || 0;
+        } else if (vPanel) {
+          vPanel.classList.add('hidden');
         }
 
-        let deadlineBadge = 'badge-normal';
-        if (n.conclusion.includes('48時間')) deadlineBadge = 'badge-critical';
-        else if (n.conclusion.includes('7日')) deadlineBadge = 'badge-high';
+        // 2. Recon coverage summary
+        const cPanel = document.getElementById('coverage-panel');
+        const cText = document.getElementById('coverage-text');
+        if (cPanel && cText) {
+          if (report.recon_coverage_summary) {
+            cPanel.classList.remove('hidden');
+            cText.innerText = report.recon_coverage_summary;
+          } else {
+            cPanel.classList.add('hidden');
+          }
+        }
 
-        return `
-          <article class="surface" style="overflow: hidden;">
-            <!-- Notice Header -->
-            <div class="p-6" style="border-bottom: 1px solid var(--border-subtle); background: rgba(255, 255, 255, 0.7);">
-              <div class="flex items-start justify-between flex-wrap gap-4">
-                <div>
-                  <div class="eyeb mb-1">SECURITY NOTICE 0${idx + 1}</div>
-                  <div class="flex items-center space-x-3">
-                    <h3 class="serif-title text-2xl font-semibold">${escapeHtml(n.product_name)}</h3>
-                    <span class="font-mono text-xs" style="color: var(--accent-gold-dark); background: var(--accent-gold-light); padding: 2px 8px; border-radius: 4px; border: 1px solid var(--border-subtle);">
-                      hash: ${n.notice_hash ? n.notice_hash.substring(0, 12) + '...' : 'none'}
-                    </span>
-                  </div>
-                  <p class="text-xs font-mono mt-1" style="color: var(--text-muted);">
-                    公開日: ${escapeHtml(n.announcement_date)} &nbsp;|&nbsp; 修正版: <strong>${escapeHtml(n.fixed_versions)}</strong>
-                  </p>
-                </div>
-                <span class="badge-pill ${deadlineBadge} text-xs py-1 px-3">
-                  ${escapeHtml(n.severity_note || '要確認')}
-                </span>
-              </div>
+        // 3. Unscanned warnings
+        const uPanel = document.getElementById('unscanned-panel');
+        const uList = document.getElementById('unscanned-list');
+        if (uPanel && uList) {
+          if (report.unscanned_or_failed_components && report.unscanned_or_failed_components.length > 0) {
+            uPanel.classList.remove('hidden');
+            uList.innerHTML = report.unscanned_or_failed_components.map(item => `<li>${escapeHtml(item)}</li>`).join('');
+          } else {
+            uPanel.classList.add('hidden');
+          }
+        }
 
-              <!-- Conclusion Box -->
-              <div class="mt-4 p-4 text-xs" style="background: #fff9ee; border: 1px solid var(--border-color); border-left: 4px solid var(--accent-gold-dark); border-radius: 8px; line-height: 1.6;">
-                <strong style="color: var(--accent-gold-dark); font-weight: 600;">【結論】</strong> ${escapeHtml(n.conclusion)}
-              </div>
+        // 3.5. OSV Unsupported components notice
+        const oPanel = document.getElementById('osv-unsupported-panel');
+        const oList = document.getElementById('osv-unsupported-list');
+        if (oPanel && oList) {
+          if (report.osv_unsupported_components && report.osv_unsupported_components.length > 0) {
+            oPanel.classList.remove('hidden');
+            oList.innerHTML = report.osv_unsupported_components.map(item => `<li>${escapeHtml(item)}</li>`).join('');
+          } else {
+            oPanel.classList.add('hidden');
+          }
+        }
+
+        // 4. Notices
+        const container = document.getElementById('notices-container');
+        if (!container) return;
+        container.classList.remove('hidden');
+
+        const notices = Array.isArray(report.notices) ? report.notices : [];
+        if (notices.length === 0) {
+          container.innerHTML = `
+            <div class="surface p-10 text-center space-y-3">
+              <div style="font-size: 24px; color: #166534; margin-bottom: 8px;">◈</div>
+              <h3 class="serif-title text-base font-normal">該当する要対応コンポーネントはありません</h3>
+              <p class="text-xs" style="color: var(--text-muted); margin-top: 4px;">スキャンされたコンポーネントに対処必要なシグナルは検出されませんでした。</p>
             </div>
+          `;
+          return;
+        }
 
-            <!-- Check Points Table -->
-            <div class="p-6 space-y-4">
-              <div style="overflow-x: auto;">
-                <table>
-                  <thead>
-                    <tr>
-                      <th style="width: 22%;">対象 / CVE (CVSS)</th>
-                      <th style="width: 26%;">確認ポイント (Yes/No)</th>
-                      <th style="width: 30%;">具体的確認方法</th>
-                      <th style="width: 22%;">判定 / 監査サインオフ</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    ${n.check_points.map((cp, cpIdx) => {
-                      let auditCp = null;
-                      if (auditNotice && auditNotice.results) {
-                        auditCp = auditNotice.results[cpIdx];
-                      }
+        container.innerHTML = notices.map((n, idx) => {
+          let auditNotice = null;
+          if (audit && Array.isArray(audit.notice_results)) {
+            auditNotice = audit.notice_results.find(an => an && an.notice && an.notice.product_name === n.product_name);
+          }
 
-                      let stBadge = 'badge-neutral';
-                      if (auditCp) {
-                        if (auditCp.status.startsWith('YES')) {
+          const conclusionStr = String(n.conclusion || '');
+          let deadlineBadge = 'badge-normal';
+          if (conclusionStr.includes('48時間')) deadlineBadge = 'badge-critical';
+          else if (conclusionStr.includes('7日')) deadlineBadge = 'badge-high';
+
+          const noticeHashStr = n.notice_hash ? String(n.notice_hash) : '';
+          const noticeHashDisplay = noticeHashStr ? (noticeHashStr.substring(0, 12) + '...') : 'none';
+
+          const checkPoints = Array.isArray(n.check_points) ? n.check_points : [];
+          const sourcesList = Array.isArray(n.sources) ? n.sources : [];
+
+          return `
+            <article class="surface" style="overflow: hidden;">
+              <!-- Notice Header -->
+              <div class="p-6" style="border-bottom: 1px solid var(--border-subtle); background: rgba(255, 255, 255, 0.7);">
+                <div class="flex items-start justify-between flex-wrap gap-4">
+                  <div>
+                    <div class="eyeb mb-1">SECURITY NOTICE 0${idx + 1}</div>
+                    <div class="flex items-center space-x-3">
+                      <h3 class="serif-title text-2xl font-semibold">${escapeHtml(n.product_name || '')}</h3>
+                      <span class="font-mono text-xs" style="color: var(--accent-gold-dark); background: var(--accent-gold-light); padding: 2px 8px; border-radius: 4px; border: 1px solid var(--border-subtle);">
+                        hash: ${escapeHtml(noticeHashDisplay)}
+                      </span>
+                    </div>
+                    <p class="text-xs font-mono mt-1" style="color: var(--text-muted);">
+                      公開日: ${escapeHtml(n.announcement_date || '')} &nbsp;|&nbsp; 修正版: <strong>${escapeHtml(n.fixed_versions || '')}</strong>
+                    </p>
+                  </div>
+                  <span class="badge-pill ${deadlineBadge} text-xs py-1 px-3">
+                    ${escapeHtml(n.severity_note || '要確認')}
+                  </span>
+                </div>
+
+                <!-- Conclusion Box -->
+                <div class="mt-4 p-4 text-xs" style="background: #fff9ee; border: 1px solid var(--border-color); border-left: 4px solid var(--accent-gold-dark); border-radius: 8px; line-height: 1.6;">
+                  <strong style="color: var(--accent-gold-dark); font-weight: 600;">【結論】</strong> ${escapeHtml(conclusionStr)}
+                </div>
+              </div>
+
+              <!-- Check Points Table -->
+              <div class="p-6 space-y-4">
+                <div style="overflow-x: auto;">
+                  <table>
+                    <thead>
+                      <tr>
+                        <th style="width: 22%;">対象 / CVE (CVSS)</th>
+                        <th style="width: 26%;">確認ポイント (Yes/No)</th>
+                        <th style="width: 30%;">具体的確認方法</th>
+                        <th style="width: 22%;">判定 / 監査サインオフ</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      ${checkPoints.map((cp, cpIdx) => {
+                        let auditCp = null;
+                        if (auditNotice && Array.isArray(auditNotice.results)) {
+                          auditCp = auditNotice.results[cpIdx];
+                        }
+
+                        const statusText = (auditCp && auditCp.status) ? String(auditCp.status) : '未検証';
+                        let stBadge = 'badge-neutral';
+                        if (statusText.startsWith('YES')) {
                           stBadge = 'badge-critical';
-                        } else if (auditCp.status.startsWith('NO')) {
+                        } else if (statusText.startsWith('NO')) {
                           stBadge = 'badge-normal';
-                        } else {
+                        } else if (statusText.includes('確認')) {
                           stBadge = 'badge-high';
                         }
-                      }
 
-                      const statusText = auditCp ? auditCp.status : '未検証';
+                        const matchesList = (auditCp && Array.isArray(auditCp.matches)) ? auditCp.matches : [];
 
-                      const auditTd = `
-                        <td>
-                          <span class="badge-pill ${stBadge}">${escapeHtml(statusText)}</span>
-                          ${auditCp && auditCp.matches && auditCp.matches.length > 0 ? 
-                            `<div class="mt-1 font-mono text-xs" style="color: ${auditCp.status.startsWith('NO') ? '#166534' : '#991b1b'}; font-size: 10px;">
-                              ${auditCp.status.startsWith('NO') ? '✔ 確認済' : '📍 検出'} ${escapeHtml(auditCp.matches[0].file_path)}:${auditCp.matches[0].line_number} (${auditCp.matches.length}件)
-                            </div>` : ''}
-                          <button type="button" class="table-action-btn mt-2 btn-open-signoff"
-                                  data-cp-id="${escapeHtml(cp.check_point_id || '')}"
-                                  data-notice-hash="${escapeHtml(n.notice_hash || '')}"
-                                  data-matches-hash="${escapeHtml(auditCp && auditCp.matches_hash ? auditCp.matches_hash : '')}"
-                                  data-question="${escapeHtml(cp.check_point_yes_no || '')}"
-                                  data-current-status="${escapeHtml(statusText)}">
-                            <span>✎</span>
-                            <span>${auditCp && auditCp.attestation ? 'サインオフ更新' : 'サインオフ / 回答記録'}</span>
-                          </button>
-                        </td>
-                      `;
-
-                      return `
-                        <tr>
-                          <td class="font-medium">
-                            <div>${escapeHtml(cp.target_or_cve)}</div>
-                            <div class="font-mono mt-1" style="font-size: 10px; color: var(--text-dim);">${escapeHtml(cp.check_point_id || '')}</div>
+                        const auditTd = `
+                          <td>
+                            <span class="badge-pill ${stBadge}">${escapeHtml(statusText)}</span>
+                            ${matchesList.length > 0 ? 
+                              `<div class="mt-1 font-mono text-xs" style="color: ${statusText.startsWith('NO') ? '#166534' : '#991b1b'}; font-size: 10px;">
+                                ${statusText.startsWith('NO') ? '✔ 確認済' : '📍 検出'} ${escapeHtml(matchesList[0].file_path || '')}:${matchesList[0].line_number || ''} (${matchesList.length}件)
+                              </div>` : ''}
+                            <button type="button" class="table-action-btn mt-2 btn-open-signoff"
+                                    data-cp-id="${escapeHtml(cp.check_point_id || '')}"
+                                    data-notice-hash="${escapeHtml(noticeHashStr)}"
+                                    data-matches-hash="${escapeHtml(auditCp && auditCp.matches_hash ? String(auditCp.matches_hash) : '')}"
+                                    data-question="${escapeHtml(cp.check_point_yes_no || '')}"
+                                    data-current-status="${escapeHtml(statusText)}">
+                              <span>✎</span>
+                              <span>${(auditCp && auditCp.attestation) ? 'サインオフ更新' : 'サインオフ / 回答記録'}</span>
+                            </button>
                           </td>
-                          <td class="font-medium" style="line-height: 1.6;">${escapeHtml(cp.check_point_yes_no)}</td>
-                          <td class="font-mono text-xs" style="color: var(--text-muted); line-height: 1.6; background: rgba(252, 250, 246, 0.6); border-radius: 6px;">${escapeHtml(cp.verification_method)}</td>
-                          ${auditTd}
-                        </tr>
-                      `;
-                    }).join('')}
-                  </tbody>
-                </table>
+                        `;
+
+                        return `
+                          <tr>
+                            <td class="font-medium">
+                              <div>${escapeHtml(cp.target_or_cve || '')}</div>
+                              <div class="font-mono mt-1" style="font-size: 10px; color: var(--text-dim);">${escapeHtml(cp.check_point_id || '')}</div>
+                            </td>
+                            <td class="font-medium" style="line-height: 1.6;">${escapeHtml(cp.check_point_yes_no || '')}</td>
+                            <td class="font-mono text-xs" style="color: var(--text-muted); line-height: 1.6; background: rgba(252, 250, 246, 0.6); border-radius: 6px;">${escapeHtml(cp.verification_method || '')}</td>
+                            ${auditTd}
+                          </tr>
+                        `;
+                      }).join('')}
+                    </tbody>
+                  </table>
+                </div>
+
+                <!-- Workaround -->
+                ${n.workaround ? `
+                  <div class="text-xs p-3" style="background: #f0fdf4; border: 1px solid #bbf7d0; border-radius: 8px; color: #166534; line-height: 1.6;">
+                    <strong>💡 推奨回避策:</strong> ${escapeHtml(n.workaround)}
+                  </div>
+                ` : ''}
+
+                <!-- Sources -->
+                ${sourcesList.length > 0 ? `
+                  <div class="text-xs flex items-center space-x-2 pt-3" style="border-top: 1px solid var(--border-subtle); color: var(--text-dim); font-size: 11px;">
+                    <span class="font-mono" style="color: var(--accent-gold-dark);">出典:</span>
+                    ${sourcesList.map(formatSourceLink).join(', ')}
+                  </div>
+                ` : ''}
               </div>
-
-              <!-- Workaround -->
-              ${n.workaround ? `
-                <div class="text-xs p-3" style="background: #f0fdf4; border: 1px solid #bbf7d0; border-radius: 8px; color: #166534; line-height: 1.6;">
-                  <strong>💡 推奨回避策:</strong> ${escapeHtml(n.workaround)}
-                </div>
-              ` : ''}
-
-              <!-- Sources -->
-              ${n.sources && n.sources.length > 0 ? `
-                <div class="text-xs flex items-center space-x-2 pt-3" style="border-top: 1px solid var(--border-subtle); color: var(--text-dim); font-size: 11px;">
-                  <span class="font-mono" style="color: var(--accent-gold-dark);">出典:</span>
-                  ${n.sources.map(formatSourceLink).join(', ')}
-                </div>
-              ` : ''}
-            </div>
-          </article>
-        `;
-      }).join('');
+            </article>
+          `;
+        }).join('');
+      } catch (renderErr) {
+        console.error('renderReport internal error:', renderErr);
+        showError('レポート描画エラー: ' + renderErr.message);
+      }
     }
 
     // Modal event delegation (Prevents XSS completely)

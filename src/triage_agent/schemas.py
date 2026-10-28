@@ -103,7 +103,7 @@ class TargetResearchResult(BaseModel):
     recon_notes: str = Field(description="Observations from web and GitHub searches, including non-findings if clean")
     errors: List[str] = Field(
         default_factory=list,
-        description="List of errors encountered during investigation (e.g. GitHub 403 Rate Limit, Search errors)"
+        description="Fatal errors that prevented scanning or analyzing this component entirely (do NOT include secondary API rate limits or informational notices)"
     )
 
 
@@ -182,6 +182,10 @@ class TriageReport(BaseModel):
     osv_unsupported_components: List[str] = Field(
         default_factory=list,
         description="List of components not queryable via OSV (e.g. generic runtime, OS/C shared libraries) requiring manual/web investigation"
+    )
+    recon_coverage_summary: Optional[str] = Field(
+        default=None,
+        description="Informational breakdown of reconnaissance coverage (e.g. '上位 10 件を深層調査。残り 22 件はOSV照合（0件）のみ実施')"
     )
     notices: List[TriageNotice] = Field(
         default_factory=list,

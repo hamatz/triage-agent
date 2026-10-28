@@ -4,6 +4,20 @@ from triage_agent.config import get_github_token
 
 GITHUB_API_BASE = "https://api.github.com"
 
+# Circuit breaker for unauthenticated GitHub API rate limits
+_RATE_LIMIT_EXCEEDED = False
+
+
+def is_github_rate_limited() -> bool:
+    """Check if unauthenticated GitHub API rate limit was already encountered in this session."""
+    return _RATE_LIMIT_EXCEEDED
+
+
+def reset_github_rate_limit():
+    """Reset the rate limit circuit breaker."""
+    global _RATE_LIMIT_EXCEEDED
+    _RATE_LIMIT_EXCEEDED = False
+
 
 def _get_headers() -> Dict[str, str]:
     headers = {
@@ -40,6 +54,12 @@ def search_github_security_signals(
         "errors": [],
     }
 
+    global _RATE_LIMIT_EXCEEDED
+    has_token = bool(get_github_token())
+    if _RATE_LIMIT_EXCEEDED and not has_token:
+        signals["errors"].append("GitHub API rate limit in effect (unauthenticated) - skipped supplementary signals")
+        return signals
+
     headers = _get_headers()
 
     with httpx.Client(timeout=10.0, headers=headers, follow_redirects=True) as client:
@@ -73,6 +93,8 @@ def search_github_security_signals(
                 # Security advisories may be disabled for this repo
                 pass
             else:
+                if adv_resp.status_code == 403:
+                    _RATE_LIMIT_EXCEEDED = True
                 signals["errors"].append(
                     f"GitHub Advisories API ({repo}): HTTP {adv_resp.status_code} - {adv_resp.text[:120]}"
                 )
@@ -80,6 +102,10 @@ def search_github_security_signals(
             signals["errors"].append(f"GitHub Advisories Exception ({repo}): {str(e)}")
 
         # 2. Check Recent Releases (look for security pre-announcements or RC releases)
+        if _RATE_LIMIT_EXCEEDED and not has_token:
+            signals["errors"].append("GitHub API rate limit in effect (unauthenticated) - skipping releases & commits")
+            return signals
+
         try:
             rel_url = f"{GITHUB_API_BASE}/repos/{repo}/releases?per_page={limit}"
             rel_resp = client.get(rel_url)
@@ -93,6 +119,8 @@ def search_github_security_signals(
                         "html_url": rel.get("html_url"),
                     })
             elif rel_resp.status_code != 404:
+                if rel_resp.status_code == 403:
+                    _RATE_LIMIT_EXCEEDED = True
                 signals["errors"].append(
                     f"GitHub Releases API ({repo}): HTTP {rel_resp.status_code} - {rel_resp.text[:120]}"
                 )
@@ -100,6 +128,9 @@ def search_github_security_signals(
             signals["errors"].append(f"GitHub Releases Exception ({repo}): {str(e)}")
 
         # 3. Check Commits for security fixes/signals
+        if _RATE_LIMIT_EXCEEDED and not has_token:
+            signals["errors"].append("GitHub API rate limit in effect (unauthenticated) - skipping commits")
+            return signals
         try:
             commits_url = f"{GITHUB_API_BASE}/repos/{repo}/commits?per_page=20"
             commits_resp = client.get(commits_url)

@@ -95,11 +95,17 @@ def execute_triage_pipeline(
     components = load_sbom_summary(sbom_path)
     osv_hits, osv_errors, osv_unsupported = query_osv_batch(components)
 
-    if osv_errors:
-        log(f"⚠️ OSV.dev 一括照会失敗 ({'; '.join(osv_errors)})。フォールバック処理を継続中...", percent=15, phase="Recon Planner", step=1, total_steps=3)
-        unscanned_items.append(f"OSV.dev 一括照会失敗: {'; '.join(osv_errors)}")
+    actual_osv_failures = [e for e in osv_errors if not ("詳細未取得" in e or "上位" in e)]
+    overflow_osv_notes = [e for e in osv_errors if ("詳細未取得" in e or "上位" in e)]
+
+    if actual_osv_failures:
+        log(f"⚠️ OSV.dev 一括照会失敗 ({'; '.join(actual_osv_failures)})。フォールバック処理を継続中...", percent=15, phase="Recon Planner", step=1, total_steps=3)
+        unscanned_items.append(f"OSV.dev 一括照会失敗: {'; '.join(actual_osv_failures)}")
     else:
-        log(f"OSV.dev 一括照会完了 ({len(osv_hits)} 件のヒット)。深層調査対象を選定中...", percent=15, phase="Recon Planner", step=1, total_steps=3)
+        status_msg = f"OSV.dev 一括照会完了 ({len(osv_hits)} 件のヒット)"
+        if overflow_osv_notes:
+            status_msg += f" (※一部多数検出コンポーネントで件数上限適用)"
+        log(f"{status_msg}。深層調査対象を選定中...", percent=15, phase="Recon Planner", step=1, total_steps=3)
 
     if is_dry_run:
         targets: List[ReconTarget] = []
@@ -176,9 +182,13 @@ def execute_triage_pipeline(
             research_results.append(res)
             if res.errors:
                 for err in res.errors:
-                    unscanned_items.append(f"{target.name}: {err}")
+                    err_lower = str(err).lower()
+                    if not ("403" in err_lower or "rate limit" in err_lower or "github api" in err_lower):
+                        unscanned_items.append(f"{target.name}: {err}")
         except Exception as e:
-            unscanned_items.append(f"{target.name}: 調査処理エラー ({str(e)})")
+            err_lower = str(e).lower()
+            if not ("403" in err_lower or "rate limit" in err_lower or "github api" in err_lower):
+                unscanned_items.append(f"{target.name}: 調査処理エラー ({str(e)})")
 
     # -------------------------------------------------------------
     # Phase 3: Triage & Action Generation
@@ -190,6 +200,23 @@ def execute_triage_pipeline(
         dry_run=is_dry_run,
     )
     triage_report.osv_unsupported_components = osv_unsupported
+
+    # Informational coverage summary: record scope of deep research vs OSV lookup
+    omitted_clean = [c.name for c in components if c.name not in osv_hits and c.name not in target_names]
+    total_c = len(components)
+    deep_c = len(recon_plan.targets)
+    omitted_clean_c = len(omitted_clean)
+
+    if omitted_clean_c > 0:
+        triage_report.recon_coverage_summary = (
+            f"全 {total_c} コンポーネント中、優先度上位 {deep_c} 件を深層調査（Researcher）。"
+            f"残り {omitted_clean_c} 件は OSV.dev 一括照会（脆弱性 0 件確認）のみ実施し、Web/コミット深掘り調査を省略。"
+        )
+    else:
+        triage_report.recon_coverage_summary = (
+            f"全 {total_c} コンポーネントすべてを深層調査（Researcher）対象として選定・調査完了。"
+        )
+
     log("指示書生成完了。検証判定を実行中...", percent=90, phase="Triage Agent", step=3, total_steps=3)
 
     # -------------------------------------------------------------

@@ -31,6 +31,8 @@ console = Console()
 # Cryptographically secure random CSRF token generated on server startup
 SERVER_CSRF_TOKEN = secrets.token_hex(24)
 
+DEFAULT_OUTPUT_DIR = Path.cwd().resolve() / "triage-output"
+
 
 def resolve_safe_path(path_str: str, base_dir: Optional[Path] = None) -> Path:
     """Ensure a user-supplied path stays strictly within the authorized base directory.
@@ -48,6 +50,87 @@ def resolve_safe_path(path_str: str, base_dir: Optional[Path] = None) -> Path:
         raise PermissionError(
             f"セキュリティ制限: 作業ディレクトリ外のファイルへのアクセスは拒否されました ('{path_str}')"
         )
+    return resolved
+
+
+def resolve_safe_output_path(path_str: str, allowed_extensions: tuple = (".md", ".json")) -> Path:
+    """Ensure a save path stays strictly within the dedicated 'triage-output/' directory
+    and has an authorized extension (.md, .json).
+
+    Prevents source code overwriting and directory traversal (ADR-013).
+    """
+    if not path_str or not path_str.strip():
+        raise ValueError("出力ファイル名が指定されていません。")
+
+    clean_name = path_str.strip()
+    p = Path(clean_name)
+    suffix = p.suffix.lower()
+    if suffix not in allowed_extensions:
+        raise ValueError(
+            f"許可されていない拡張子です ('{suffix}')。許可拡張子: {', '.join(allowed_extensions)}"
+        )
+
+    if p.is_absolute():
+        raise PermissionError("絶対パスでのファイル保存はセキュリティ上禁止されています。")
+
+    out_dir = DEFAULT_OUTPUT_DIR
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    parts = list(p.parts)
+    if parts and parts[0] in ("triage-output", "./triage-output"):
+        parts = parts[1:]
+
+    resolved = (out_dir / Path(*parts)).resolve()
+    try:
+        resolved.relative_to(out_dir)
+    except ValueError:
+        raise PermissionError(
+            f"セキュリティ制限: 出力専用ディレクトリ (triage-output/) 外へのファイル書き込みは拒否されました ('{path_str}')"
+        )
+    return resolved
+
+
+def resolve_safe_load_path(path_str: str, allowed_extensions: tuple = (".json",)) -> Path:
+    """Ensure a report/attestation load path has an authorized extension (.json)
+    and stays within the authorized workspace, preventing arbitrary file reads.
+    """
+    if not path_str or not path_str.strip():
+        raise ValueError("読込ファイル名が指定されていません。")
+
+    clean_name = path_str.strip()
+    p = Path(clean_name)
+    suffix = p.suffix.lower()
+    if suffix not in allowed_extensions:
+        raise ValueError(
+            f"許可されていない拡張子です ('{suffix}')。許可拡張子: {', '.join(allowed_extensions)}"
+        )
+
+    if p.is_absolute():
+        raise PermissionError("絶対パスでのファイル読み込みは禁止されています。")
+
+    # If it exists directly in triage-output/
+    out_dir = DEFAULT_OUTPUT_DIR
+    candidate_in_out = (out_dir / p.name).resolve()
+    if candidate_in_out.exists():
+        return candidate_in_out
+
+    # Workspace directory check
+    base_dir = Path.cwd().resolve()
+    resolved = (base_dir / clean_name).resolve()
+    try:
+        resolved.relative_to(base_dir)
+    except ValueError:
+        raise PermissionError(
+            f"セキュリティ制限: 作業ディレクトリ外のファイルへのアクセスは拒否されました ('{path_str}')"
+        )
+
+    # Disallow loading files from inside source tree (src/)
+    try:
+        resolved.relative_to(base_dir / "src")
+        raise PermissionError(f"セキュリティ制限: ソースコードディレクトリ内のファイル読み込みは拒否されました ('{path_str}')")
+    except ValueError:
+        pass
+
     return resolved
 
 
@@ -101,6 +184,16 @@ class ThreadedHTTPServer(ThreadingMixIn, HTTPServer):
 
 class TriageDashboardHandler(BaseHTTPRequestHandler):
     """Secure HTTP request handler for the triage-agent dashboard."""
+
+    def end_headers(self):
+        """Inject robust security headers on all responses (OWASP ASVS / CSP / Clickjacking)."""
+        self.send_header(
+            "Content-Security-Policy",
+            "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; frame-ancestors 'none'; base-uri 'self'; form-action 'self';",
+        )
+        self.send_header("X-Content-Type-Options", "nosniff")
+        self.send_header("X-Frame-Options", "DENY")
+        super().end_headers()
 
     def _is_host_allowed(self) -> bool:
         """Validate Host header against allowed local addresses to prevent DNS rebinding."""
@@ -169,6 +262,7 @@ class TriageDashboardHandler(BaseHTTPRequestHandler):
                 "model": get_model_name(),
                 "cwd": str(Path.cwd()),
                 "default_reviewer": f"{getpass.getuser()} (システム担当)",
+                "csrf_token": SERVER_CSRF_TOKEN,
             }
             self.wfile.write(json.dumps(status, ensure_ascii=False).encode("utf-8"))
         else:
@@ -327,7 +421,7 @@ class TriageDashboardHandler(BaseHTTPRequestHandler):
             attestation_data = req_data.get("attestation", {})
 
             try:
-                safe_audit_path = resolve_safe_path(audit_file_path)
+                safe_audit_path = resolve_safe_load_path(audit_file_path, allowed_extensions=(".json",))
                 existing_attestations = []
                 if safe_audit_path.exists():
                     try:
@@ -389,24 +483,24 @@ class TriageDashboardHandler(BaseHTTPRequestHandler):
                 report_obj = TriageReport.model_validate(report_data)
                 audit_obj = CodebaseAuditReport.model_validate(audit_data) if audit_data else None
 
-                md_content = format_report_markdown(report_obj) if (output_md or True) else ""
+                md_content = format_report_markdown(report_obj) if output_md else ""
                 json_content = report_obj.model_dump_json(indent=2)
-                audit_content = format_verification_markdown(audit_obj) if (audit_obj and (verify_output or True)) else ""
+                audit_content = format_verification_markdown(audit_obj) if (audit_obj and verify_output) else ""
 
                 if output_md:
-                    safe_md = resolve_safe_path(output_md)
+                    safe_md = resolve_safe_output_path(output_md, allowed_extensions=(".md",))
                     safe_md.write_text(md_content, encoding="utf-8")
-                    saved_files.append(str(safe_md.name))
+                    saved_files.append(str(safe_md.relative_to(Path.cwd().resolve())))
 
                 if output_json:
-                    safe_json = resolve_safe_path(output_json)
+                    safe_json = resolve_safe_output_path(output_json, allowed_extensions=(".json",))
                     safe_json.write_text(json_content, encoding="utf-8")
-                    saved_files.append(str(safe_json.name))
+                    saved_files.append(str(safe_json.relative_to(Path.cwd().resolve())))
 
                 if audit_obj and verify_output:
-                    safe_audit = resolve_safe_path(verify_output)
+                    safe_audit = resolve_safe_output_path(verify_output, allowed_extensions=(".md",))
                     safe_audit.write_text(audit_content, encoding="utf-8")
-                    saved_files.append(str(safe_audit.name))
+                    saved_files.append(str(safe_audit.relative_to(Path.cwd().resolve())))
 
                 self.send_response(200)
                 self.send_header("Content-Type", "application/json; charset=utf-8")
@@ -433,7 +527,7 @@ class TriageDashboardHandler(BaseHTTPRequestHandler):
             audit_file = req_data.get("audit_file", "sample_audit_signoff.json").strip() or None
 
             try:
-                safe_report_path = resolve_safe_path(report_path_str)
+                safe_report_path = resolve_safe_load_path(report_path_str, allowed_extensions=(".json",))
                 if not safe_report_path.exists():
                     raise FileNotFoundError(f"レポートファイルが見つかりません: '{report_path_str}'")
 
@@ -445,6 +539,7 @@ class TriageDashboardHandler(BaseHTTPRequestHandler):
                 if code_dir or audit_file:
                     from triage_agent.verifier import verify_codebase
                     safe_code = str(resolve_safe_path(code_dir)) if code_dir else None
+                    safe_audit = str(resolve_safe_load_path(audit_file, allowed_extensions=(".json",))) if audit_file else None
                     safe_audit = str(resolve_safe_path(audit_file)) if audit_file else None
                     audit_report = verify_codebase(
                         report_obj,

@@ -308,8 +308,17 @@ triage-agent/
         ├── schemas.py        # Pydanticデータスキーマ
         ├── cli.py            # メインCLIエントリポイント
         ├── pipeline.py       # 共有パイプライン実行コア
-        ├── web_ui.py         # 軽量・セキュアWeb GUIダッシュボード
-        ├── verifier.py       # 自社コードベース自動検証補助CLI
+        ├── web_ui.py         # 軽量・セキュアWeb GUIエントリポイント（後方互換ラッパー）
+        ├── ui/               # Web GUI パッケージ（HTML/CSS/JS/Server分離）
+        │   ├── server.py     # HTTPサーバー・ルーティング
+        │   ├── static/       # 静的アセット（app.js, style.css）
+        │   └── templates/    # HTMLテンプレート（index.html）
+        └── verifier/         # 自社コードベース自動検証補助パッケージ
+            ├── scanner.py    # AST構文解析・テストコード判定・走査ロジック
+            ├── attestation.py# サインオフ突合・ハッシュ計算・ドリフト検知
+            ├── engine.py     # 自動検証エンジン
+            ├── report.py     # Markdownレポート生成
+            └── cli.py        # triage-verifier CLIエントリポイント
         ├── tools/
         │   ├── sbom.py       # Syft CycloneDX / JSON パーサー
         │   ├── osv.py        # OSV.dev 一括照会 API

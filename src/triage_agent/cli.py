@@ -33,6 +33,12 @@ def format_report_markdown(report: TriageReport) -> str:
             "",
         ])
 
+    if report.recon_coverage_summary:
+        lines.extend([
+            f"> ℹ️ **【調査カバレッジ・深度サマリ】** {report.recon_coverage_summary}",
+            "",
+        ])
+
     if report.unscanned_or_failed_components:
         lines.extend([
             "> 🚨 **【警告: 調査不能・未調査コンポーネント】**",
@@ -279,6 +285,14 @@ def main():
                 + "\n".join([f"• {u}" for u in triage_report.unscanned_or_failed_components])
                 + "\n\n[dim]未調査のコンポーネントを安全と誤認してはなりません。[/dim]",
                 border_style="red",
+            )
+        )
+
+    if triage_report.recon_coverage_summary:
+        console.print(
+            Panel(
+                f"[bold blue]ℹ️ 【調査カバレッジ・深度サマリ】[/bold blue]\n{triage_report.recon_coverage_summary}",
+                border_style="blue",
             )
         )
 

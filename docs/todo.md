@@ -23,10 +23,18 @@
 
 ## 1. v0.2 実装完了（Completed: v0.2.0〜v0.2.5）
 
+- [x] **肥大化ファイルのモジュール分割リファクタリング（v0.2.5対応完了）**
+  - **Web UI の関心事分離 (`triage_agent.ui`):** 1,970行あった `web_ui.py` から HTML (`templates/index.html`)、CSS (`static/style.css`)、JavaScript (`static/app.js`) を独立ファイルとして分離。Python文字列内エスケープ事故（`\n`展開や構文エラー）を根本根絶し、エディタリンター・構文検査に対応。
+  - **Verifier の責務別パッケージ化 (`triage_agent.verifier`):** 800行のモノリシックだった `verifier.py` を、データモデル (`models.py`)、AST構文解析・コード走査 (`scanner.py`)、サインオフ突合・ドリフト検知 (`attestation.py`)、検証エンジン (`engine.py`)、Markdown生成 (`report.py`)、CLI (`cli.py`) に分割。各ファイルを 50〜300 行程度に整理し、保守性・テスタビリティを大幅向上。
 - [x] **Web UI におけるレポート保存（Export）と以前のレポート読込・継続編集（Import / Resume）機能（v0.2.5対応完了）**
-  - Web UI（DAWN Studio）から、生成された指示書（Markdown / JSON）および検証結果レポート（Markdown）を作業ディレクトリの安全なファイルパスへ直接保存。
+  - Web UI（DAWN Studio）から、生成された指示書（Markdown / JSON）および検証結果レポート（Markdown）を安全なファイルパスへ直接保存。
+  - **堅牢なファイル上書き防止（ADR-013）:** 保存先を専用ディレクトリ `triage-output/` 配下に限定し、拡張子も `.md`, `.json` のホワイトリストに制限。ソースコード（`src/`）や機密設定ファイルへの任意上書き攻撃を完全に排除。
+  - **厳格なセキュリティレスポンスヘッダーの導入:** `Content-Security-Policy (script-src 'self', style-src 'self' 'unsafe-inline')`、`X-Content-Type-Options: nosniff`、`X-Frame-Options: DENY`（クリックジャッキング対策）をすべての HTTP レスポンスに適用。インラインイベントハンドラ（`onsubmit` 等）を完全排除。
   - ブラウザからの直接ダウンロード（Markdown / JSON）ボタンをアクションバーに配備。
   - 過去に保存した `triage_report.json` をモーダルから即座に読み込み、外部API照会を行わずにUIを瞬時に復元。サインオフの追加やコードベース検証の再実行（継続編集）が可能に。
+- [x] **調査カバレッジ・深度サマリ（Recon Coverage Summary）の明示（v0.2.5対応完了）**
+  - 上限（`--max-targets`）により深層調査を省略したコンポーネント（OSVヒット0件）について、「全 ◯ 件中、上位 ◯ 件を深層調査。残り ◯ 件はOSV照合（0件）のみ実施」という情報サマリ（Info）をレポートおよび画面に明記。
+  - CIの `--fail-on`（未調査・失敗コンポーネント）には影響を与えず、読む人が調査範囲（OSV照合のみでWeb/コミット深掘りは省略されたこと）を誤解しない透明性を確保。
 - [x] **Self-Triage における件数上限（`--max-targets`）自動最適化と未調査誤認アラートの解消（v0.2.5対応完了）**
   - `--self-triage` 指定時は `--max-targets` の既定値を内部全依存関係を走査可能な 50 に自動引き上げ。
   - OSV照会で脆弱性ヒットが0件だった健全なコンポーネントが「調査省略」として未調査警告（UNSCANNED WARNING）に誤分類される問題を解消。Level 1（機械的チェック）クリアとして正しく集計。
