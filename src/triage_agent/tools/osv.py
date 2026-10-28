@@ -5,6 +5,36 @@ from triage_agent.schemas import ComponentInfo
 OSV_BATCH_ENDPOINT = "https://api.osv.dev/v1/querybatch"
 OSV_VULN_ENDPOINT = "https://api.osv.dev/v1/vulns"
 
+OSV_SUPPORTED_PURL_TYPES = {
+    "pypi", "npm", "maven", "golang", "cargo", "nuget", "gem", "composer",
+    "hex", "pub", "deb", "apk", "rpm", "alpm"
+}
+
+OSV_SUPPORTED_ECOSYSTEMS = {
+    "pypi", "npm", "maven", "go", "crates.io", "nuget", "rubygems",
+    "packagist", "hex", "pub", "debian", "ubuntu", "alpine", "rocky linux",
+    "almalinux", "red hat enterprise linux", "oss-fuzz"
+}
+
+
+def is_osv_queryable(component: ComponentInfo) -> bool:
+    """Determine whether a component can be queried against OSV.dev API safely.
+    
+    Generic runtime components (e.g. `pkg:generic/python@3.12`) or unknown
+    ecosystems are excluded from OSV queries to prevent 400 Bad Request errors.
+    """
+    if component.purl:
+        purl_lower = component.purl.lower()
+        if purl_lower.startswith("pkg:generic/"):
+            return False
+        for ptype in OSV_SUPPORTED_PURL_TYPES:
+            if purl_lower.startswith(f"pkg:{ptype}/"):
+                return True
+        return False
+
+    eco = (component.ecosystem or "").strip().lower()
+    return eco in OSV_SUPPORTED_ECOSYSTEMS
+
 
 _osv_detail_cache: Dict[str, Optional[Dict[str, Any]]] = {}
 
@@ -76,8 +106,16 @@ def query_osv_batch(
     if not components:
         return {}, []
 
+    results_by_component: Dict[str, List[Dict[str, Any]]] = {c.name: [] for c in components}
+    errors: List[str] = []
+
+    queryable_components: List[ComponentInfo] = []
     queries = []
     for c in components:
+        if not is_osv_queryable(c):
+            # Skip unsupported ecosystems or runtime components (e.g. generic python runtime)
+            continue
+
         query_item: Dict[str, Any] = {}
         if c.purl:
             query_item["package"] = {"purl": c.purl}
@@ -89,9 +127,10 @@ def query_osv_batch(
             if c.version and c.version != "unknown":
                 query_item["version"] = c.version
         queries.append(query_item)
+        queryable_components.append(c)
 
-    results_by_component: Dict[str, List[Dict[str, Any]]] = {}
-    errors: List[str] = []
+    if not queries:
+        return results_by_component, []
 
     try:
         with httpx.Client(timeout=15.0, follow_redirects=True) as client:
@@ -101,7 +140,7 @@ def query_osv_batch(
                 batch_results = data.get("results", [])
                 for idx, res in enumerate(batch_results):
                     vulns = res.get("vulns", [])
-                    comp_name = components[idx].name
+                    comp_name = queryable_components[idx].name
                     if vulns:
                         parsed_vulns = []
                         overflow_stubs = []

@@ -1,5 +1,13 @@
+# ==============================================================================
 # Locked dependencies for triage-agent (Python 3.12 / 3.11+)
-# Managed for reproducible deployments and Self-Triage integrity (ADR-018)
+# Managed for reproducible deployments, Dependabot updates, and Self-Triage (ADR-018)
+#
+# Tip: In strict zero-trust CI/CD environments requiring sha256 binary validation,
+# generate multi-platform hashes via:
+#   uv pip compile pyproject.toml --generate-hashes -o requirements.lock
+# and install with:
+#   pip install --require-hashes -r requirements.lock
+# ==============================================================================
 annotated-types==0.8.0
 anyio==4.15.1
 certifi==2026.10.23
