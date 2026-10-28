@@ -87,6 +87,7 @@ def resolve_safe_output_path(path_str: str, allowed_extensions: tuple = (".md", 
         raise PermissionError(
             f"セキュリティ制限: 出力専用ディレクトリ (triage-output/) 外へのファイル書き込みは拒否されました ('{path_str}')"
         )
+    resolved.parent.mkdir(parents=True, exist_ok=True)
     return resolved
 
 
@@ -262,7 +263,6 @@ class TriageDashboardHandler(BaseHTTPRequestHandler):
                 "model": get_model_name(),
                 "cwd": str(Path.cwd()),
                 "default_reviewer": f"{getpass.getuser()} (システム担当)",
-                "csrf_token": SERVER_CSRF_TOKEN,
             }
             self.wfile.write(json.dumps(status, ensure_ascii=False).encode("utf-8"))
         else:

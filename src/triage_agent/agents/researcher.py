@@ -81,20 +81,16 @@ def run_researcher(
 
             gh_errors = gh_signals.get("errors", [])
             if gh_errors:
-                # In Tokenless architecture, unauthenticated GitHub rate limits (HTTP 403)
-                # or secondary API hiccups must never cause false 'unscanned component' alarms
-                # when primary OSV vulnerability data has been retrieved or token is absent.
-                has_token = bool(get_github_token())
-                is_rate_limit = any("403" in str(err) or "rate limit" in str(err).lower() for err in gh_errors)
-                if not has_token or osv_success or is_rate_limit:
-                    signals_data.setdefault("supplementary_notes", []).extend(
-                        [f"GitHub API notice: {err}" for err in gh_errors]
-                    )
-                else:
-                    errors.extend(gh_errors)
+                # GitHub signals are secondary/supplementary.
+                # Always route GitHub API notices to supplementary_notes so they do not
+                # masquerade as fatal component failure or trigger false unscanned alarms.
+                signals_data.setdefault("supplementary_notes", []).extend(
+                    [f"GitHub API notice: {err}" for err in gh_errors]
+                )
         except Exception as e:
-            if not osv_success:
-                errors.append(f"GitHub API query failed for {repo}: {str(e)}")
+            signals_data.setdefault("supplementary_notes", []).append(
+                f"GitHub API query notice for {repo}: {str(e)}"
+            )
 
     # 1C. Dynamic Pre-announcement & Web Search (Live mode only)
     if not dry_run and is_llm_configured():
@@ -224,16 +220,12 @@ Summarize your findings with source URLs. If no upcoming announcements or active
                     )
                 )
 
-        clean_errors = [
-            e for e in errors
-            if not ("403" in str(e) or "rate limit" in str(e).lower() or "github api" in str(e).lower())
-        ]
-        error_notes = f" | Errors: {'; '.join(clean_errors)}" if clean_errors else ""
+        error_notes = f" | Errors: {'; '.join(errors)}" if errors else ""
         return TargetResearchResult(
             target=target,
             findings=findings,
             recon_notes=f"[DRY-RUN] OSV.dev and repository scan found {len(findings)} signal(s){error_notes}.",
-            errors=clean_errors,
+            errors=errors,
         )
 
     # Live Synthesis Call with Structured Outputs
@@ -296,11 +288,17 @@ Summarize your findings with source URLs. If no upcoming announcements or active
 
     if response.text:
         result = TargetResearchResult.model_validate_json(response.text)
-        # Filter out GitHub 403 rate limits or unauthenticated notices from errors list
         all_raw_errors = result.errors + errors
+        # Keep all genuine errors (including OSV, LLM, or fatal errors).
+        # Only discard secondary GitHub API advisory/release/commit notices if LLM repeated them into errors.
         filtered_errors = [
             e for e in all_raw_errors
-            if not ("403" in str(e) or "rate limit" in str(e).lower() or "github api" in str(e).lower())
+            if not (isinstance(e, str) and (
+                e.startswith("GitHub API notice:") or
+                "GitHub Advisories API" in e or
+                "GitHub Releases API" in e or
+                "GitHub Commits API" in e
+            ))
         ]
         result.errors = list(dict.fromkeys(filtered_errors))
         return result

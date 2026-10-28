@@ -11,9 +11,6 @@
     fetch('/api/status')
       .then(res => res.json())
       .then(data => {
-        if (data.csrf_token && !window.CSRF_TOKEN) {
-          window.CSRF_TOKEN = data.csrf_token;
-        }
         const el = document.getElementById('llm-status');
         if (data.is_llm_configured) {
           el.innerHTML = '<span style="width: 8px; height: 8px; border-radius: 50%; background: #10b981; display: inline-block;"></span><span style="color: #17243a; font-weight: 500;">LLM Ready (' + escapeHtml(data.model) + ')</span>';

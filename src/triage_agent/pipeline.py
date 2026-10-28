@@ -182,13 +182,9 @@ def execute_triage_pipeline(
             research_results.append(res)
             if res.errors:
                 for err in res.errors:
-                    err_lower = str(err).lower()
-                    if not ("403" in err_lower or "rate limit" in err_lower or "github api" in err_lower):
-                        unscanned_items.append(f"{target.name}: {err}")
+                    unscanned_items.append(f"{target.name}: {err}")
         except Exception as e:
-            err_lower = str(e).lower()
-            if not ("403" in err_lower or "rate limit" in err_lower or "github api" in err_lower):
-                unscanned_items.append(f"{target.name}: 調査処理エラー ({str(e)})")
+            unscanned_items.append(f"{target.name}: 調査処理エラー ({str(e)})")
 
     # -------------------------------------------------------------
     # Phase 3: Triage & Action Generation
@@ -207,15 +203,38 @@ def execute_triage_pipeline(
     deep_c = len(recon_plan.targets)
     omitted_clean_c = len(omitted_clean)
 
-    if omitted_clean_c > 0:
-        triage_report.recon_coverage_summary = (
-            f"全 {total_c} コンポーネント中、優先度上位 {deep_c} 件を深層調査（Researcher）。"
-            f"残り {omitted_clean_c} 件は OSV.dev 一括照会（脆弱性 0 件確認）のみ実施し、Web/コミット深掘り調査を省略。"
-        )
+    target_names_set = {t.name for t in recon_plan.targets}
+    failed_target_names = {
+        item.split(":")[0].strip()
+        for item in unscanned_items
+        if ":" in item
+    }
+    failed_deep_targets = failed_target_names.intersection(target_names_set)
+    failed_c = len(failed_deep_targets)
+    success_c = max(0, deep_c - failed_c)
+
+    if failed_c > 0:
+        if omitted_clean_c > 0:
+            triage_report.recon_coverage_summary = (
+                f"全 {total_c} コンポーネント中、優先度上位 {deep_c} 件を深層調査対象として選定"
+                f"（{success_c} 件完了、{failed_c} 件失敗・未調査警告あり）。"
+                f"残り {omitted_clean_c} 件は OSV.dev 一括照会（脆弱性 0 件確認）のみ実施し、Web/コミット深掘り調査を省略。"
+            )
+        else:
+            triage_report.recon_coverage_summary = (
+                f"全 {total_c} コンポーネントすべてを深層調査対象として選定"
+                f"（{success_c} 件完了、{failed_c} 件失敗・未調査警告あり）。"
+            )
     else:
-        triage_report.recon_coverage_summary = (
-            f"全 {total_c} コンポーネントすべてを深層調査（Researcher）対象として選定・調査完了。"
-        )
+        if omitted_clean_c > 0:
+            triage_report.recon_coverage_summary = (
+                f"全 {total_c} コンポーネント中、優先度上位 {deep_c} 件を深層調査（Researcher）。"
+                f"残り {omitted_clean_c} 件は OSV.dev 一括照会（脆弱性 0 件確認）のみ実施し、Web/コミット深掘り調査を省略。"
+            )
+        else:
+            triage_report.recon_coverage_summary = (
+                f"全 {total_c} コンポーネントすべてを深層調査（Researcher）対象として選定・調査完了。"
+            )
 
     log("指示書生成完了。検証判定を実行中...", percent=90, phase="Triage Agent", step=3, total_steps=3)
 
