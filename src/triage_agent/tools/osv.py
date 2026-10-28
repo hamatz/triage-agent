@@ -83,7 +83,7 @@ def query_osv_batch(
     raise_on_error: bool = False,
     fetch_details: bool = True,
     max_vulns_per_component: int = 10,
-) -> Tuple[Dict[str, List[Dict[str, Any]]], List[str]]:
+) -> Tuple[Dict[str, List[Dict[str, Any]]], List[str], List[str]]:
     """Query the OSV.dev batch API for known CVE/GHSA vulnerabilities across components.
     
     Note: OSV's querybatch endpoint only returns minimal stub IDs (google/osv.dev#466).
@@ -100,20 +100,25 @@ def query_osv_batch(
         
     Returns:
         Tuple of:
-          - Dictionary mapping component_name -> list of vulnerability entries
+          - Dictionary mapping component_name -> list of vulnerability entries (ONLY for components with >=1 hits)
           - List of error messages / failed component descriptions (empty if all succeeded)
+          - List of components excluded from OSV queries (e.g. generic runtimes, C shared libraries)
     """
     if not components:
-        return {}, []
+        return {}, [], []
 
-    results_by_component: Dict[str, List[Dict[str, Any]]] = {c.name: [] for c in components}
+    results_by_component: Dict[str, List[Dict[str, Any]]] = {}
     errors: List[str] = []
+    unsupported_components: List[str] = []
 
     queryable_components: List[ComponentInfo] = []
     queries = []
     for c in components:
         if not is_osv_queryable(c):
-            # Skip unsupported ecosystems or runtime components (e.g. generic python runtime)
+            # Record unsupported/generic runtime components (e.g. python runtime, libc)
+            unsupported_components.append(
+                f"{c.name} ({c.version} / {c.ecosystem or 'Generic'} - OSV照合対象外・Web/LLM調査要)"
+            )
             continue
 
         query_item: Dict[str, Any] = {}
@@ -130,7 +135,7 @@ def query_osv_batch(
         queryable_components.append(c)
 
     if not queries:
-        return results_by_component, []
+        return results_by_component, errors, unsupported_components
 
     try:
         with httpx.Client(timeout=15.0, follow_redirects=True) as client:
@@ -223,7 +228,7 @@ def query_osv_batch(
         if raise_on_error:
             raise RuntimeError(err_msg) from e
 
-    return results_by_component, errors
+    return results_by_component, errors, unsupported_components
 
 
 def query_osv_single(
@@ -249,6 +254,6 @@ def query_osv_single(
         ecosystem=ecosystem or "unknown",
         purl=purl,
     )
-    res_dict, errors = query_osv_batch([comp], raise_on_error=False)
+    res_dict, errors, _ = query_osv_batch([comp], raise_on_error=False)
     return res_dict.get(name, []), errors
 

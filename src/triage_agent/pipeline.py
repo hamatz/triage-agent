@@ -93,7 +93,7 @@ def execute_triage_pipeline(
     # -------------------------------------------------------------
     log("[1/3] Recon Planner: SBOM解析および巡回戦略策定中...", percent=5, phase="Recon Planner", step=1, total_steps=3)
     components = load_sbom_summary(sbom_path)
-    osv_hits, osv_errors = query_osv_batch(components)
+    osv_hits, osv_errors, osv_unsupported = query_osv_batch(components)
 
     if osv_errors:
         log(f"⚠️ OSV.dev 一括照会失敗 ({'; '.join(osv_errors)})。フォールバック処理を継続中...", percent=15, phase="Recon Planner", step=1, total_steps=3)
@@ -186,6 +186,7 @@ def execute_triage_pipeline(
         unscanned_components=unscanned_items,
         dry_run=is_dry_run,
     )
+    triage_report.osv_unsupported_components = osv_unsupported
     log("指示書生成完了。検証判定を実行中...", percent=90, phase="Triage Agent", step=3, total_steps=3)
 
     # -------------------------------------------------------------

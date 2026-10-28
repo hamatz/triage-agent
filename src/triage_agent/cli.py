@@ -44,6 +44,16 @@ def format_report_markdown(report: TriageReport) -> str:
             lines.append(f"> - ⚠️ `{c}`")
         lines.append("")
 
+    if report.osv_unsupported_components:
+        lines.extend([
+            "> ℹ️ **【OSV.dev 照合対象外（ランタイム・OS共有ライブラリ等）】**",
+            "> 以下のコンポーネントは言語パッケージリポジトリ（PyPI/npm等）ではなくランタイム等のため、OSV一括照会から除外され、Web/LLMによる調査が行われました。",
+            "",
+        ])
+        for c in report.osv_unsupported_components:
+            lines.append(f"> - ℹ️ `{c}`")
+        lines.append("")
+
     for notice in report.notices:
         lines.extend([
             f"## {notice.product_name}（{notice.announcement_date}）",
@@ -264,6 +274,16 @@ def main():
                 + "\n".join([f"• {u}" for u in triage_report.unscanned_or_failed_components])
                 + "\n\n[dim]未調査のコンポーネントを安全と誤認してはなりません。[/dim]",
                 border_style="red",
+            )
+        )
+
+    if triage_report.osv_unsupported_components:
+        console.print(
+            Panel(
+                "[bold blue]ℹ️ 【OSV.dev 照合対象外（ランタイム・OS共有ライブラリ）】[/bold blue]\n"
+                + "\n".join([f"• {u}" for u in triage_report.osv_unsupported_components])
+                + "\n\n[dim]言語パッケージ外のためOSV一括照会から除外され、Web/LLM調査対象となります。[/dim]",
+                border_style="blue",
             )
         )
 

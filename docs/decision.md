@@ -209,7 +209,7 @@
     3. **ツール自体の鮮度 (Self-Triage):** プロンプト、確認ポイントの型、外部API（OSV/GitHub）の仕様、LLMモデルは時間とともに風化する。`triage-agent` 自体も保守され続けるソフトウェアであると位置づけ、**「triage-agent 自身の SBOM を triage-agent 自体で定期的に自己診断する（Self-Triage CI / `--self-triage`）」** ドッグフーディング機構を標準実装する。
   - **CI/CD ガードレールと自動更新エコシステム:**
     - **非ゼロ終了コード制御 (`--fail-on unscanned,yes`):** 調査不能コンポーネント（API障害/上限到達）やYES判定（脆弱性該当コード検出）の発生時に非ゼロコードで停止し、CI上での「サイレントな成功」を完全に遮断。
-    - **ロックファイル (`requirements.lock`) と Dependabot:** 毎回最新版が入って自己診断が形骸化するのを防ぐため、固定バージョンロックファイルをコミットし、`.github/dependabot.yml` により pip 依存関係および SHA 固定 GitHub Actions を週次で自動更新。
+    - **ロックファイル (`requirements-lock.txt`) と Dependabot:** 毎回最新版が入って自己診断が形骸化するのを防ぐため、固定バージョンロックファイルをコミットし、`.github/dependabot.yml` により pip 依存関係（`requirements-lock.txt`）および SHA 固定 GitHub Actions を週次で自動更新。
     - **ランタイム自身の補足と OSV 安全フィルタリング:** SBOM に Python ランタイム自身（`pkg:generic/python@...`）を漏れなく含めつつ、OSV API の仕様に準拠して `generic` purl はバッチ照会から安全にスキップし、Web/LLM 精読に回すことで外部 API の 400 エラーを防止。
 - **背景:**
   - 「AIを導入すれば脆弱性対応が魔法のように解決する」という誤解を排し、「鮮度を保つ運用とセットで初めて効く実践的な道具」であることを組織的に担保するため。

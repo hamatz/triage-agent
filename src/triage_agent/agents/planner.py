@@ -36,7 +36,7 @@ def run_recon_planner(
 
     # 2. Use or fetch OSV.dev batch results
     if osv_results is None:
-        hits, _ = query_osv_batch(components)
+        hits, _, _ = query_osv_batch(components)
         actual_osv_results = hits
     else:
         actual_osv_results = osv_results
