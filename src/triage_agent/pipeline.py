@@ -15,7 +15,7 @@ from triage_agent.agents.triage import run_triage_agent
 from triage_agent.config import is_llm_configured
 from triage_agent.demo import generate_demo_report
 from triage_agent.schemas import ReconPlan, ReconTarget, TargetResearchResult, TriageReport
-from triage_agent.tools.github import is_github_auth_failed
+from triage_agent.tools.github import is_github_auth_failed, reset_github_rate_limit
 from triage_agent.tools.osv import query_osv_batch
 from triage_agent.tools.sbom import load_sbom_summary
 from triage_agent.verifier import CodebaseAuditReport, verify_codebase
@@ -42,6 +42,9 @@ def execute_triage_pipeline(
     Returns:
         Tuple of (TriageReport, Optional[CodebaseAuditReport])
     """
+    # Reset session circuit breakers (unauthenticated 403 rate limit & 401 auth failure) for fresh run
+    reset_github_rate_limit()
+
     def log(msg: str, percent: int = 0, phase: str = "Init", **kwargs):
         if progress_callback:
             try:

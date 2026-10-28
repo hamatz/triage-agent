@@ -101,6 +101,8 @@ GEMINI_MODEL="gemini-3.5-flash"
 
 # GitHub Token (完全任意: 通常は未設定でOK。OSV.devによりトークンレスで動作します)
 # GITHUB_TOKEN=""
+# ※注意: GITHUB_TOKEN を明示設定した場合にトークンが無効または期限切れ（HTTP 401 Bad credentials）
+# であるときは、設定ミスを見逃さないよう「未調査コンポーネント」として警告され、--fail-on unscanned で CI が停止します。
 ```
 
 ---
