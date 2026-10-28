@@ -35,7 +35,7 @@
 | :--- | :--- | :--- | :--- | :--- |
 | CVE-2022-23540 (CVSS 7.5 High相当) | jwt.verify() において algorithms オプションが未指定の場合に 'none' アルゴリズム等の未署名トークンを受け入れてしまい、署名検証をバイパスされる脆弱性。 | <= 8.5.1 | jwt.verify() 呼び出し時の第3引数 options で algorithms（許容アルゴリズムリスト）の指定を省略しているか | コードベースで jwt.verify を検索。呼び出し箇所の第3引数 options に algorithms: ['RS256'] や ['HS256'] などの配列が明示的に指定されていない場合は YES（該当）。常に明示指定されている場合は NO（非該当）。 |
 | CVE-2022-23541 (CVSS 7.5 High相当) | 動的鍵取得コールバック（getKey関数等）使用時に鍵タイプ検証が不十分なため、RSA非対称鍵トークンをHMAC対称鍵として偽造されるキーコンフュージョン脆弱性。 | <= 8.5.1 | jwt.verify() の第2引数（secretOrPublicKey）に getKey などの動的鍵取得関数を渡し、その中でアルゴリズムと鍵タイプの整合性チェックを怠っているか | コード内で jwt.verify の第2引数に関数を渡している箇所を検索。関数内で header.alg や 鍵の型（asymmetricKeyType）を検証せずに鍵を返している場合は YES（該当）。 |
-| CVE-2022-23529 (CVSS 6.5 Medium) | jwt.verify() の secretOrPublicKey 引数に文字列ではなく型未検証のオブジェクトが渡された場合、予期しないコード実行パスが引き起こされる脆弱性。 | <= 8.5.1 | secretOrPublicKey に外部からのリクエストボディや未検証のオブジェクトが直接渡される実装になっているか | jwt.verify(token, secret, ...) の secret 部分の型チェック（typeof secret === 'string' や Buffer チェック）が行われているか確認。外部入力をそのまま渡している場合は YES（該当）。環境変数や固定文字列のみの場合は NO（非該当）。 |
+| CVE-2022-23539 (CVSS 7.5 High相当) | jwt.verify() の secretOrPublicKey 引数に文字列ではなく型未検証のオブジェクトが渡された場合、悪意ある toString() 定義により任意のコード実行やプロトタイプ汚染が引き起こされる脆弱性。 | <= 8.5.1 | secretOrPublicKey に外部からのリクエストボディや未検証のオブジェクトが直接渡される実装になっているか | jwt.verify(token, secret, ...) の secret 部分の型チェック（typeof secret === 'string' や Buffer チェック）が行われているか確認。外部入力をそのまま渡している場合は YES（該当）。環境変数や固定文字列のみの場合は NO（非該当）。 |
 
 > jsonwebtoken <= 8.5.1 を使用している場合に対象
 

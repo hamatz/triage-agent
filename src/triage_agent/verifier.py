@@ -170,43 +170,53 @@ def is_test_path(rel_path: str) -> bool:
     return bool(TEST_FILE_REGEX.search(filename))
 
 
-def extract_python_ast_call_lines(code_str: str, patterns: List[str]) -> Optional[Set[int]]:
-    """Inspect Python code with AST. Returns line numbers where patterns appear in AST Calls/Attributes/Keywords.
-    Returns None if AST parsing fails, allowing fallback to text scan."""
+C_STYLE_COMMENT_EXTENSIONS = {
+    ".js", ".ts", ".jsx", ".tsx", ".mjs", ".cjs",
+    ".java", ".go", ".php", ".c", ".cpp", ".cc", ".h", ".hpp",
+    ".cs", ".kt", ".swift", ".rs", ".scala"
+}
+
+
+def strip_quotes_for_comment_check(line: str) -> str:
+    """Mask string literals to prevent URLs/globs like '/api/*' from triggering block comments."""
+    # Replace strings in "", '', `` with safe placeholders
+    res = re.sub(r'"(?:\\.|[^"\\])*"', '""', line)
+    res = re.sub(r"'(?:\\.|[^'\\])*'", "''", res)
+    res = re.sub(r"`(?:\\.|[^`\\])*`", "``", res)
+    return res
+
+
+def extract_python_docstring_and_code_lines(code_str: str) -> Tuple[Set[int], Set[int]]:
+    """Parse Python AST to distinguish docstrings from executable code/constants.
+    
+    Returns:
+        Tuple of (docstring_lines, all_code_lines)
+    """
     try:
         tree = ast.parse(code_str)
     except Exception:
-        return None
+        return set(), set()
 
-    matched_lines = set()
+    docstring_lines = set()
+    code_lines = set()
 
-    class PatternVisitor(ast.NodeVisitor):
-        def visit_Call(self, node):
-            func_name = ""
-            if isinstance(node.func, ast.Name):
-                func_name = node.func.id
-            elif isinstance(node.func, ast.Attribute):
-                val_id = getattr(node.func.value, "id", "")
-                func_name = f"{val_id}.{node.func.attr}" if val_id else node.func.attr
+    for node in ast.walk(tree):
+        # 1. Collect docstring lines
+        if isinstance(node, (ast.Module, ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)):
+            if (node.body and isinstance(node.body[0], ast.Expr) and
+                isinstance(node.body[0].value, ast.Constant) and
+                isinstance(node.body[0].value.value, str)):
+                expr = node.body[0]
+                start = expr.lineno
+                end = getattr(expr, "end_lineno", expr.lineno)
+                for lno in range(start, end + 1):
+                    docstring_lines.add(lno)
 
-            for p in patterns:
-                p_clean = p.rstrip("(")
-                if p_clean in func_name:
-                    matched_lines.add(node.lineno)
-                for kw in node.keywords:
-                    if kw.arg and p_clean in kw.arg:
-                        matched_lines.add(node.lineno)
-            self.generic_visit(node)
+        # 2. Collect all executable code lines (Calls, Subscripts, Constants, Names, Attributes)
+        if hasattr(node, "lineno"):
+            code_lines.add(node.lineno)
 
-        def visit_Attribute(self, node):
-            for p in patterns:
-                p_clean = p.rstrip("(")
-                if p_clean in node.attr:
-                    matched_lines.add(node.lineno)
-            self.generic_visit(node)
-
-    PatternVisitor().visit(tree)
-    return matched_lines
+    return docstring_lines, code_lines
 
 
 def scan_directory_for_patterns(code_dir: Path, patterns: List[str], max_matches: int = 500) -> List[MatchSnippet]:
@@ -230,34 +240,53 @@ def scan_directory_for_patterns(code_dir: Path, patterns: List[str], max_matches
                     rel_path = str(fpath.relative_to(code_dir))
                     is_test = is_test_path(rel_path)
 
-                    # Python AST high-precision filter
-                    ast_matched_lines = None
+                    # Python AST docstring vs executable code identification
+                    py_docstrings: Set[int] = set()
+                    py_code_lines: Set[int] = set()
                     if suffix == ".py":
-                        ast_matched_lines = extract_python_ast_call_lines(raw_content, patterns)
+                        py_docstrings, py_code_lines = extract_python_docstring_and_code_lines(raw_content)
 
+                    is_c_style = suffix in C_STYLE_COMMENT_EXTENSIONS
                     in_block_comment = False
+
                     for line_no, raw_line in enumerate(all_lines, 1):
                         line_str = raw_line.strip()
+                        effective_line = raw_line
 
-                        # Block comment tracking (/* ... */) for C-style languages
-                        if "/*" in line_str and "*/" not in line_str:
-                            in_block_comment = True
+                        # 1. C-Style block comment handling (strictly limited to C-style languages)
+                        if is_c_style:
+                            if in_block_comment:
+                                if "*/" in raw_line:
+                                    in_block_comment = False
+                                    end_idx = raw_line.find("*/")
+                                    effective_line = raw_line[end_idx + 2:]
+                                else:
+                                    continue
+                            else:
+                                # Remove any single-line /* ... */ comments
+                                effective_line = re.sub(r"/\*.*?\*/", " ", raw_line)
+                                # Check if a multiline /* starts outside of string quotes
+                                masked = strip_quotes_for_comment_check(effective_line)
+                                if "/*" in masked:
+                                    c_start = effective_line.find("/*")
+                                    # Keep code before /* for pattern matching on this line
+                                    effective_line = effective_line[:c_start]
+                                    in_block_comment = True
+
+                        effective_str = effective_line.strip()
+
+                        # 2. Skip comment lines
+                        if not effective_str:
                             continue
-                        elif in_block_comment:
-                            if "*/" in line_str:
-                                in_block_comment = False
+                        if effective_str.startswith("//") or effective_str.startswith("#"):
                             continue
 
-                        # Line comment skipping
-                        if not line_str or line_str.startswith("#") or line_str.startswith("//"):
-                            continue
-
-                        # If Python AST parsing was successful, only match lines recognized by AST
-                        if ast_matched_lines is not None and line_no not in ast_matched_lines:
+                        # 3. Python docstring filter: skip docstring lines while preserving all executable lines
+                        if suffix == ".py" and py_docstrings and line_no in py_docstrings:
                             continue
 
                         for p in patterns:
-                            if p in raw_line:
+                            if p in effective_line:
                                 start_idx = max(0, line_no - 2)
                                 end_idx = min(len(all_lines), line_no + 6)
                                 context_snippet = "".join(all_lines[start_idx:end_idx]).strip()

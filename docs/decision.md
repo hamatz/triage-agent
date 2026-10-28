@@ -146,15 +146,17 @@
 
 ---
 
-## ADR-014: GitHub Token の完全撤廃と OSV-Scanner / OSV.dev への脆弱性調査一本化（Tokenless Architecture）
+## ADR-014: GitHub Token の必須化撤廃と OSV.dev API (OSV-Scannerバックエンド) への脆弱性調査一本化（Tokenless Architecture）
 - **決定:**
-  - `GITHUB_TOKEN` の利用および要求をシステムから完全に撤廃し、脆弱性スキャン・アドバイザリ調査の主軸を **OSV.dev / OSV-Scanner** に完全一本化する。
-  - パッチコミット差分（Diff）の取得は、GitHub API の認証エンドポイントではなく、OSV レコード内の `references` から特定した公開 `.diff`（認証不要）または Gemini の Google Search Grounding による直接精読で行う。
+  - `GITHUB_TOKEN` の必須扱いを撤廃し（任意補足扱いへ変更）、既知脆弱性スキャン・アドバイザリ調査の主軸を完全無料・認証不要の **OSV.dev API（OSV-Scannerのバックエンドデータベース）** に一本化する。
+  - パッチコミット差分（Diff）の取得は、GitHub API の認証エンドポイントに依存せず、OSV レコード内の `references` から特定した公開 `.diff`（認証不要）または Gemini の Google Search Grounding による直接精読で行う。
+  - GitHub REST API は、トークンが設定されている場合のみリリースタグ等の補助シグナル取得としてオプション利用し、未認証レート制限（403）に遭遇しても OSV で調査完了していれば致命的エラーとしない。
+  - OSV.dev は言語パッケージ（PyPI, npm, Maven等）を主たる対象とするため、ランタイム本体やOS共有ライブラリなどOSV照会対象外となり得るものは「調査不能・要確認」として明示し、LLMが安易に安全側に引っ張られない安全側境界を確立する。
 - **背景:**
-  - 従来の実装では、GitHub REST API の未認証レート制限（60回/時）を緩和するために `GITHUB_TOKEN`（Personal Access Token）を任意設定できるよう設計されていた。
+  - 従来の実装では、GitHub REST API の未認証レート制限（60回/時）を緩和するために `GITHUB_TOKEN`（Personal Access Token）の利用を促す設計となっていた。
   - しかし、Personal Access Token や CI/CD シークレットの保持は、万が一のトークン漏洩時に組織のプライベートリポジトリへの不正アクセスや権限昇格を招く重大なセキュリティリスクを孕んでいる。
   - 特に金融機関やエンタープライズの閉域環境では、外部SaaS（GitHub）の認証トークンを発行・配備・ローテーションすること自体がセキュリティ審査の大きな障壁となっていた。
-- **代替技術（OSV-Scanner / OSV.dev）の優位性:**
+- **代替技術（OSV.dev API）の優位性:**
   - **完全トークンレス（Tokenless）:** APIキーや個人トークンが一切不要。レート制限も極めて緩く、バッチ照会（1回で数百パッケージ）が無償・無制限で実行可能。
   - **データの完全網羅性:** GitHub Security Advisories (GHSA) の全データがリアルタイムで OSV にミラーリングされているほか、NVD、PyPI、npm、Go、Rust、Maven、Linuxディストリビューション等の全エコシステムを網羅している。
   - **シークレット管理の極小化:** ツールが扱うクレデンシャルを「LLM推論用（Gemini API Key または GCP Vertex AI 認証）」のみに絞り込むことで、攻撃対象領域とシークレット管理コストをゼロにする。

@@ -39,6 +39,11 @@ def run_researcher(
     # 1A. OSV.dev Database Query (Primary & Tokenless Vulnerability Investigation)
     osv_vulns: List[Dict[str, Any]] = []
     osv_success = False
+
+    # Check if target lacks both ecosystem and purl
+    if target.ecosystem in ("Unknown", "unknown", "") and not getattr(target, "purl", None):
+        errors.append(f"{target.name}: エコシステムおよびPURLが未特定のためOSV.dev照合不能（調査不能コンポーネント）")
+
     try:
         osv_vulns, osv_errors = query_osv_single(
             name=target.name,
@@ -225,6 +230,16 @@ Summarize your findings with source URLs. If no upcoming announcements or active
     model_name = get_model_name("researcher")
     system_instruction = PROMPT_PATH.read_text(encoding="utf-8")
 
+    if osv_vulns:
+        osv_status_text = json.dumps(osv_vulns, indent=2, ensure_ascii=False)
+    else:
+        osv_status_text = (
+            "OSV.dev データベース照会: 既知脆弱性のヒットなし（0件）\n"
+            "※注意: OSV.dev はオープンソース言語パッケージ（PyPI/npm/Maven等）を主たる対象としています。\n"
+            "Node.js/PHP等のランタイム本体、C共有ライブラリ、OSパッケージ等の脆弱性はOSV照会対象外の可能性があるため、\n"
+            "安易に安全と即断せず、Web検索（Google Search Grounding）等の追加シグナルを慎重に精読してください。"
+        )
+
     user_content = f"""調査対象コンポーネント:
 - 名前: {target.name}
 - 自社利用バージョン: {target.version}
@@ -234,7 +249,7 @@ Summarize your findings with source URLs. If no upcoming announcements or active
 - 調査理由: {target.rationale}
 
 【1. OSV.dev 脆弱性データベース (Tokenless Primary Source)】:
-{json.dumps(osv_vulns, indent=2, ensure_ascii=False) if osv_vulns else '該当する既知脆弱性なし (No known vulnerabilities reported)'}
+{osv_status_text}
 
 【2. Web検索・事前パッチ予告の調査結果 (Google Search Grounding)】:
 {web_findings_text if web_findings_text else 'Web検索未実施または情報なし'}

@@ -6,15 +6,65 @@ OSV_BATCH_ENDPOINT = "https://api.osv.dev/v1/querybatch"
 OSV_VULN_ENDPOINT = "https://api.osv.dev/v1/vulns"
 
 
+_osv_detail_cache: Dict[str, Optional[Dict[str, Any]]] = {}
+
+
+def get_osv_vulnerability_detail(vuln_id: str, client: Optional[httpx.Client] = None) -> Optional[Dict[str, Any]]:
+    """Retrieve full vulnerability details from OSV.dev API without authentication.
+    
+    Checks in-memory cache to prevent redundant HTTP GET requests.
+    
+    Args:
+        vuln_id: Vulnerability ID (e.g. 'GHSA-542g-h47m-68v8' or 'CVE-2024-43796')
+        client: Optional reusable httpx.Client
+        
+    Returns:
+        Full vulnerability detail dict or None if not found/error
+    """
+    if not vuln_id:
+        return None
+    if vuln_id in _osv_detail_cache:
+        return _osv_detail_cache[vuln_id]
+
+    url = f"{OSV_VULN_ENDPOINT}/{vuln_id}"
+    try:
+        if client:
+            resp = client.get(url)
+            if resp.status_code == 200:
+                res_json = resp.json()
+                _osv_detail_cache[vuln_id] = res_json
+                return res_json
+        else:
+            with httpx.Client(timeout=10.0, follow_redirects=True) as local_client:
+                resp = local_client.get(url)
+                if resp.status_code == 200:
+                    res_json = resp.json()
+                    _osv_detail_cache[vuln_id] = res_json
+                    return res_json
+    except Exception:
+        pass
+
+    _osv_detail_cache[vuln_id] = None
+    return None
+
+
 def query_osv_batch(
     components: List[ComponentInfo],
-    raise_on_error: bool = False
+    raise_on_error: bool = False,
+    fetch_details: bool = True,
+    max_vulns_per_component: int = 5,
 ) -> Tuple[Dict[str, List[Dict[str, Any]]], List[str]]:
     """Query the OSV.dev batch API for known CVE/GHSA vulnerabilities across components.
+    
+    Note: OSV's querybatch endpoint only returns minimal stub IDs (google/osv.dev#466).
+    When fetch_details=True, this function automatically hydrates each stub ID with full
+    vulnerability details (aliases, CVSS score, fixed versions, and withdrawn status).
     
     Args:
         components: List of ComponentInfo to query
         raise_on_error: If True, raise exception on network failure instead of returning errors
+        fetch_details: If True, fetch full vulnerability details for each vulnerability ID
+        max_vulns_per_component: Max detail records to hydrate per component to stay snappy
         
     Returns:
         Tuple of:
@@ -52,7 +102,22 @@ def query_osv_batch(
                     comp_name = components[idx].name
                     if vulns:
                         parsed_vulns = []
-                        for v in vulns:
+                        for stub in vulns[:max_vulns_per_component]:
+                            vid = stub.get("id")
+                            if not vid:
+                                continue
+
+                            # Hydrate stub ID with full details from OSV.dev API
+                            v = stub
+                            if fetch_details:
+                                detailed = get_osv_vulnerability_detail(vid, client=client)
+                                if detailed:
+                                    v = detailed
+
+                            # Skip retracted / withdrawn vulnerabilities (e.g. CVE-2022-23529)
+                            if v.get("withdrawn"):
+                                continue
+
                             # Extract aliases (e.g. CVE-2026-XXXX)
                             aliases = v.get("aliases", [])
                             cve_id = next((a for a in aliases if a.startswith("CVE-")), None)
@@ -73,7 +138,7 @@ def query_osv_batch(
                                             fixed_versions.append(ev["fixed"])
 
                             parsed_vulns.append({
-                                "id": v.get("id"),
+                                "id": vid,
                                 "cve_id": cve_id,
                                 "aliases": aliases,
                                 "summary": v.get("summary", ""),
@@ -83,7 +148,8 @@ def query_osv_batch(
                                 "references": [ref.get("url") for ref in v.get("references", []) if ref.get("url")],
                                 "modified": v.get("modified"),
                             })
-                        results_by_component[comp_name] = parsed_vulns
+                        if parsed_vulns:
+                            results_by_component[comp_name] = parsed_vulns
             else:
                 err_msg = f"OSV.dev API HTTP {resp.status_code}: {resp.text[:150]}"
                 errors.append(err_msg)
@@ -96,28 +162,6 @@ def query_osv_batch(
             raise RuntimeError(err_msg) from e
 
     return results_by_component, errors
-
-
-def get_osv_vulnerability_detail(vuln_id: str) -> Optional[Dict[str, Any]]:
-    """Retrieve full vulnerability details from OSV.dev API without authentication.
-    
-    Args:
-        vuln_id: Vulnerability ID (e.g. 'GHSA-542g-h47m-68v8' or 'CVE-2024-43796')
-        
-    Returns:
-        Full vulnerability detail dict or None if not found/error
-    """
-    if not vuln_id:
-        return None
-    url = f"{OSV_VULN_ENDPOINT}/{vuln_id}"
-    try:
-        with httpx.Client(timeout=10.0, follow_redirects=True) as client:
-            resp = client.get(url)
-            if resp.status_code == 200:
-                return resp.json()
-    except Exception:
-        pass
-    return None
 
 
 def query_osv_single(
