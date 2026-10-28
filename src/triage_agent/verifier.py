@@ -178,12 +178,40 @@ C_STYLE_COMMENT_EXTENSIONS = {
 
 
 def strip_quotes_for_comment_check(line: str) -> str:
-    """Mask string literals to prevent URLs/globs like '/api/*' from triggering block comments."""
-    # Replace strings in "", '', `` with safe placeholders
-    res = re.sub(r'"(?:\\.|[^"\\])*"', '""', line)
-    res = re.sub(r"'(?:\\.|[^'\\])*'", "''", res)
-    res = re.sub(r"`(?:\\.|[^`\\])*`", "``", res)
+    """Mask string literals with equal-length spaces to prevent URLs/globs like '/api/*'
+    from triggering block comments while preserving exact character offsets."""
+    def mask_match(m):
+        s = m.group(0)
+        return s[0] + " " * (len(s) - 2) + s[-1] if len(s) >= 2 else s
+
+    res = re.sub(r'"(?:\\.|[^"\\])*"', mask_match, line)
+    res = re.sub(r"'(?:\\.|[^'\\])*'", mask_match, res)
+    res = re.sub(r"`(?:\\.|[^`\\])*`", mask_match, res)
     return res
+
+
+def remove_c_style_comments_from_line(raw_line: str) -> Tuple[str, bool]:
+    """Remove C-style comments outside of string quotes from a single line.
+    
+    Returns:
+        Tuple of (clean_code_line, starts_multiline_block_comment)
+    """
+    clean_line = raw_line
+    while True:
+        masked = strip_quotes_for_comment_check(clean_line)
+        start = masked.find("/*")
+        if start == -1:
+            break
+        end = masked.find("*/", start + 2)
+        if end != -1:
+            # Inline comment /* ... */ outside quotes: replace with spaces to preserve length
+            clean_line = clean_line[:start] + " " * (end + 2 - start) + clean_line[end + 2:]
+        else:
+            # Multiline comment starts outside quotes: keep code before start
+            clean_line = clean_line[:start]
+            return clean_line, True
+
+    return clean_line, False
 
 
 def extract_python_docstring_and_code_lines(code_str: str) -> Tuple[Set[int], Set[int]]:
@@ -259,19 +287,12 @@ def scan_directory_for_patterns(code_dir: Path, patterns: List[str], max_matches
                                 if "*/" in raw_line:
                                     in_block_comment = False
                                     end_idx = raw_line.find("*/")
-                                    effective_line = raw_line[end_idx + 2:]
+                                    # Continue processing remaining code after */ on the same line
+                                    effective_line, in_block_comment = remove_c_style_comments_from_line(raw_line[end_idx + 2:])
                                 else:
                                     continue
                             else:
-                                # Remove any single-line /* ... */ comments
-                                effective_line = re.sub(r"/\*.*?\*/", " ", raw_line)
-                                # Check if a multiline /* starts outside of string quotes
-                                masked = strip_quotes_for_comment_check(effective_line)
-                                if "/*" in masked:
-                                    c_start = effective_line.find("/*")
-                                    # Keep code before /* for pattern matching on this line
-                                    effective_line = effective_line[:c_start]
-                                    in_block_comment = True
+                                effective_line, in_block_comment = remove_c_style_comments_from_line(raw_line)
 
                         effective_str = effective_line.strip()
 

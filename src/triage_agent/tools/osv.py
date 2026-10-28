@@ -44,7 +44,7 @@ def get_osv_vulnerability_detail(vuln_id: str, client: Optional[httpx.Client] = 
     except Exception:
         pass
 
-    _osv_detail_cache[vuln_id] = None
+    # Do not cache failed lookups so transient network errors can be retried
     return None
 
 
@@ -52,13 +52,15 @@ def query_osv_batch(
     components: List[ComponentInfo],
     raise_on_error: bool = False,
     fetch_details: bool = True,
-    max_vulns_per_component: int = 5,
+    max_vulns_per_component: int = 10,
 ) -> Tuple[Dict[str, List[Dict[str, Any]]], List[str]]:
     """Query the OSV.dev batch API for known CVE/GHSA vulnerabilities across components.
     
     Note: OSV's querybatch endpoint only returns minimal stub IDs (google/osv.dev#466).
-    When fetch_details=True, this function automatically hydrates each stub ID with full
-    vulnerability details (aliases, CVSS score, fixed versions, and withdrawn status).
+    When fetch_details=True, this function hydrates up to max_vulns_per_component stub IDs
+    with full vulnerability details (aliases, CVSS score, fixed versions, and withdrawn status).
+    Any vulnerabilities beyond max_vulns_per_component are preserved with stub info and
+    explicitly recorded in errors as partially scanned / details omitted.
     
     Args:
         components: List of ComponentInfo to query
@@ -102,17 +104,21 @@ def query_osv_batch(
                     comp_name = components[idx].name
                     if vulns:
                         parsed_vulns = []
-                        for stub in vulns[:max_vulns_per_component]:
+                        overflow_stubs = []
+
+                        for v_idx, stub in enumerate(vulns):
                             vid = stub.get("id")
                             if not vid:
                                 continue
 
-                            # Hydrate stub ID with full details from OSV.dev API
-                            v = stub
-                            if fetch_details:
+                            # Check if within detail hydration limit
+                            if fetch_details and v_idx < max_vulns_per_component:
                                 detailed = get_osv_vulnerability_detail(vid, client=client)
-                                if detailed:
-                                    v = detailed
+                                v = detailed if detailed else stub
+                            else:
+                                v = stub
+                                if v_idx >= max_vulns_per_component:
+                                    overflow_stubs.append(vid)
 
                             # Skip retracted / withdrawn vulnerabilities (e.g. CVE-2022-23529)
                             if v.get("withdrawn"):
@@ -137,19 +143,36 @@ def query_osv_batch(
                                         if "fixed" in ev:
                                             fixed_versions.append(ev["fixed"])
 
+                            is_truncated = (v_idx >= max_vulns_per_component)
+                            details_text = (v.get("details", "") or "")[:400]
+                            if is_truncated and not details_text:
+                                details_text = "[詳細未取得: 件数上限により基本情報のみ記録。個別に要確認]"
+
                             parsed_vulns.append({
                                 "id": vid,
                                 "cve_id": cve_id,
                                 "aliases": aliases,
                                 "summary": v.get("summary", ""),
-                                "details": (v.get("details", "") or "")[:400],
+                                "details": details_text,
                                 "score": score,
                                 "fixed_versions": fixed_versions,
                                 "references": [ref.get("url") for ref in v.get("references", []) if ref.get("url")],
                                 "modified": v.get("modified"),
+                                "is_detail_truncated": is_truncated,
                             })
+
                         if parsed_vulns:
                             results_by_component[comp_name] = parsed_vulns
+
+                        # Record overflow warning explicitly so un-fetched details are never hidden
+                        if overflow_stubs:
+                            stub_preview = ", ".join(overflow_stubs[:5])
+                            if len(overflow_stubs) > 5:
+                                stub_preview += f" 等計 {len(overflow_stubs)} 件"
+                            errors.append(
+                                f"{comp_name}: OSV.dev で検出された全 {len(vulns)} 件中、"
+                                f"上位 {max_vulns_per_component} 件の詳細を取得。残り {len(overflow_stubs)} 件は詳細未取得（要個別確認: {stub_preview}）"
+                            )
             else:
                 err_msg = f"OSV.dev API HTTP {resp.status_code}: {resp.text[:150]}"
                 errors.append(err_msg)
