@@ -461,7 +461,7 @@ HTML_PAGE = """<!DOCTYPE html>
       <div class="flex items-center space-x-2">
         <span style="font-size: 22px; color: var(--accent-gold);">◈</span>
         <div class="serif-title" style="font-size: 22px; color: var(--text-main);">
-          triage-agent <small class="eyeb" style="margin-left: 8px;">DAWN / 0.1</small>
+          triage-agent <small class="eyeb" style="margin-left: 8px;">DAWN / 0.2.5</small>
         </div>
       </div>
       <div style="font-size: 11px; color: var(--text-muted); border-left: 1px solid var(--border-color); padding-left: 16px;">
@@ -541,6 +541,12 @@ HTML_PAGE = """<!DOCTYPE html>
             <button type="submit" id="btn-run" class="w-full btn-dawn-primary py-3">
               <span>◈</span>
               <span>トリアージ実行</span>
+            </button>
+
+            <!-- Load Previous Report Button -->
+            <button type="button" id="btn-open-load-modal" class="w-full btn-dawn-outline py-2.5 mt-2 flex items-center justify-center space-x-2">
+              <span>📂</span>
+              <span>以前のレポートを読込（継続編集）</span>
             </button>
           </form>
         </div>
@@ -631,6 +637,35 @@ HTML_PAGE = """<!DOCTYPE html>
           </div>
         </div>
 
+        <!-- Report Action Bar (Save & Export) -->
+        <div id="report-action-bar" class="hidden surface p-4 flex items-center justify-between" style="border: 1.5px solid var(--border-color); border-radius: 14px;">
+          <div class="flex items-center space-x-3">
+            <span style="font-size: 18px; color: var(--accent-gold);">◈</span>
+            <div>
+              <div class="eyeb" style="font-size: 9px;">REPORT WORKSPACE &amp; EXPORT</div>
+              <div class="text-xs font-semibold" id="report-action-title">トリアージ指示書 &amp; 監査データ</div>
+            </div>
+          </div>
+          <div class="flex items-center space-x-2">
+            <button type="button" id="btn-open-save-modal" class="btn-dawn-primary text-xs py-2 px-3 flex items-center space-x-1.5">
+              <span>💾</span>
+              <span>ファイルに保存</span>
+            </button>
+            <button type="button" id="btn-dl-md" class="btn-dawn-outline text-xs py-2 px-3 flex items-center space-x-1.5">
+              <span>📥</span>
+              <span>指示書 (MD)</span>
+            </button>
+            <button type="button" id="btn-dl-json" class="btn-dawn-outline text-xs py-2 px-3 flex items-center space-x-1.5">
+              <span>📥</span>
+              <span>JSON</span>
+            </button>
+            <button type="button" id="btn-dl-audit" class="btn-dawn-outline text-xs py-2 px-3 flex items-center space-x-1.5 hidden">
+              <span>📥</span>
+              <span>検証結果 (MD)</span>
+            </button>
+          </div>
+        </div>
+
         <!-- Verification Audit Summary -->
         <div id="verification-panel" class="hidden surface p-6 space-y-5">
           <div class="flex items-center justify-between" style="border-bottom: 1px solid var(--border-subtle); padding-bottom: 16px;">
@@ -679,6 +714,35 @@ HTML_PAGE = """<!DOCTYPE html>
               </p>
               <ul id="unscanned-list" class="font-mono text-xs mt-2 p-3 space-y-1" style="background: rgba(255, 255, 255, 0.7); border: 1px solid #fde68a; border-radius: 8px; color: #78350f; list-style-position: inside;"></ul>
             </div>
+          </div>
+        </div>
+
+        <!-- Report Action Bar (Save & Export) -->
+        <div id="report-action-bar" class="hidden surface p-4 flex items-center justify-between" style="border: 1.5px solid var(--border-color); border-radius: 14px;">
+          <div class="flex items-center space-x-3">
+            <span style="font-size: 18px; color: var(--accent-gold);">◈</span>
+            <div>
+              <div class="eyeb" style="font-size: 9px;">REPORT WORKSPACE &amp; EXPORT</div>
+              <div class="text-xs font-semibold" id="report-action-title">トリアージ指示書 &amp; 監査データ</div>
+            </div>
+          </div>
+          <div class="flex items-center space-x-2">
+            <button type="button" id="btn-open-save-modal" class="btn-dawn-primary text-xs py-2 px-3 flex items-center space-x-1.5">
+              <span>💾</span>
+              <span>ファイルに保存</span>
+            </button>
+            <button type="button" id="btn-dl-md" class="btn-dawn-outline text-xs py-2 px-3 flex items-center space-x-1.5">
+              <span>📥</span>
+              <span>指示書 (MD)</span>
+            </button>
+            <button type="button" id="btn-dl-json" class="btn-dawn-outline text-xs py-2 px-3 flex items-center space-x-1.5">
+              <span>📥</span>
+              <span>JSON</span>
+            </button>
+            <button type="button" id="btn-dl-audit" class="btn-dawn-outline text-xs py-2 px-3 flex items-center space-x-1.5 hidden">
+              <span>📥</span>
+              <span>検証結果 (MD)</span>
+            </button>
           </div>
         </div>
 
@@ -762,9 +826,80 @@ HTML_PAGE = """<!DOCTYPE html>
     </div>
   </div>
 
+  <!-- Load Previous Report Modal -->
+  <div id="load-modal" class="modal-overlay hidden">
+    <div class="modal-card p-6 space-y-5">
+      <div class="flex items-center justify-between" style="border-bottom: 1.5px solid var(--border-color); padding-bottom: 12px;">
+        <div>
+          <div class="eyeb" style="font-size: 9px;">LOAD PREVIOUS REPORT</div>
+          <h3 class="serif-title text-lg font-normal">以前のレポートを読込（継続編集）</h3>
+        </div>
+        <button type="button" id="btn-close-load-modal" class="text-lg" style="background: none; border: none; cursor: pointer; color: var(--text-dim); padding: 4px;">✕</button>
+      </div>
+
+      <div class="space-y-4 text-xs">
+        <p style="color: var(--text-muted); line-height: 1.6;">
+          以前実行して保存されたトリアージ指示書（JSON）を読み込みます。外部API照会を行わずに即座に結果を復元し、サインオフの追加やコード検証の更新を行えます。
+        </p>
+        <div>
+          <label class="block font-semibold mb-1">レポート JSON ファイルパス *</label>
+          <input type="text" id="load-report-path" value="triage_report.json" class="dawn-input" spellcheck="false">
+          <span style="font-size: 10px; color: var(--text-dim); display: block; margin-top: 2px;">作業ディレクトリ内の .json ファイル（例: triage_report.json）</span>
+        </div>
+      </div>
+
+      <div class="flex justify-end space-x-2 pt-3" style="border-top: 1px solid var(--border-subtle);">
+        <button type="button" id="btn-cancel-load-modal" class="btn-dawn-secondary">キャンセル</button>
+        <button type="button" id="btn-submit-load" class="btn-dawn-primary" style="font-size: 12px; padding: 8px 16px;">
+          <span>📂</span>
+          <span>読込実行</span>
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Save Report Modal -->
+  <div id="save-modal" class="modal-overlay hidden">
+    <div class="modal-card p-6 space-y-5">
+      <div class="flex items-center justify-between" style="border-bottom: 1.5px solid var(--border-color); padding-bottom: 12px;">
+        <div>
+          <div class="eyeb" style="font-size: 9px;">SAVE REPORT TO WORKSPACE</div>
+          <h3 class="serif-title text-lg font-normal">レポートを作業ディレクトリに保存</h3>
+        </div>
+        <button type="button" id="btn-close-save-modal" class="text-lg" style="background: none; border: none; cursor: pointer; color: var(--text-dim); padding: 4px;">✕</button>
+      </div>
+
+      <div class="space-y-4 text-xs">
+        <p style="color: var(--text-muted); line-height: 1.6;">
+          画面上に表示されているトリアージ指示書および検証レポートをローカルファイルに書き出します。
+        </p>
+        <div>
+          <label class="block font-semibold mb-1">指示書 Markdown 出力先</label>
+          <input type="text" id="save-md-path" value="triage_report.md" class="dawn-input" spellcheck="false">
+        </div>
+        <div>
+          <label class="block font-semibold mb-1">指示書 JSON 出力先（継続編集用）</label>
+          <input type="text" id="save-json-path" value="triage_report.json" class="dawn-input" spellcheck="false">
+        </div>
+        <div id="save-audit-group">
+          <label class="block font-semibold mb-1">検証結果 Markdown 出力先</label>
+          <input type="text" id="save-audit-path" value="verification_audit_report.md" class="dawn-input" spellcheck="false">
+        </div>
+      </div>
+
+      <div class="flex justify-end space-x-2 pt-3" style="border-top: 1px solid var(--border-subtle);">
+        <button type="button" id="btn-cancel-save-modal" class="btn-dawn-secondary">キャンセル</button>
+        <button type="button" id="btn-submit-save" class="btn-dawn-primary" style="font-size: 12px; padding: 8px 16px;">
+          <span>💾</span>
+          <span>保存する</span>
+        </button>
+      </div>
+    </div>
+  </div>
+
   <!-- App Footer -->
   <footer class="app-footer">
-    <span>NSTAR DESIGN SYSTEM · DAWN · TRIAGE AGENT STUDIO v0.1</span>
+    <span>NSTAR DESIGN SYSTEM · DAWN · TRIAGE AGENT STUDIO v0.2.5</span>
     <span class="eyeb" style="font-size: 9px;">ZERO CDN · OFFLINE ENTERPRISE READY</span>
   </footer>
 
@@ -936,6 +1071,17 @@ HTML_PAGE = """<!DOCTYPE html>
 
     function renderReport(report, audit) {
       if (!report) return;
+
+      // 0. Show report action bar and toggle audit download button
+      const actionBar = document.getElementById('report-action-bar');
+      if (actionBar) {
+        actionBar.classList.remove('hidden');
+        const dlAuditBtn = document.getElementById('btn-dl-audit');
+        if (dlAuditBtn) {
+          if (audit) dlAuditBtn.classList.remove('hidden');
+          else dlAuditBtn.classList.add('hidden');
+        }
+      }
 
       // 1. Render Verification / Attestation summary
       const vPanel = document.getElementById('verification-panel');
@@ -1243,6 +1389,179 @@ HTML_PAGE = """<!DOCTYPE html>
       // Otherwise render as safe plain text (blocks javascript:, data:, etc.)
       return `<span style="font-family: var(--mono);">${escaped}</span>`;
     }
+
+    // Client-side Blob download helper
+    function downloadBlob(content, filename, mimeType) {
+      const blob = new Blob([content], { type: mimeType });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    }
+
+    // Load Previous Report Handlers
+    const loadModal = document.getElementById('load-modal');
+    document.getElementById('btn-open-load-modal').addEventListener('click', () => {
+      loadModal.classList.remove('hidden');
+    });
+    document.getElementById('btn-close-load-modal').addEventListener('click', () => {
+      loadModal.classList.add('hidden');
+    });
+    document.getElementById('btn-cancel-load-modal').addEventListener('click', () => {
+      loadModal.classList.add('hidden');
+    });
+
+    document.getElementById('btn-submit-load').addEventListener('click', async () => {
+      const reportPath = document.getElementById('load-report-path').value.trim() || 'triage_report.json';
+      const codeDir = document.getElementById('code-dir').value.trim() || null;
+      const auditFile = document.getElementById('audit-file').value.trim() || null;
+
+      try {
+        const res = await fetch('/api/load-report', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'X-CSRF-Token': window.CSRF_TOKEN
+          },
+          body: JSON.stringify({
+            report_path: reportPath,
+            code_dir: codeDir,
+            audit_file: auditFile
+          })
+        });
+        const data = await res.json();
+        if (data.success && data.report) {
+          currentReport = data.report;
+          currentAudit = data.audit;
+          renderReport(currentReport, currentAudit);
+          loadModal.classList.add('hidden');
+          // Update progress status
+          updateProgress({ percent: 100, phase: 'Restored', message: `レポート '${escapeHtml(data.loaded_from)}' を復元しました。継続編集可能です。` });
+          document.getElementById('loading-spinner').classList.add('hidden');
+          document.getElementById('notices-container').classList.remove('hidden');
+        } else {
+          alert('読込失敗: ' + (data.error || '不明なエラー'));
+        }
+      } catch (err) {
+        alert('読込エラー: ' + err.message);
+      }
+    });
+
+    // Save Report to Workspace Handlers
+    const saveModal = document.getElementById('save-modal');
+    document.getElementById('btn-open-save-modal').addEventListener('click', () => {
+      if (!currentReport) {
+        alert('保存するレポートデータがありません。');
+        return;
+      }
+      saveModal.classList.remove('hidden');
+    });
+    document.getElementById('btn-close-save-modal').addEventListener('click', () => {
+      saveModal.classList.add('hidden');
+    });
+    document.getElementById('btn-cancel-save-modal').addEventListener('click', () => {
+      saveModal.classList.add('hidden');
+    });
+
+    document.getElementById('btn-submit-save').addEventListener('click', async () => {
+      if (!currentReport) return;
+      const outputMd = document.getElementById('save-md-path').value.trim() || null;
+      const outputJson = document.getElementById('save-json-path').value.trim() || null;
+      const verifyOutput = document.getElementById('save-audit-path').value.trim() || null;
+
+      try {
+        const res = await fetch('/api/save-report', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'X-CSRF-Token': window.CSRF_TOKEN
+          },
+          body: JSON.stringify({
+            report: currentReport,
+            audit: currentAudit,
+            output_md: outputMd,
+            output_json: outputJson,
+            verify_output: verifyOutput
+          })
+        });
+        const data = await res.json();
+        if (data.success) {
+          saveModal.classList.add('hidden');
+          alert('ファイルを正常に保存しました:\n• ' + data.saved_files.join('\n• '));
+        } else {
+          alert('保存失敗: ' + (data.error || '不明なエラー'));
+        }
+      } catch (err) {
+        alert('保存エラー: ' + err.message);
+      }
+    });
+
+    // Client-side Direct Download Handlers
+    document.getElementById('btn-dl-json').addEventListener('click', () => {
+      if (!currentReport) return;
+      const jsonStr = JSON.stringify(currentReport, null, 2);
+      downloadBlob(jsonStr, 'triage_report.json', 'application/json');
+    });
+
+    document.getElementById('btn-dl-md').addEventListener('click', async () => {
+      if (!currentReport) return;
+      try {
+        const res = await fetch('/api/save-report', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'X-CSRF-Token': window.CSRF_TOKEN
+          },
+          body: JSON.stringify({
+            report: currentReport,
+            audit: currentAudit,
+            output_md: null,
+            output_json: null,
+            verify_output: null
+          })
+        });
+        const data = await res.json();
+        if (data.success && data.md_content) {
+          downloadBlob(data.md_content, 'triage_report.md', 'text/markdown; charset=utf-8');
+        } else {
+          alert('Markdown生成失敗: ' + (data.error || '不明なエラー'));
+        }
+      } catch (err) {
+        alert('ダウンロードエラー: ' + err.message);
+      }
+    });
+
+    document.getElementById('btn-dl-audit').addEventListener('click', async () => {
+      if (!currentReport || !currentAudit) return;
+      try {
+        const res = await fetch('/api/save-report', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'X-CSRF-Token': window.CSRF_TOKEN
+          },
+          body: JSON.stringify({
+            report: currentReport,
+            audit: currentAudit,
+            output_md: null,
+            output_json: null,
+            verify_output: null
+          })
+        });
+        const data = await res.json();
+        if (data.success && data.audit_content) {
+          downloadBlob(data.audit_content, 'verification_audit_report.md', 'text/markdown; charset=utf-8');
+        } else {
+          alert('検証Markdown生成失敗: ' + (data.error || '不明なエラー'));
+        }
+      } catch (err) {
+        alert('ダウンロードエラー: ' + err.message);
+      }
+    });
   </script>
 </body>
 </html>
@@ -1494,6 +1813,108 @@ class TriageDashboardHandler(BaseHTTPRequestHandler):
 
             except Exception as e:
                 self.send_response(500)
+                self.send_header("Content-Type", "application/json; charset=utf-8")
+                self.end_headers()
+                self.wfile.write(json.dumps({"success": False, "error": str(e)}, ensure_ascii=False).encode("utf-8"))
+
+        elif self.path == "/api/save-report":
+            report_data = req_data.get("report")
+            audit_data = req_data.get("audit")
+            output_md = req_data.get("output_md", "triage_report.md")
+            output_json = req_data.get("output_json", "triage_report.json")
+            verify_output = req_data.get("verify_output", "verification_audit_report.md")
+
+            if not report_data:
+                self.send_response(400)
+                self.send_header("Content-Type", "application/json; charset=utf-8")
+                self.end_headers()
+                self.wfile.write(json.dumps({"error": "レポートデータが空です。"}, ensure_ascii=False).encode("utf-8"))
+                return
+
+            try:
+                from triage_agent.cli import format_report_markdown
+                from triage_agent.verifier import format_verification_markdown
+
+                saved_files = []
+                report_obj = TriageReport.model_validate(report_data)
+                audit_obj = CodebaseAuditReport.model_validate(audit_data) if audit_data else None
+
+                md_content = format_report_markdown(report_obj) if (output_md or True) else ""
+                json_content = report_obj.model_dump_json(indent=2)
+                audit_content = format_verification_markdown(audit_obj) if (audit_obj and (verify_output or True)) else ""
+
+                if output_md:
+                    safe_md = resolve_safe_path(output_md)
+                    safe_md.write_text(md_content, encoding="utf-8")
+                    saved_files.append(str(safe_md.name))
+
+                if output_json:
+                    safe_json = resolve_safe_path(output_json)
+                    safe_json.write_text(json_content, encoding="utf-8")
+                    saved_files.append(str(safe_json.name))
+
+                if audit_obj and verify_output:
+                    safe_audit = resolve_safe_path(verify_output)
+                    safe_audit.write_text(audit_content, encoding="utf-8")
+                    saved_files.append(str(safe_audit.name))
+
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json; charset=utf-8")
+                self.end_headers()
+                self.wfile.write(
+                    json.dumps({
+                        "success": True,
+                        "saved_files": saved_files,
+                        "md_content": md_content,
+                        "json_content": json_content,
+                        "audit_content": audit_content,
+                    }, ensure_ascii=False).encode("utf-8")
+                )
+
+            except Exception as e:
+                self.send_response(500)
+                self.send_header("Content-Type", "application/json; charset=utf-8")
+                self.end_headers()
+                self.wfile.write(json.dumps({"success": False, "error": str(e)}, ensure_ascii=False).encode("utf-8"))
+
+        elif self.path == "/api/load-report":
+            report_path_str = req_data.get("report_path", "triage_report.json").strip()
+            code_dir = req_data.get("code_dir", "").strip() or None
+            audit_file = req_data.get("audit_file", "sample_audit_signoff.json").strip() or None
+
+            try:
+                safe_report_path = resolve_safe_path(report_path_str)
+                if not safe_report_path.exists():
+                    raise FileNotFoundError(f"レポートファイルが見つかりません: '{report_path_str}'")
+
+                raw_text = safe_report_path.read_text(encoding="utf-8")
+                report_dict = json.loads(raw_text)
+                report_obj = TriageReport.model_validate(report_dict)
+
+                audit_report = None
+                if code_dir or audit_file:
+                    from triage_agent.verifier import verify_codebase
+                    safe_code = str(resolve_safe_path(code_dir)) if code_dir else None
+                    safe_audit = str(resolve_safe_path(audit_file)) if audit_file else None
+                    audit_report = verify_codebase(
+                        report_obj,
+                        code_dir_path=safe_code,
+                        audit_file_path=safe_audit,
+                    )
+
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json; charset=utf-8")
+                self.end_headers()
+                response_payload = {
+                    "success": True,
+                    "report": report_obj.model_dump(),
+                    "audit": audit_report.model_dump() if audit_report else None,
+                    "loaded_from": str(safe_report_path.name),
+                }
+                self.wfile.write(json.dumps(response_payload, ensure_ascii=False).encode("utf-8"))
+
+            except Exception as e:
+                self.send_response(400)
                 self.send_header("Content-Type", "application/json; charset=utf-8")
                 self.end_headers()
                 self.wfile.write(json.dumps({"success": False, "error": str(e)}, ensure_ascii=False).encode("utf-8"))

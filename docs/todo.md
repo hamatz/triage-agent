@@ -21,8 +21,16 @@
 
 ---
 
-## 1. v0.2 実装完了（Completed: v0.2.0）
+## 1. v0.2 実装完了（Completed: v0.2.0〜v0.2.5）
 
+- [x] **Web UI におけるレポート保存（Export）と以前のレポート読込・継続編集（Import / Resume）機能（v0.2.5対応完了）**
+  - Web UI（DAWN Studio）から、生成された指示書（Markdown / JSON）および検証結果レポート（Markdown）を作業ディレクトリの安全なファイルパスへ直接保存。
+  - ブラウザからの直接ダウンロード（Markdown / JSON）ボタンをアクションバーに配備。
+  - 過去に保存した `triage_report.json` をモーダルから即座に読み込み、外部API照会を行わずにUIを瞬時に復元。サインオフの追加やコードベース検証の再実行（継続編集）が可能に。
+- [x] **Self-Triage における件数上限（`--max-targets`）自動最適化と未調査誤認アラートの解消（v0.2.5対応完了）**
+  - `--self-triage` 指定時は `--max-targets` の既定値を内部全依存関係を走査可能な 50 に自動引き上げ。
+  - OSV照会で脆弱性ヒットが0件だった健全なコンポーネントが「調査省略」として未調査警告（UNSCANNED WARNING）に誤分類される問題を解消。Level 1（機械的チェック）クリアとして正しく集計。
+  - 依存ライブラリ名のパース処理におけるカッコ付きバージョン指定（例: `markdown-it-py (>=2.2.0)`）への完全対応。
 - [x] **SPDX JSON 形式（ISO/IEC 5962）へのネイティブ対応拡充（v0.2対応完了 / ADR-017）**
   - CycloneDX JSON に加え、SPDX 2.2 / 2.3 / 3.0 JSON 形式（`spdxVersion`/`packages`/`externalRefs`）の直接パースに対応。
   - Trivy、Docker Scout、cnspec 等の出力もそのまま受け入れ可能になり、SBOM 2大国際標準を完全網羅。
