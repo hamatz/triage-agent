@@ -146,6 +146,11 @@ def main():
         help="Optional path to audit attestation JSON file (e.g. sample_audit_signoff.json)",
     )
     parser.add_argument(
+        "--self-triage",
+        action="store_true",
+        help="Run dogfooding self-audit against triage-agent's own dependencies and source code (ADR-018)",
+    )
+    parser.add_argument(
         "--gui",
         action="store_true",
         help="Launch the interactive Web GUI dashboard in your browser",
@@ -164,6 +169,25 @@ def main():
         os.environ["GEMINI_MODEL"] = args.model
 
     mode = "demo" if args.demo else ("dry-run" if args.dry_run else "live")
+
+    sbom_path = args.sbom
+    verify_code = args.verify_code
+
+    if args.self_triage:
+        console.print(
+            Panel.fit(
+                "[bold cyan]【SELF-TRIAGE / ソフトウェア自己診断モード（ADR-018）】[/bold cyan]\n"
+                "triage-agent 自身の依存関係SBOMを動的生成し、自社コードベース（src/triage_agent）を走査して自己診断を実行します。\n"
+                "「3つの鮮度」（システム・SBOM・ツール）を継続担保するためのドッグフーディング機能です。",
+                border_style="cyan",
+            )
+        )
+        from triage_agent.tools.sbom import generate_self_sbom
+        self_sbom_file = Path("self_sbom.json")
+        generate_self_sbom(output_path=self_sbom_file, include_transitive=True)
+        sbom_path = str(self_sbom_file)
+        if verify_code is None:
+            verify_code = "src/triage_agent"
 
     if mode == "demo":
         console.print(
@@ -188,7 +212,7 @@ def main():
         console.print(
             Panel.fit(
                 f"[bold cyan]triage-agent[/bold cyan] : Autonomous SBOM Vulnerability Intelligence\n"
-                f"[dim]Model: {get_model_name()} | SBOM: {args.sbom} | Mode: {'Dry-Run (Simulation)' if mode == 'dry-run' else 'Live Agent'}[/dim]",
+                f"[dim]Model: {get_model_name()} | SBOM: {sbom_path} | Verify: {verify_code or 'None'} | Mode: {'Dry-Run (Simulation)' if mode == 'dry-run' else 'Live Agent'}[/dim]",
                 border_style="cyan",
             )
         )
@@ -197,10 +221,10 @@ def main():
 
     try:
         triage_report, audit_report = execute_triage_pipeline(
-            sbom_path=args.sbom,
+            sbom_path=sbom_path,
             mode=mode,
             max_targets=args.max_targets,
-            code_dir=args.verify_code,
+            code_dir=verify_code,
             audit_file_path=args.audit_file,
             progress_callback=lambda msg: console.print(f"[dim]{msg}[/dim]"),
         )

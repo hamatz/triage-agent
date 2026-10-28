@@ -134,3 +134,116 @@ def load_sbom_summary(sbom_path: str) -> List[ComponentInfo]:
         )
 
     return components
+
+
+def generate_self_sbom(
+    output_path: str | Path | None = None,
+    include_transitive: bool = True,
+) -> dict:
+    """Generate a CycloneDX 1.4 JSON SBOM for triage-agent itself dynamically.
+    
+    Uses standard library `importlib.metadata` and `tomllib` to inspect the
+    currently installed dependencies and versions without external tools.
+    
+    Args:
+        output_path: Optional path to save the generated CycloneDX JSON file.
+        include_transitive: Whether to include transitive dependencies.
+        
+    Returns:
+        CycloneDX JSON format dictionary.
+    """
+    import importlib.metadata
+    import tomllib
+
+    # Locate pyproject.toml
+    project_root = Path.cwd()
+    pyproject_candidate = project_root / "pyproject.toml"
+    if not pyproject_candidate.exists():
+        pyproject_candidate = Path(__file__).resolve().parents[2] / "pyproject.toml"
+
+    direct_pkgs: List[str] = []
+    agent_version = "0.2.0"
+    if pyproject_candidate.exists():
+        try:
+            with open(pyproject_candidate, "rb") as f:
+                pdata = tomllib.load(f)
+            deps = pdata.get("project", {}).get("dependencies", [])
+            for dep in deps:
+                clean = dep.split(">=")[0].split("==")[0].split("<")[0].split("~=")[0].split("[")[0].strip()
+                if clean:
+                    direct_pkgs.append(clean)
+            agent_version = pdata.get("project", {}).get("version", agent_version)
+        except Exception:
+            pass
+
+    if not direct_pkgs:
+        direct_pkgs = ["google-genai", "pydantic", "httpx", "python-dotenv", "rich"]
+
+    components = []
+    visited = set()
+
+    def _resolve(pkg_name: str, depth: int = 0):
+        cname = pkg_name.strip()
+        canon = cname.lower().replace("_", "-")
+        if canon in visited:
+            return
+        visited.add(canon)
+
+        try:
+            dist = importlib.metadata.distribution(cname)
+            ver = dist.version
+            real_name = dist.metadata.get("Name", cname)
+            purl = f"pkg:pypi/{real_name.lower()}@{ver}"
+            comp_entry = {
+                "type": "library",
+                "name": real_name,
+                "version": ver,
+                "purl": purl,
+                "description": dist.metadata.get("Summary", ""),
+            }
+            components.append(comp_entry)
+
+            if include_transitive:
+                reqs = dist.requires or []
+                for r in reqs:
+                    if "extra ==" in r:
+                        continue
+                    clean_req = r.split(";")[0].split(">=")[0].split("==")[0].split("<")[0].split("~=")[0].split("[")[0].strip()
+                    if clean_req:
+                        _resolve(clean_req, depth + 1)
+        except Exception:
+            # Fallback if package is not locally installed
+            components.append({
+                "type": "library",
+                "name": cname,
+                "version": "unknown",
+                "purl": f"pkg:pypi/{cname.lower()}",
+                "description": "Declared dependency",
+            })
+
+    for p in direct_pkgs:
+        _resolve(p, depth=0)
+
+    sbom_data = {
+        "bomFormat": "CycloneDX",
+        "specVersion": "1.4",
+        "version": 1,
+        "metadata": {
+            "component": {
+                "type": "application",
+                "name": "triage-agent",
+                "version": agent_version,
+                "description": "Autonomous SBOM Vulnerability Intelligence and Triage Multi-Agent System",
+            }
+        },
+        "components": components,
+    }
+
+    if output_path:
+        out_p = Path(output_path)
+        out_p.parent.mkdir(parents=True, exist_ok=True)
+        with open(out_p, "w", encoding="utf-8") as f:
+            json.dump(sbom_data, f, indent=2, ensure_ascii=False)
+
+    return sbom_data
+

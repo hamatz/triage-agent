@@ -44,6 +44,11 @@
 - [x] **Python AST（抽象構文木）解析エンジンの導入（v0.2対応完了）**
   - Pythonファイル走査において、標準 `ast` モジュールによる構文木解析を導入。docstring やコメント内の文字列を完全無視し、実際の関数呼び出し（`Call`）やキーワード引数（`keywords`）のみを高精度検出。
   - C/JS/TS系言語における `/* ... */` ブロックコメントの自動スキップにも対応。
+- [x] **Self-Triage（ドッグフーディング自己診断）と「3つの鮮度」運用原則の実装（v0.2対応完了 / ADR-018）**
+  - `triage-agent` 自身の依存関係から CycloneDX 1.4 JSON SBOM を動的に生成する自己SBOM生成エンジン（標準ライブラリ `importlib.metadata` + `tomllib`）を実装。
+  - `--self-triage` オプションおよび `scripts/self_triage.sh` により、triage-agent 自身のコードベース（`src/triage_agent`）を自ら走査して脆弱性を診断するドッグフーディング機構を実現。
+  - 週次定期実行を行う GitHub Actions ワークフロー（`.github/workflows/self-triage.yml`）を配置し、外部API仕様変化やモデルの風化を自動検知。
+  - 「システムの鮮度（定期更新）」「SBOMの鮮度（CI自動生成）」「ツールの鮮度（ドッグフーディング）」の3つの鮮度を開発・運用の恒久原則として確立。
 
 ---
 
