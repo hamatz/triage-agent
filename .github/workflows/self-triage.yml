@@ -62,7 +62,7 @@ jobs:
       - name: Upload Self-Triage Reports (Restricted Artifact)
         # actions/upload-artifact@v4.6.1 (Pinned SHA)
         if: always()
-        uses: actions/upload-artifact@4cec3d8aa04e39d1a68397de0c4cd6fb9dce8ec1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:
           name: self-triage-reports
           path: |
