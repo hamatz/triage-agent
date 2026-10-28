@@ -151,6 +151,14 @@ def main():
         help="Run dogfooding self-audit against triage-agent's own dependencies and source code (ADR-018)",
     )
     parser.add_argument(
+        "--fail-on",
+        type=str,
+        default=None,
+        help="Comma-separated conditions to exit with non-zero status code (e.g. 'unscanned,yes' or 'any'). "
+             "Supported: unscanned (uninvestigated components/errors), yes (vulnerable code confirmed), "
+             "unconfirmed (unverified external settings), any.",
+    )
+    parser.add_argument(
         "--gui",
         action="store_true",
         help="Launch the interactive Web GUI dashboard in your browser",
@@ -182,10 +190,14 @@ def main():
                 border_style="cyan",
             )
         )
-        from triage_agent.tools.sbom import generate_self_sbom
-        self_sbom_file = Path("self_sbom.json")
-        generate_self_sbom(output_path=self_sbom_file, include_transitive=True)
-        sbom_path = str(self_sbom_file)
+        if args.sbom == "sample_sbom.json":
+            from triage_agent.tools.sbom import generate_self_sbom
+            self_sbom_file = Path("self_sbom.json")
+            generate_self_sbom(output_path=self_sbom_file, include_transitive=True)
+            sbom_path = str(self_sbom_file)
+        else:
+            sbom_path = args.sbom
+
         if verify_code is None:
             verify_code = "src/triage_agent"
 
@@ -306,6 +318,46 @@ def main():
         audit_file = Path(args.verify_output)
         audit_file.write_text(format_verification_markdown(audit_report), encoding="utf-8")
         console.print(f"[bold green]✓ 検証結果レポートを出力しました: {audit_file.resolve()}[/bold green]\n")
+
+    # Enforce non-zero exit codes if --fail-on conditions are met
+    if args.fail_on:
+        triggers = [t.strip().lower() for t in args.fail_on.split(",") if t.strip()]
+        triggered_reasons = []
+
+        has_unscanned = bool(triage_report.unscanned_or_failed_components)
+        has_yes = False
+        has_unconfirmed = False
+
+        if audit_report:
+            for nr in audit_report.notice_results:
+                for cr in nr.results:
+                    status = cr.status.upper()
+                    if "YES" in status:
+                        has_yes = True
+                    elif "未検出" in status or "要確認" in status:
+                        has_unconfirmed = True
+
+        if ("unscanned" in triggers or "any" in triggers) and has_unscanned:
+            triggered_reasons.append(
+                f"調査不能・未調査コンポーネントが {len(triage_report.unscanned_or_failed_components)} 件存在します"
+            )
+
+        if ("yes" in triggers or "any" in triggers) and has_yes:
+            triggered_reasons.append("ソースコード内から脆弱性発火条件（YES判定）が検出されました")
+
+        if ("unconfirmed" in triggers or "any" in triggers) and has_unconfirmed:
+            triggered_reasons.append("外部設定・既定値の要確認項目（未サインオフ）が存在します")
+
+        if triggered_reasons:
+            console.print(
+                Panel(
+                    "[bold red]❌ 【CI/CD ガードレール違反: --fail-on 条件発火】[/bold red]\n"
+                    + "\n".join([f"• {r}" for r in triggered_reasons])
+                    + "\n\n[dim]パイプラインのサイレント成功を防ぐため、非ゼロの終了コード（exit 2）で停止します。[/dim]",
+                    border_style="red",
+                )
+            )
+            sys.exit(2)
 
 
 if __name__ == "__main__":

@@ -16,18 +16,22 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        # actions/checkout@v4.2.2 (Pinned SHA for supply-chain security)
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
 
       - name: Set up Python 3.12
-        uses: actions/setup-python@v5
+        # actions/setup-python@v5.4.0 (Pinned SHA)
+        uses: actions/setup-python@42375524e23c412d93fb67b49958b491fce71c38
         with:
           python-version: "3.12"
           cache: "pip"
 
-      - name: Install dependencies
+      - name: Install locked dependencies
+        # Install pinned dependencies from requirements.lock to ensure reproducible audit (ADR-018)
         run: |
           python -m pip install --upgrade pip
-          pip install .
+          pip install -r requirements.lock
+          pip install --no-deps -e .
 
       - name: Execute Self-Triage Audit
         env:
@@ -36,19 +40,33 @@ jobs:
           chmod +x ./scripts/self_triage.sh
           ./scripts/self_triage.sh
 
-      - name: Output Summary to GitHub Step Summary
+      - name: Output High-Level Status Summary (ADR-013 Attack Map Prevention)
+        # Never output specific file paths or vulnerable call details to public step summaries
+        if: always()
         run: |
-          echo "## 🛡️ triage-agent Self-Triage Audit Summary" >> $GITHUB_STEP_SUMMARY
+          echo "## 🛡️ triage-agent Self-Triage Execution Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
           if [ -f triage_self_audit.md ]; then
-            head -n 25 triage_self_audit.md >> $GITHUB_STEP_SUMMARY
+            echo "| 監査メトリクス | 件数 |" >> $GITHUB_STEP_SUMMARY
+            echo "| :--- | :--- |" >> $GITHUB_STEP_SUMMARY
+            TOTAL=$(grep -E '総検査項目数' triage_self_audit.md | awk -F':' '{print $2}' || echo "0 件")
+            YES_COUNT=$(grep -E '判定: YES' triage_self_audit.md | awk -F':' '{print $2}' || echo "0 件")
+            UNCONFIRMED=$(grep -E '判定: コード内未検出' triage_self_audit.md | awk -F':' '{print $2}' || echo "0 件")
+            echo "| 総検査項目数 | ${TOTAL} |" >> $GITHUB_STEP_SUMMARY
+            echo "| 判定: YES (要対応・実地確認) | ${YES_COUNT} |" >> $GITHUB_STEP_SUMMARY
+            echo "| 判定: 要確認 (外部設定/既定値) | ${UNCONFIRMED} |" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "⚠️ レポートファイルが生成されませんでした。" >> $GITHUB_STEP_SUMMARY
           fi
 
-      - name: Upload Self-Triage Reports
-        uses: actions/upload-artifact@v4
+      - name: Upload Self-Triage Reports (Restricted Artifact)
+        # actions/upload-artifact@v4.6.1 (Pinned SHA)
+        if: always()
+        uses: actions/upload-artifact@4cec3d8aa04e39d1a68397de0c4cd6fb9dce8ec1
         with:
           name: self-triage-reports
           path: |
             self_sbom.json
             triage_self_report.md
             triage_self_audit.md
-          retention-days: 30
+          retention-days: 14

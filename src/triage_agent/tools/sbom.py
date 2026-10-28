@@ -224,6 +224,17 @@ def generate_self_sbom(
     for p in direct_pkgs:
         _resolve(p, depth=0)
 
+    # Include Python runtime itself to prevent runtime omissions (as learned from Brotli/Node issues)
+    import sys
+    py_ver = f"{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}"
+    components.append({
+        "type": "framework",
+        "name": "python",
+        "version": py_ver,
+        "purl": f"pkg:generic/python@{py_ver}",
+        "description": f"Python runtime environment ({sys.implementation.name} {py_ver})",
+    })
+
     sbom_data = {
         "bomFormat": "CycloneDX",
         "specVersion": "1.4",

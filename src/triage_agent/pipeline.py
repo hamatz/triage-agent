@@ -94,10 +94,12 @@ def execute_triage_pipeline(
     log("[1/3] Recon Planner: SBOM解析および巡回戦略策定中...", percent=5, phase="Recon Planner", step=1, total_steps=3)
     components = load_sbom_summary(sbom_path)
     osv_hits, osv_errors = query_osv_batch(components)
-    log(f"OSV.dev 一括照会完了 ({len(osv_hits)} 件のヒット)。深層調査対象を選定中...", percent=15, phase="Recon Planner", step=1, total_steps=3)
 
     if osv_errors:
+        log(f"⚠️ OSV.dev 一括照会失敗 ({'; '.join(osv_errors)})。フォールバック処理を継続中...", percent=15, phase="Recon Planner", step=1, total_steps=3)
         unscanned_items.append(f"OSV.dev 一括照会失敗: {'; '.join(osv_errors)}")
+    else:
+        log(f"OSV.dev 一括照会完了 ({len(osv_hits)} 件のヒット)。深層調査対象を選定中...", percent=15, phase="Recon Planner", step=1, total_steps=3)
 
     if is_dry_run:
         targets: List[ReconTarget] = []
