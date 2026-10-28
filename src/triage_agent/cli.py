@@ -47,7 +47,7 @@ def format_report_markdown(report: TriageReport) -> str:
     if report.osv_unsupported_components:
         lines.extend([
             "> ℹ️ **【OSV.dev 照合対象外（ランタイム・OS共有ライブラリ等）】**",
-            "> 以下のコンポーネントは言語パッケージリポジトリ（PyPI/npm等）ではなくランタイム等のため、OSV一括照会から除外され、Web/LLMによる調査が行われました。",
+            "> 以下のコンポーネントは言語パッケージリポジトリ（PyPI/npm等）ではなくランタイムやOS共有ライブラリ等のため、OSV一括照会から除外され、Web/LLM等による個別調査の対象となります。",
             "",
         ])
         for c in report.osv_unsupported_components:
