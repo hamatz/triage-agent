@@ -239,13 +239,18 @@ def main():
             )
         )
 
+    max_targets = args.max_targets
+    if args.self_triage and args.max_targets == 10:
+        # Cover all triage-agent internal dependencies fully without artificial omission
+        max_targets = 50
+
     from triage_agent.pipeline import execute_triage_pipeline
 
     try:
         triage_report, audit_report = execute_triage_pipeline(
             sbom_path=sbom_path,
             mode=mode,
-            max_targets=args.max_targets,
+            max_targets=max_targets,
             code_dir=verify_code,
             audit_file_path=args.audit_file,
             progress_callback=lambda msg: console.print(f"[dim]{msg}[/dim]"),

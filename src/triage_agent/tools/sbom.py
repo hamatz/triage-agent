@@ -154,6 +154,7 @@ def generate_self_sbom(
     """
     import importlib.metadata
     import tomllib
+    import re
 
     # Locate pyproject.toml
     project_root = Path.cwd()
@@ -169,7 +170,7 @@ def generate_self_sbom(
                 pdata = tomllib.load(f)
             deps = pdata.get("project", {}).get("dependencies", [])
             for dep in deps:
-                clean = dep.split(">=")[0].split("==")[0].split("<")[0].split("~=")[0].split("[")[0].strip()
+                clean = re.split(r"[><=~;\[(]", dep)[0].strip()
                 if clean:
                     direct_pkgs.append(clean)
             agent_version = pdata.get("project", {}).get("version", agent_version)
@@ -208,7 +209,7 @@ def generate_self_sbom(
                 for r in reqs:
                     if "extra ==" in r:
                         continue
-                    clean_req = r.split(";")[0].split(">=")[0].split("==")[0].split("<")[0].split("~=")[0].split("[")[0].strip()
+                    clean_req = re.split(r"[><=~;\[(]", r)[0].strip()
                     if clean_req:
                         _resolve(clean_req, depth + 1)
         except Exception:

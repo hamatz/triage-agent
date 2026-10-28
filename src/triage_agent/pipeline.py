@@ -142,11 +142,14 @@ def execute_triage_pipeline(
         recon_plan = run_recon_planner(sbom_path, osv_results=osv_hits)
         recon_plan.targets = recon_plan.targets[:max_targets]
 
-    # Explicitly track omitted components beyond max_targets
-    if len(components) > len(recon_plan.targets):
-        remaining_count = len(components) - len(recon_plan.targets)
+    # Explicitly track omitted components that had actual vulnerabilities
+    # Components with 0 known OSV hits are considered clear at Level 1 (mechanical lookup).
+    # Only components that actually have OSV hits but were omitted due to max_targets pose a risk.
+    target_names = {t.name for t in recon_plan.targets}
+    omitted_osv_hits = [c.name for c in components if c.name in osv_hits and c.name not in target_names]
+    if omitted_osv_hits:
         unscanned_items.append(
-            f"上限（--max-targets {max_targets}）により深層調査を省略したコンポーネント（計 {remaining_count} 件）"
+            f"上限（--max-targets {max_targets}）により、OSV脆弱性が検知された以下のコンポーネントの深層調査を省略しました（計 {len(omitted_osv_hits)} 件: {', '.join(omitted_osv_hits)}）"
         )
 
     # -------------------------------------------------------------
