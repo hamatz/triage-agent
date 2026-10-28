@@ -6,6 +6,7 @@ GITHUB_API_BASE = "https://api.github.com"
 
 # Circuit breaker for unauthenticated GitHub API rate limits
 _RATE_LIMIT_EXCEEDED = False
+_GITHUB_AUTH_FAILED = False
 
 
 def is_github_rate_limited() -> bool:
@@ -13,10 +14,16 @@ def is_github_rate_limited() -> bool:
     return _RATE_LIMIT_EXCEEDED
 
 
+def is_github_auth_failed() -> bool:
+    """Check if GitHub API returned HTTP 401 (Bad credentials / invalid or expired GITHUB_TOKEN)."""
+    return _GITHUB_AUTH_FAILED
+
+
 def reset_github_rate_limit():
-    """Reset the rate limit circuit breaker."""
-    global _RATE_LIMIT_EXCEEDED
+    """Reset the rate limit and auth circuit breakers."""
+    global _RATE_LIMIT_EXCEEDED, _GITHUB_AUTH_FAILED
     _RATE_LIMIT_EXCEEDED = False
+    _GITHUB_AUTH_FAILED = False
 
 
 def _get_headers() -> Dict[str, str]:
@@ -54,7 +61,7 @@ def search_github_security_signals(
         "errors": [],
     }
 
-    global _RATE_LIMIT_EXCEEDED
+    global _RATE_LIMIT_EXCEEDED, _GITHUB_AUTH_FAILED
     has_token = bool(get_github_token())
     if _RATE_LIMIT_EXCEEDED and not has_token:
         signals["errors"].append("GitHub API rate limit in effect (unauthenticated) - skipped supplementary signals")
@@ -95,6 +102,8 @@ def search_github_security_signals(
             else:
                 if adv_resp.status_code == 403:
                     _RATE_LIMIT_EXCEEDED = True
+                elif adv_resp.status_code == 401:
+                    _GITHUB_AUTH_FAILED = True
                 signals["errors"].append(
                     f"GitHub Advisories API ({repo}): HTTP {adv_resp.status_code} - {adv_resp.text[:120]}"
                 )
@@ -121,6 +130,8 @@ def search_github_security_signals(
             elif rel_resp.status_code != 404:
                 if rel_resp.status_code == 403:
                     _RATE_LIMIT_EXCEEDED = True
+                elif rel_resp.status_code == 401:
+                    _GITHUB_AUTH_FAILED = True
                 signals["errors"].append(
                     f"GitHub Releases API ({repo}): HTTP {rel_resp.status_code} - {rel_resp.text[:120]}"
                 )
@@ -149,6 +160,8 @@ def search_github_security_signals(
                         if len(signals["relevant_commits"]) >= limit:
                             break
             elif commits_resp.status_code != 404:
+                if commits_resp.status_code == 401:
+                    _GITHUB_AUTH_FAILED = True
                 signals["errors"].append(
                     f"GitHub Commits API ({repo}): HTTP {commits_resp.status_code} - {commits_resp.text[:120]}"
                 )

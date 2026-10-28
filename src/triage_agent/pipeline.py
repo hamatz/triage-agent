@@ -7,7 +7,7 @@ across both CLI and GUI interfaces.
 
 import os
 from pathlib import Path
-from typing import Callable, List, Optional, Tuple
+from typing import Callable, List, Optional, Set, Tuple
 
 from triage_agent.agents.planner import run_recon_planner
 from triage_agent.agents.researcher import run_researcher
@@ -15,6 +15,7 @@ from triage_agent.agents.triage import run_triage_agent
 from triage_agent.config import is_llm_configured
 from triage_agent.demo import generate_demo_report
 from triage_agent.schemas import ReconPlan, ReconTarget, TargetResearchResult, TriageReport
+from triage_agent.tools.github import is_github_auth_failed
 from triage_agent.tools.osv import query_osv_batch
 from triage_agent.tools.sbom import load_sbom_summary
 from triage_agent.verifier import CodebaseAuditReport, verify_codebase
@@ -148,15 +149,23 @@ def execute_triage_pipeline(
         recon_plan = run_recon_planner(sbom_path, osv_results=osv_hits)
         recon_plan.targets = recon_plan.targets[:max_targets]
 
-    # Explicitly track omitted components that had actual vulnerabilities
-    # Components with 0 known OSV hits are considered clear at Level 1 (mechanical lookup).
-    # Only components that actually have OSV hits but were omitted due to max_targets pose a risk.
+    # Explicitly track omitted components that had actual vulnerabilities or unverified status
+    # When OSV batch succeeds: components with 0 known OSV hits are clear at Level 1 (mechanical lookup).
+    # Components that have OSV hits but were omitted due to max_targets pose a risk and are recorded.
+    # When OSV batch failed: omitted components were NEVER verified and must be explicitly recorded.
     target_names = {t.name for t in recon_plan.targets}
-    omitted_osv_hits = [c.name for c in components if c.name in osv_hits and c.name not in target_names]
-    if omitted_osv_hits:
-        unscanned_items.append(
-            f"上限（--max-targets {max_targets}）により、OSV脆弱性が検知された以下のコンポーネントの深層調査を省略しました（計 {len(omitted_osv_hits)} 件: {', '.join(omitted_osv_hits)}）"
-        )
+    if actual_osv_failures:
+        unchecked = [c.name for c in components if c.name not in target_names]
+        if unchecked:
+            unscanned_items.append(
+                f"OSV.dev 一括照会失敗のため脆弱性未確認（{len(unchecked)} 件: {', '.join(unchecked)}）"
+            )
+    else:
+        omitted_osv_hits = [c.name for c in components if c.name in osv_hits and c.name not in target_names]
+        if omitted_osv_hits:
+            unscanned_items.append(
+                f"上限（--max-targets {max_targets}）により、OSV脆弱性が検知された以下のコンポーネントの深層調査を省略しました（計 {len(omitted_osv_hits)} 件: {', '.join(omitted_osv_hits)}）"
+            )
 
     # -------------------------------------------------------------
     # Phase 2: Dynamic Researcher (Target-by-Target)
@@ -164,6 +173,7 @@ def execute_triage_pipeline(
     total_targets = len(recon_plan.targets)
     log(f"[2/3] Researcher: {total_targets} コンポーネントの動的調査・事前予告探索中...", percent=20, phase="Researcher", step=2, total_steps=3, total_targets=total_targets)
     research_results: List[TargetResearchResult] = []
+    failed_targets: Set[str] = set()
 
     for idx, target in enumerate(recon_plan.targets, 1):
         target_pct = int(20 + ((idx - 1) / max(total_targets, 1)) * 55)
@@ -181,10 +191,15 @@ def execute_triage_pipeline(
             res = run_researcher(target, dry_run=is_dry_run)
             research_results.append(res)
             if res.errors:
+                failed_targets.add(target.name)
                 for err in res.errors:
                     unscanned_items.append(f"{target.name}: {err}")
         except Exception as e:
+            failed_targets.add(target.name)
             unscanned_items.append(f"{target.name}: 調査処理エラー ({str(e)})")
+
+    if is_github_auth_failed():
+        unscanned_items.append("GitHub API 認証エラー: 設定された GITHUB_TOKEN が無効または期限切れです（HTTP 401 Bad credentials）")
 
     # -------------------------------------------------------------
     # Phase 3: Triage & Action Generation
@@ -198,43 +213,58 @@ def execute_triage_pipeline(
     triage_report.osv_unsupported_components = osv_unsupported
 
     # Informational coverage summary: record scope of deep research vs OSV lookup
-    omitted_clean = [c.name for c in components if c.name not in osv_hits and c.name not in target_names]
     total_c = len(components)
     deep_c = len(recon_plan.targets)
-    omitted_clean_c = len(omitted_clean)
-
-    target_names_set = {t.name for t in recon_plan.targets}
-    failed_target_names = {
-        item.split(":")[0].strip()
-        for item in unscanned_items
-        if ":" in item
-    }
-    failed_deep_targets = failed_target_names.intersection(target_names_set)
-    failed_c = len(failed_deep_targets)
+    omitted_c = total_c - deep_c
+    failed_c = len(failed_targets)
     success_c = max(0, deep_c - failed_c)
 
-    if failed_c > 0:
-        if omitted_clean_c > 0:
-            triage_report.recon_coverage_summary = (
-                f"全 {total_c} コンポーネント中、優先度上位 {deep_c} 件を深層調査対象として選定"
-                f"（{success_c} 件完了、{failed_c} 件失敗・未調査警告あり）。"
-                f"残り {omitted_clean_c} 件は OSV.dev 一括照会（脆弱性 0 件確認）のみ実施し、Web/コミット深掘り調査を省略。"
-            )
-        else:
-            triage_report.recon_coverage_summary = (
+    # 1. Deep research summary
+    if deep_c == total_c:
+        if failed_c > 0:
+            deep_part = (
                 f"全 {total_c} コンポーネントすべてを深層調査対象として選定"
                 f"（{success_c} 件完了、{failed_c} 件失敗・未調査警告あり）。"
             )
-    else:
-        if omitted_clean_c > 0:
-            triage_report.recon_coverage_summary = (
-                f"全 {total_c} コンポーネント中、優先度上位 {deep_c} 件を深層調査（Researcher）。"
-                f"残り {omitted_clean_c} 件は OSV.dev 一括照会（脆弱性 0 件確認）のみ実施し、Web/コミット深掘り調査を省略。"
-            )
         else:
-            triage_report.recon_coverage_summary = (
+            deep_part = (
                 f"全 {total_c} コンポーネントすべてを深層調査（Researcher）対象として選定・調査完了。"
             )
+    else:
+        if failed_c > 0:
+            deep_part = (
+                f"全 {total_c} コンポーネント中、優先度上位 {deep_c} 件を深層調査対象として選定"
+                f"（{success_c} 件完了、{failed_c} 件失敗・未調査警告あり）。"
+            )
+        else:
+            deep_part = (
+                f"全 {total_c} コンポーネント中、優先度上位 {deep_c} 件を深層調査（Researcher）。"
+            )
+
+    # 2. Omitted components summary
+    if omitted_c > 0:
+        if actual_osv_failures:
+            omitted_part = (
+                f"残り {omitted_c} 件は OSV.dev 一括照会失敗により脆弱性未確認（Web/コミット深掘り調査も未実施、要個別調査）。"
+            )
+        else:
+            omitted_osv_hits_c = len([c for c in components if c.name in osv_hits and c.name not in target_names])
+            if omitted_osv_hits_c > 0:
+                omitted_clean_c = omitted_c - omitted_osv_hits_c
+                omitted_part = (
+                    f"残り {omitted_c} 件中、{omitted_osv_hits_c} 件で OSV 脆弱性を検知（深層調査は上限により省略）。"
+                    f"残り {omitted_clean_c} 件は OSV.dev 一括照会（脆弱性 0 件確認）のみ実施し、Web/コミット深掘り調査を省略。"
+                )
+            else:
+                omitted_part = (
+                    f"残り {omitted_c} 件は OSV.dev 一括照会（脆弱性 0 件確認）のみ実施し、Web/コミット深掘り調査を省略。"
+                )
+        triage_report.recon_coverage_summary = f"{deep_part} {omitted_part}"
+    else:
+        triage_report.recon_coverage_summary = deep_part
+
+    if is_github_auth_failed():
+        triage_report.recon_coverage_summary += " ※注意: GITHUB_TOKEN の認証に失敗しました（HTTP 401 Bad credentials: トークンが無効または期限切れ）。"
 
     log("指示書生成完了。検証判定を実行中...", percent=90, phase="Triage Agent", step=3, total_steps=3)
 
