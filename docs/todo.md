@@ -68,14 +68,39 @@
 
 ---
 
-## 2. 今後の検討課題（Backlog: v0.3〜）
+## 2. v0.3.0 実地試行（PoC）即応マイルストーン（ADR-019）
 
-- [ ] **GitHub Enterprise / GitLab 対応**
-  - 社内閉域網で稼働している GitHub Enterprise Server や GitLab のリポジトリ・Advisory APIへの接続オプション追加。
+実地試行（PoC）で評価される「公開から配布までの時間短縮」「ベンダーとの往復回数削減」を直接達成するための実務最優先マイルストーンです。
+
+### 柱 1: Verifier の実戦的拡張（設定ファイル ＋ 主要3言語）
+- [ ] **設定ファイル検証エンジン（XML / INI / Conf / Properties）の導入**
+  - Tomcat `server.xml`（AJP/JNDIRealm等の属性・タグ定義）、PHP `php.ini`、Nginx/Apache設定ファイル、Spring `application.properties`/`application.yml` のキーバリュー/ディレクティブ自動検証。
+  - 発火条件がコードではなくミドルウェア設定に依存するケースを自動走査し、Yes/Noを即答可能にする。
+- [ ] **主要3言語（JavaScript/TypeScript, Java, PHP）の構文木走査**
+  - Pythonに続き、委託先・社内システムにおいて利用頻度の高い JS/TS、Java、PHP の構文解析（tree-sitter等の軽量パーサー活用）。
+  - コメント行や文字列リテラルをスキップし、関数呼び出しや設定オプションを検出。
+  - テストコード自動分離（`__tests__`, `*Test.java`, `tests/` 等）の適用。
+- [ ] **「客観的3状態（YES/外部設定要確認/手動確認要）」の維持**
+  - 到達可能性解析（Taint解析）への安易な深入りを避け、「分からないものを安全と言わない」の原則を堅持。
+
+### 柱 2: ベンダー往復のワークフロー支援（Excel / CSV 連携 ＆ 往復履歴）
+- [ ] **早見表の Excel（.xlsx）/ CSV（.csv）帳票エクスポート機能**
+  - トリアージ指示書から、サイバーセキュリティ部・情シス・委託先との標準プロトコルである Excel/CSV 早見表をワンクリック出力（配布時間短縮）。
+  - 出力カラム: CVE, 深刻度/CVSS, 対象ライブラリ, 確認ポイント(質問), 回答欄(YES/NO/要確認), 確認根拠欄, 確認者欄, 確認日欄。
+- [ ] **ベンダー回答のインポート ＆ サインオフ自動確定（履歴化）**
+  - 記入済み Excel/CSV または Web UI からの回答を一括取り込み、`audit_signoff.json` にタイムスタンプ付きで自動反映。
+- [ ] **試行メトリクス自動計測ログ**
+  - 「指示書生成時刻」「ベンダー配布（Excel出力）時刻」「回答受領（インポート）時刻」「往復回数」を記録し、2月の成果報告用エビデンスを自動集計。
+
+### 柱 3: 品質担保のための正解付きミニ評価セット（Benchmark Suite）
+- [ ] **実事例ミニリポジトリの作成 (`benchmark/` または `tests/fixtures/fixtures_v03/`)**
+  - 直近の実事例（Node/jsonwebtoken、Tomcat/AJP、PHP/session、HTTP2Shell）を正解ラベル（期待判定: YES/NO/外部設定要確認）付きの最小再現ファイルとして整備。
+- [ ] **見逃し（False Negative）・誤検知（False Positive）の自動検知テスト**
+  - Verifier の言語・設定追加時に、過去の正解判定が壊れていないかを CI で回帰テスト（精度測定の定量化）。
 
 ---
 
-## 2. Engineering Enablement 推進に向けた戦略的ロードマップ (v0.3〜v1.0)
+## 3. Engineering Enablement 推進に向けた戦略的ロードマップ (v0.4〜v1.0)
 
 Engineering Enablement（専門家依存の解消と組織的な即応）を実現するため、単なる機能追加にとどまらず、全社運用に耐えうるガバナンスと知識蓄積を強化します。
 
@@ -188,3 +213,10 @@ Engineering Enablement（専門家依存の解消と組織的な即応）を実�
 2. **全社横断CVE影響検索のアクセス制御と監査ログ（Audit Logging）:**
    - 「全社でどのシステムがこの脆弱性を踏んでいるか」の逆引き検索は、攻撃者視点では最優先の標的選定マップとなるため、厳格なRBAC（ロールベースアクセス制御）による特権制限を課します。
    - 誰がいつどのCVEの影響範囲を横断検索・閲覧したかを追跡する改竄不能な監査ログの記録を必須とします。
+
+---
+
+## 4. 中長期検討課題（Backlog）
+
+- [ ] **GitHub Enterprise / GitLab 対応**
+  - 社内閉域網で稼働している GitHub Enterprise Server や GitLab のリポジトリ・Advisory APIへの接続オプション追加。
