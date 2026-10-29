@@ -143,12 +143,12 @@ def match_component_to_sources(
 
 def extract_iso_date_from_text(text: str) -> Optional[str]:
     """Attempt to extract an upcoming ISO release date (YYYY-MM-DD) from feed title or summary."""
-    # Look for YYYY-MM-DD
+    # 1. Look for YYYY-MM-DD
     iso_match = re.search(r"\b(202[4-9]-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12]\d|3[01]))\b", text)
     if iso_match:
         return iso_match.group(1)
 
-    # Look for Month DD, YYYY (e.g. November 4, 2026 or Nov 4, 2026)
+    # 2. Look for Month DD, YYYY or Weekday, Month DD, YYYY (e.g. Tuesday, November 10, 2026 or Nov 10, 2026)
     months = {
         "jan": "01", "january": "01", "feb": "02", "february": "02",
         "mar": "03", "march": "03", "apr": "04", "april": "04",
@@ -157,7 +157,11 @@ def extract_iso_date_from_text(text: str) -> Optional[str]:
         "oct": "10", "october": "10", "nov": "11", "november": "11",
         "dec": "12", "december": "12"
     }
-    m_re = re.search(r"\b([A-Za-z]+)\s+([0-3]?\d)(?:st|nd|rd|th)?,?\s+(202[4-9])\b", text)
+    m_re = re.search(
+        r"(?:(?:mon|tue|wed|thu|fri|sat|sun)[a-z]*,?\s+)?\b([A-Za-z]+)\s+([0-3]?\d)(?:st|nd|rd|th)?,?\s+(202[4-9])\b",
+        text,
+        re.IGNORECASE
+    )
     if m_re:
         m_name = m_re.group(1).lower()
         if m_name in months:
@@ -178,15 +182,15 @@ def _find_child_elem(parent: ET.Element, tags: List[str]) -> Optional[ET.Element
 
 
 def extract_severity_hint_from_text(text: str) -> str:
-    """Extract severity hint (Critical, High, Medium, Low) if present in text, else '未公表'."""
+    """Extract severity hint (Critical, High, Medium, Low) using word boundaries to prevent matching 'highlights' or 'following'."""
     lower = text.lower()
-    if "critical" in lower:
+    if re.search(r"\bcritical\b", lower):
         return "Critical"
-    elif "high" in lower:
+    elif re.search(r"\bhigh\b", lower):
         return "High"
-    elif "moderate" in lower or "medium" in lower:
+    elif re.search(r"\b(medium|moderate)\b", lower):
         return "Medium"
-    elif "low" in lower:
+    elif re.search(r"\blow\b", lower):
         return "Low"
     return "未公表"
 
@@ -198,8 +202,8 @@ def fetch_advisory_feed(
 ) -> Tuple[Optional[Dict[str, Any]], Optional[str]]:
     """Fetch and parse RSS/Atom feed for upcoming pre-announcements.
     
-    Returns:
-        Tuple of (notice_data_dict_or_None, error_message_or_None)
+    Identifies pre-announcements by presence of security keywords and future dates (>= reference_date).
+    Past dates are strictly skipped to prevent showing completed historical releases as active notices.
     """
     feed_url = source.get("feed_url")
     if not feed_url:
@@ -225,10 +229,13 @@ def fetch_advisory_feed(
         # Search <channel><item> (RSS 2.0) or <entry> (Atom)
         entries = root.findall(".//item") or root.findall(".//{http://www.w3.org/2005/Atom}entry") or root.findall(".//entry")
 
+        keywords = [k.lower() for k in source.get("keywords", ["security", "release"])]
         pre_announcement_signals = [
             "upcoming", "pre-announcement", "advance notice", "scheduled for",
-            "will be released", "target date", "planned release", "security release pre"
+            "will be released", "will release", "target date", "planned release", "security release pre"
         ]
+
+        undated_candidate = None
 
         for entry in entries:
             title_elem = _find_child_elem(entry, ["title", "{http://www.w3.org/2005/Atom}title"])
@@ -247,30 +254,45 @@ def fetch_advisory_feed(
 
             combined_text = f"{title} {summary}".lower()
 
-            # Determine whether this entry is an upcoming pre-announcement
-            is_upcoming = any(sig in combined_text for sig in pre_announcement_signals)
+            # Must be security-related
+            if not any(k in combined_text for k in keywords):
+                continue
 
-            if is_upcoming:
-                detected_date = extract_iso_date_from_text(f"{title} {summary}")
-                valid_future_date = None
-                if detected_date:
-                    try:
-                        d = date.fromisoformat(detected_date)
-                        # Only dates on or after reference_date count as future pre-announcement
-                        if d >= reference_date:
-                            valid_future_date = detected_date
-                    except Exception:
-                        pass
+            detected_date_str = extract_iso_date_from_text(f"{title} {summary}")
 
-                severity = extract_severity_hint_from_text(f"{title} {summary}")
+            if detected_date_str:
+                try:
+                    d = date.fromisoformat(detected_date_str)
+                    if d < reference_date:
+                        # Past release or historical pre-announcement: skip completely
+                        continue
+                    else:
+                        # Genuine future pre-announcement detected!
+                        sev = extract_severity_hint_from_text(f"{title} {summary}")
+                        return {
+                            "title": title,
+                            "url": link or source.get("url"),
+                            "summary": summary[:300] if summary else f"{source.get('name')} 事前予告フィード検知",
+                            "expected_date": detected_date_str,
+                            "severity_hint": sev,
+                        }, None
+                except Exception:
+                    continue
+            else:
+                # No date in text: retain as undated candidate only if explicit pre-announcement signal is present
+                if any(sig in combined_text for sig in pre_announcement_signals):
+                    if undated_candidate is None:
+                        sev = extract_severity_hint_from_text(f"{title} {summary}")
+                        undated_candidate = {
+                            "title": title,
+                            "url": link or source.get("url"),
+                            "summary": summary[:300] if summary else f"{source.get('name')} 事前予告フィード検知",
+                            "expected_date": None,
+                            "severity_hint": sev,
+                        }
 
-                return {
-                    "title": title,
-                    "url": link or source.get("url"),
-                    "summary": summary[:300] if summary else f"{source.get('name')} 事前予告フィード検知",
-                    "expected_date": valid_future_date,
-                    "severity_hint": severity,
-                }, None
+        if undated_candidate:
+            return undated_candidate, None
 
     except Exception as e:
         return None, f"{source.get('name', 'Feed')} フィード解析エラー: {e}"
@@ -356,7 +378,7 @@ def scan_catalog_pre_announcements(
                             component_name=comp.name,
                             title=feed_result.get("title") or f"{src.get('name')} 事前リリース予告",
                             expected_date=exp_date,
-                            expected_time="17:00 UTC (予定)" if exp_date else None,
+                            expected_time=feed_result.get("expected_time"),
                             severity_hint=sev,
                             summary=f"{comp.name} 該当: {feed_result.get('summary', '')}",
                             url=feed_result.get("url") or src.get("url"),

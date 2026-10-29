@@ -153,10 +153,13 @@ def generate_icalendar(
         desc_parts = [
             f"【情報源】{primary.source_name} ({official_str})",
             f"【該当コンポーネント】{comp_count} 件 (詳細は社内トリアージレポートを参照)",
-            f"【概要】{primary.summary}",
         ]
+        if primary.title:
+            desc_parts.append(f"【予告タイトル】{primary.title}")
         if primary.expected_time:
             desc_parts.append(f"【予定時刻】{primary.expected_time} (※日本時間では翌未明〜早朝)")
+        else:
+            desc_parts.append("【予定時刻】時刻未定 (※海外プロジェクトの場合、日本時間では翌未明〜早朝の公開が通例です)")
         if primary.url:
             desc_parts.append(f"【公式URL】{primary.url}")
         if prep_lines:
