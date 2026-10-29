@@ -1,0 +1,74 @@
+{
+  "description": "v0.3.0 Ground-Truth Benchmark Suite for Verifier Engine (ADR-019)",
+  "version": "1.0.0",
+  "cases": [
+    {
+      "id": "node_jwt_insecure_verify",
+      "name": "Node.js jsonwebtoken missing algorithms",
+      "target_dir": "cases/node_jwt",
+      "component_name": "jsonwebtoken",
+      "target_cve": "CVE-2022-23529",
+      "test_type": "code",
+      "language": "javascript",
+      "search_keywords": ["verify"],
+      "expected_status": "YES (本番コード内検出・要実地確認)",
+      "expected_evidence_file": "src/auth.js",
+      "negative_evidence_file": "tests/auth.test.js",
+      "description": "Production code calls jwt.verify without algorithm restriction, test code specifies algorithms. Verifier must detect call in src/ and ignore tests/."
+    },
+    {
+      "id": "tomcat_ajp_ghostcat",
+      "name": "Apache Tomcat AJP Connector Enabled (Ghostcat)",
+      "target_dir": "cases/tomcat_ajp",
+      "component_name": "tomcat-catalina",
+      "target_cve": "CVE-2020-1938",
+      "test_type": "config",
+      "config_type": "xml",
+      "config_file": "conf/server.xml",
+      "check_condition": {
+        "tag": "Connector",
+        "attributes": {
+          "protocol": "AJP/1.3"
+        },
+        "vulnerable_if_absent": ["secretRequired=\"true\"", "secret="]
+      },
+      "expected_status": "YES (設定有効)",
+      "expected_evidence_file": "conf/server.xml",
+      "description": "server.xml defines active AJP/1.3 connector without secretRequired or secret set. Verifier must report YES (設定有効)."
+    },
+    {
+      "id": "php_session_upload_progress",
+      "name": "PHP Session Upload Progress Enabled",
+      "target_dir": "cases/php_session",
+      "component_name": "php",
+      "target_cve": "CVE-2019-11043",
+      "test_type": "config",
+      "config_type": "ini",
+      "config_file": "conf/php.ini",
+      "check_condition": {
+        "directive": "session.upload_progress.enabled",
+        "expected_value": "On"
+      },
+      "expected_status": "YES (設定有効)",
+      "expected_evidence_file": "conf/php.ini",
+      "description": "php.ini enables session.upload_progress.enabled. Verifier must report YES (設定有効)."
+    },
+    {
+      "id": "http2_shell_rapid_reset",
+      "name": "Nginx HTTP/2 Protocol Enabled (HTTP2Shell / Rapid Reset)",
+      "target_dir": "cases/http2_shell",
+      "component_name": "nginx",
+      "target_cve": "CVE-2023-44487",
+      "test_type": "config",
+      "config_type": "nginx_conf",
+      "config_file": "conf/nginx.conf",
+      "check_condition": {
+        "directive": "http2",
+        "expected_value": "on"
+      },
+      "expected_status": "YES (設定有効)",
+      "expected_evidence_file": "conf/nginx.conf",
+      "description": "nginx.conf contains 'http2 on;' directive outside of comments. Verifier must report YES (設定有効)."
+    }
+  ]
+}

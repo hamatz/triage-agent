@@ -13,6 +13,10 @@ from triage_agent.verifier.attestation import (
     load_audit_attestations,
     normalize_text,
 )
+from triage_agent.verifier.config_scanner import (
+    inspect_configuration,
+    is_config_inspection,
+)
 from triage_agent.verifier.models import (
     CheckVerificationResult,
     CodebaseAuditReport,
@@ -188,7 +192,37 @@ def verify_codebase(
                     advice = cp.verification_method
                     matches = []
                 else:
-                    if not scan_patterns:
+                    # 2. Check for specialized configuration files first (server.xml, php.ini, nginx.conf, etc.)
+                    config_res = inspect_configuration(
+                        code_dir, cp.verification_method, cp.check_point_yes_no, cp_cve
+                    ) if is_config_inspection(cp.verification_method, cp.check_point_yes_no) else None
+
+                    if config_res:
+                        status = config_res.status
+                        reason = f"【設定ファイル検証】{config_res.detail}"
+                        if status.startswith("YES"):
+                            has_yes = True
+                            total_yes += 1
+                            advice = f"該当設定ファイル（{config_res.evidence_file}）の設定見直しまたは回避策を適用してください。"
+                            matches = [
+                                MatchSnippet(
+                                    file_path=config_res.evidence_file or "config",
+                                    line_number=config_res.line_number or 1,
+                                    line_content=config_res.detail,
+                                    context_content=config_res.detail,
+                                    is_test=False,
+                                )
+                            ]
+                        elif status.startswith("NO"):
+                            total_safe += 1
+                            advice = None
+                            matches = []
+                        else:
+                            has_unverified = True
+                            total_unverified += 1
+                            advice = cp.verification_method
+                            matches = []
+                    elif not scan_patterns:
                         status = "要手動確認 (キーワード抽出不能)"
                         has_unverified = True
                         total_unverified += 1

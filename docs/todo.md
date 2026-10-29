@@ -73,51 +73,57 @@
 実地試行（PoC）で評価される「公開から配布までの時間短縮」「ベンダーとの往復回数削減」を直接達成し、さらに「緊急対応を予定された作業に変える（パッチカレンダー）」という本ツールの真のコア価値を確立するための実務最優先マイルストーンです。
 
 ### 柱 1: 事前予告カタログとカレンダー連携（Early Warning Calendar / ADR-020）
-- [ ] **事前予告データカタログ（`advisory_sources.yaml`）の設計・初期データ整備**
+- [x] **事前予告データカタログ（`advisory_sources.toml`）の設計・初期データ整備（v0.3対応完了）**
   - 公式一次情報源（URL、RSS、メーリングリスト、固定リリース日程）を宣言的データとして外部化：
     - Node.js（公式ブログ、セキュリティリリース事前告知）
     - OpenSSL（メーリングリスト事前予告、最高深刻度事前通知）
     - Go（golang-announce メーリングリスト）
     - Tomcat（announce メーリングリスト）
-    - Oracle Critical Patch Update（四半期固定日程）
-    - Microsoft Patch Tuesday（毎月第2火曜日）
-  - 利用者がPRで監視対象を追加・共有できるオープンコミュニティ資産（堀）として設計。
-- [ ] **2段階定点巡回エンジン（Researcher）の改修**
-  - **1段目:** `advisory_sources.yaml` に基づく公式一次ソースの決定論的フェッチ（APIキー不要・結果固定・高速）。
-  - **2段目:** 検出された事前予告を Gemini で要約し、自社影響・発火条件を予測。
+    - Oracle Critical Patch Update（四半期固定日程・第3火曜日ルール）
+    - Microsoft Patch Tuesday（毎月第2火曜日ルール）
+    - Python（python-announce-list メーリングリスト）
+  - 利用者がPRで監視対象を追加・共有できるオープンコミュニティ資産（堀）として `src/triage_agent/data/advisory_sources.toml` を設計。
+- [x] **2段階定点巡回エンジン（Researcher）の実装（v0.3対応完了）**
+  - **1段目:** `advisory_sources.toml` に基づく公式一次ソースの決定論的フェッチ・次回予定日自動算出（APIキー不要・結果固定・高速）。
+  - **2段目:** 検出された事前予告を自社SBOMコンポーネントと照合し、推奨初動チェックリスト（輪番確保、変更管理RFC起票、ベンダー仮枠押さえ）を生成。
   - **フォールバック:** カタログ未登録パッケージ向けに Google Search Grounding を補助網として維持。
-- [ ] **公式一次情報と「未確認の予兆」の明示的区別**
+- [x] **公式一次情報と「未確認の予兆」の明示的区別（v0.3対応完了）**
   - 公式一次ソースからの「確定予告」と、Web検索等からの「未確認の予兆」をレポートおよび画面で厳格に分離（「調べなかったものを隠さない」原則）。
-- [ ] **iCalendar（`.ics`）エクスポート機能**
-  - 自社SBOMに該当するコンポーネントの事前リリース予定日時（日時、対象パッケージ、最高深刻度、推奨初動）を `.ics` 形式で出力。
+- [x] **iCalendar（`.ics`）エクスポート機能（v0.3対応完了）**
+  - 自社SBOMに該当するコンポーネントの事前リリース予定日時（日時、対象パッケージ、最高深刻度、推奨初動）を RFC 5545 準拠 `.ics` 形式で出力。
   - Google カレンダー / Microsoft Outlook に直接インポート可能にし、「輪番の事前確保」「ベンダーの作業枠仮押さえ」「変更管理申請（RFC）の先回り起票」を支援。
-  - CLI オプション `--calendar output.ics` および Web UI アクションバーへの「📅 予定表に追加」ボタン追加。
+  - CLI オプション `--calendar output.ics` および Web UI アクションバーへの「📅 予定表ダウンロード」ボタン・モーダルUI追加。
 
 ### 柱 2: Verifier の実戦的拡張（設定ファイル ＋ 主要3言語 / ADR-019）
-- [ ] **設定ファイル検証エンジン（XML / INI / Conf / Properties）の導入**
-  - Tomcat `server.xml`（AJP/JNDIRealm等の属性・タグ定義）、PHP `php.ini`、Nginx/Apache設定ファイル、Spring `application.properties`/`application.yml` のキーバリュー/ディレクティブ自動検証。
-  - 発火条件がコードではなくミドルウェア設定に依存するケースを自動走査し、Yes/Noを即答可能にする。
-- [ ] **主要3言語（JavaScript/TypeScript, Java, PHP）の構文木走査**
-  - Pythonに続き、委託先・社内システムにおいて利用頻度の高い JS/TS、Java、PHP の構文解析（tree-sitter等の軽量パーサー活用）。
-  - コメント行や文字列リテラルをスキップし、関数呼び出しや設定オプションを検出。
-  - テストコード自動分離（`__tests__`, `*Test.java`, `tests/` 等）の適用。
-- [ ] **「客観的3状態（YES/外部設定要確認/手動確認要）」の維持**
+- [x] **設定ファイル検証エンジン（XML / INI / Conf / Properties）の導入（v0.3対応完了）**
+  - Tomcat `server.xml`（AJPコネクタの有無・secretRequired/secret保護状態）、PHP `php.ini`（`session.upload_progress.enabled`）、Nginx設定ファイル（`http2 on` / `http2 off`）のセマンティック自動検証（`src/triage_agent/verifier/config_scanner.py`）。
+  - XMLコメント（`<!-- ... -->`）、INIコメント（`;`）、Confコメント（`#`）を完全除去し、コメントアウトされた設定による誤検知を根絶。
+  - 発火条件がコードではなくミドルウェア設定に依存するケースを自動走査し、Yes/Noを即答可能に。
+- [x] **主要3言語（JavaScript/TypeScript, Java, PHP）の構文走査強化（v0.3対応完了）**
+  - Cスタイル言語（JS/TS, Java, Go, PHP等）における `/* ... */` ブロックコメント、`//` 行コメントの完全除外。
+  - 設定ファイル名（`server.xml`, `php.ini`, `nginx.conf` 等）自体の言及によるコード検索誤マッチを除外するトークンフィルタを導入。
+  - テストコード自動分離（`__tests__`, `*Test.java`, `*.test.js`, `tests/` 等）の厳格適用。
+- [x] **「客観的3状態（YES/外部設定要確認/手動確認要）」の維持（v0.3対応完了）**
   - 到達可能性解析（Taint解析）への安易な深入りを避け、「分からないものを安全と言わない」の原則を堅持。
 
 ### 柱 3: ベンダー往復のワークフロー支援（Excel / CSV 連携 ＆ 往復履歴 / ADR-019）
-- [ ] **早見表の Excel（.xlsx）/ CSV（.csv）帳票エクスポート機能**
-  - トリアージ指示書から、サイバーセキュリティ部・情シス・委託先との標準プロトコルである Excel/CSV 早見表をワンクリック出力（配布時間短縮）。
-  - 出力カラム: CVE, 深刻度/CVSS, 対象ライブラリ, 確認ポイント(質問), 回答欄(YES/NO/要確認), 確認根拠欄, 確認者欄, 確認日欄。
-- [ ] **ベンダー回答のインポート ＆ サインオフ自動確定（履歴化）**
-  - 記入済み Excel/CSV または Web UI からの回答を一括取り込み、`audit_signoff.json` にタイムスタンプ付きで自動反映。
-- [ ] **試行メトリクス自動計測ログ**
-  - 「指示書生成時刻」「ベンダー配布（Excel出力）時刻」「回答受領（インポート）時刻」「往復回数」を記録し、2月の成果報告用エビデンスを自動集計。
+- [x] **早見表の CSV（.csv）帳票エクスポート機能（v0.3対応完了）**
+  - トリアージ指示書から、サイバーセキュリティ部・情シス・委託先との標準プロトコルである UTF-8 BOM付き CSV 早見表をワンクリック出力（Excelでの文字化け完全防止）。
+  - 出力カラム: `No`, `CheckPointID`, `対象製品/ライブラリ`, `CVE/対象識別子`, `深刻度/CVSS`, `確認ポイント (Yes/No)`, `確認方法`, `ベンダー回答`, `確認根拠`, `確認者`, `確認日`。
+  - CLI オプション `--export-checklist <file.csv>` および Web UI アクションバーへの「📥 ベンダー早見表 (CSV)」ボタン追加。
+- [x] **ベンダー回答のインポート ＆ サインオフ自動確定（履歴化）（v0.3対応完了）**
+  - 記入済み CSV を一括取り込み、`audit_signoff.json` にタイムスタンプ付きで自動反映（`src/triage_agent/tools/vendor_workflow.py`）。
+  - 重複サインオフの更新防止、回答ステータス（NO/YES/要確認）の正規化。
+  - CLI オプション `--import-checklist <file.csv>` および Web UI アクションバーへの「📤 回答取込」ファイル選択ダイアログ・自動再検証トリガー追加。
+- [x] **試行メトリクス自動計測ログ（v0.3対応完了）**
+  - 「指示書生成時刻」「ベンダー配布（CSV出力）時刻」「回答受領（インポート）時刻」「往復回数（roundtrip_count）」「ターンアラウンド所要時間（hours）」を記録（`triage-output/workflow_metrics.json`）し、2月の成果報告用エビデンスを自動集計。
 
 ### 柱 4: 品質担保のための正解付きミニ評価セット（Benchmark Suite / ADR-019）
-- [ ] **実事例ミニリポジトリの作成 (`benchmark/` または `tests/fixtures/fixtures_v03/`)**
-  - 直近の実事例（Node/jsonwebtoken、Tomcat/AJP、PHP/session、HTTP2Shell）を正解ラベル（期待判定: YES/NO/外部設定要確認）付きの最小再現ファイルとして整備。
-- [ ] **見逃し（False Negative）・誤検知（False Positive）の自動検知テスト**
-  - Verifier の言語・設定追加時に、過去の正解判定が壊れていないかを CI で回帰テスト（精度測定の定量化）。
+- [x] **実事例ミニリポジトリの作成 (`benchmark/`）（v0.3対応完了）**
+  - 直近の実事例（Node/jsonwebtoken, Tomcat/AJP Ghostcat, PHP/session upload progress, Nginx/HTTP2Shell Rapid Reset）を正解ラベル（期待判定: YES/NO/外部設定要確認）付きの最小再現ファイルおよびグランドトゥルースマニフェスト（`benchmark/manifest.json`）として整備。
+  - コメントアウトや明示的無効化設定を含むネガティブケース（`benchmark/cases_negative/`）も完備。
+- [x] **見逃し（False Negative）・誤検知（False Positive）の自動検知テスト（v0.3対応完了）**
+  - Verifier の言語・設定追加時に、過去の正解判定が壊れていないかを自動判定するベンチマークスイート（`scratch/test_benchmark_suite.py`）を実装。全ケース100%パスを検証。
 
 ---
 

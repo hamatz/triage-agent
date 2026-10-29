@@ -249,6 +249,52 @@
           }
         }
 
+        // 3.6. Pre-announcements / Early Warning Calendar (ADR-020)
+        const paPanel = document.getElementById('pre-announcements-panel');
+        const paList = document.getElementById('pre-announcements-list');
+        const btnDlCal = document.getElementById('btn-dl-calendar');
+
+        if (paPanel && paList) {
+          const preAnnouncements = Array.isArray(report.pre_announcements) ? report.pre_announcements : [];
+          if (preAnnouncements.length > 0) {
+            paPanel.classList.remove('hidden');
+            if (btnDlCal) btnDlCal.classList.remove('hidden');
+            paList.innerHTML = preAnnouncements.map(pa => {
+              const dateDisplay = pa.expected_date ? `<strong>${escapeHtml(pa.expected_date)}</strong> ${escapeHtml(pa.expected_time || '')}` : '事前監視チャンネル';
+              const officialTag = pa.is_official ? '<span class="badge-pill badge-normal text-xs" style="background: #dcfce7; color: #166534; border: 1px solid #86efac;">公式一次情報</span>' : '<span class="badge-pill badge-high text-xs" style="background: #fef3c7; color: #92400e;">未確認の予兆</span>';
+              const preps = Array.isArray(pa.recommended_preparations) ? pa.recommended_preparations : [];
+              const checklistHtml = preps.map(p => `<li>• ${escapeHtml(p)}</li>`).join('');
+
+              return `
+                <div class="p-3.5 bg-white rounded-lg border border-emerald-200 space-y-2 text-xs shadow-sm">
+                  <div class="flex items-start justify-between flex-wrap gap-2">
+                    <div class="flex items-center space-x-2">
+                      <span class="font-mono font-bold text-emerald-900 bg-emerald-50 px-2 py-0.5 rounded border border-emerald-200">${escapeHtml(pa.component_name || '')}</span>
+                      <span class="font-bold text-gray-800">${escapeHtml(pa.title || '')}</span>
+                      <span class="badge-pill badge-high text-xs">${escapeHtml(pa.severity_hint || '要確認')}</span>
+                    </div>
+                    <div>${officialTag}</div>
+                  </div>
+                  <div class="flex items-center space-x-4 text-xs text-gray-600">
+                    <div>📅 予定時期: <span class="text-emerald-700 font-medium">${dateDisplay}</span></div>
+                    <div>📡 ソース: <span class="font-medium">${escapeHtml(pa.source_name || '')}</span></div>
+                  </div>
+                  <p class="text-gray-700 text-xs leading-relaxed">${escapeHtml(pa.summary || '')}</p>
+                  ${checklistHtml ? `
+                    <div class="pt-1.5 border-t border-emerald-100 text-xs">
+                      <span class="font-semibold text-emerald-800">推奨事前準備:</span>
+                      <ul class="text-gray-600 space-y-0.5 mt-1 ml-1">${checklistHtml}</ul>
+                    </div>
+                  ` : ''}
+                </div>
+              `;
+            }).join('');
+          } else {
+            paPanel.classList.add('hidden');
+            if (btnDlCal) btnDlCal.classList.add('hidden');
+          }
+        }
+
         // 4. Notices
         const container = document.getElementById('notices-container');
         if (!container) return;
@@ -705,3 +751,103 @@
         alert('ダウンロードエラー: ' + err.message);
       }
     });
+
+    async function downloadCalendar() {
+      if (!currentReport) return;
+      try {
+        const res = await fetch('/api/export-calendar', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'X-CSRF-Token': window.CSRF_TOKEN
+          },
+          body: JSON.stringify({ report: currentReport })
+        });
+        if (!res.ok) {
+          const errData = await res.json().catch(() => ({}));
+          throw new Error(errData.error || 'カレンダー出力に失敗しました');
+        }
+        const icsText = await res.text();
+        downloadBlob(icsText, 'security_patches.ics', 'text/calendar; charset=utf-8');
+      } catch (err) {
+        alert('カレンダー出力エラー: ' + err.message);
+      }
+    }
+
+    const btnDlCal = document.getElementById('btn-dl-calendar');
+    if (btnDlCal) btnDlCal.addEventListener('click', downloadCalendar);
+    const btnQuickDlCal = document.getElementById('btn-quick-dl-calendar');
+    if (btnQuickDlCal) btnQuickDlCal.addEventListener('click', downloadCalendar);
+
+    // Vendor Checklist CSV Export Handler (ADR-019)
+    async function downloadChecklistCsv() {
+      if (!currentReport) return;
+      try {
+        const res = await fetch('/api/export-checklist', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'X-CSRF-Token': window.CSRF_TOKEN
+          },
+          body: JSON.stringify({ report: currentReport })
+        });
+        if (!res.ok) {
+          const errData = await res.json().catch(() => ({}));
+          throw new Error(errData.error || 'CSV出力に失敗しました');
+        }
+        const csvText = await res.text();
+        downloadBlob(csvText, 'vendor_checklist.csv', 'text/csv; charset=utf-8');
+      } catch (err) {
+        alert('ベンダー早見表出力エラー: ' + err.message);
+      }
+    }
+
+    const btnDlChecklist = document.getElementById('btn-dl-checklist');
+    if (btnDlChecklist) btnDlChecklist.addEventListener('click', downloadChecklistCsv);
+
+    // Vendor Checklist CSV Import Handler (ADR-019)
+    const btnTriggerImport = document.getElementById('btn-trigger-import-csv');
+    const fileVendorCsv = document.getElementById('file-vendor-csv');
+
+    if (btnTriggerImport && fileVendorCsv) {
+      btnTriggerImport.addEventListener('click', () => {
+        fileVendorCsv.click();
+      });
+
+      fileVendorCsv.addEventListener('change', async (e) => {
+        const file = e.target.files && e.target.files[0];
+        if (!file) return;
+
+        const reader = new FileReader();
+        reader.onload = async (event) => {
+          const csvContent = event.target.result;
+          const auditFile = document.getElementById('audit-file').value.trim() || 'sample_audit_signoff.json';
+
+          try {
+            const res = await fetch('/api/import-checklist', {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+                'X-CSRF-Token': window.CSRF_TOKEN
+              },
+              body: JSON.stringify({
+                csv_content: csvContent,
+                audit_file: auditFile
+              })
+            });
+            const data = await res.json();
+            if (data.success) {
+              alert(`✓ ベンダー回答を取り込みました（${data.imported_count} 件更新）。再検証を実行します。`);
+              document.getElementById('btn-run').click();
+            } else {
+              alert('インポート失敗: ' + (data.error || '不明なエラー'));
+            }
+          } catch (err) {
+            alert('インポートエラー: ' + err.message);
+          } finally {
+            fileVendorCsv.value = '';
+          }
+        };
+        reader.readAsText(file, 'utf-8');
+      });
+    }

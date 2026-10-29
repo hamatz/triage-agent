@@ -32,13 +32,20 @@ C_STYLE_COMMENT_EXTENSIONS = {
 }
 
 
+EXCLUDE_CODE_KEYWORDS = {
+    "server.xml", "php.ini", "nginx.conf", "httpd.conf", "apache2.conf",
+    "application.properties", "application.yml", "application.yaml",
+    "pom.xml", "build.gradle", "package.json", "composer.json"
+}
+
+
 def extract_keywords_from_method(text: str) -> List[str]:
     """Extract code tokens, XML tags, function calls, or config keys from verification method text."""
     patterns = set()
 
     for token in re.findall(r"`([^`]+)`", text):
         cleaned = token.strip()
-        if len(cleaned) >= 3:
+        if len(cleaned) >= 3 and cleaned.lower() not in EXCLUDE_CODE_KEYWORDS:
             patterns.add(cleaned)
 
     for tag in re.findall(r"<([a-zA-Z0-9_\-]+)", text):
@@ -163,6 +170,8 @@ def scan_directory_for_patterns(code_dir: Path, patterns: List[str], max_matches
                         py_docstrings, py_code_lines = extract_python_docstring_and_code_lines(raw_content)
 
                     is_c_style = suffix in C_STYLE_COMMENT_EXTENSIONS
+                    is_xml_style = suffix in (".xml", ".html", ".xhtml")
+                    is_ini_style = suffix in (".ini", ".cnf", ".conf")
                     in_block_comment = False
 
                     for line_no, raw_line in enumerate(all_lines, 1):
@@ -181,6 +190,24 @@ def scan_directory_for_patterns(code_dir: Path, patterns: List[str], max_matches
                                     continue
                             else:
                                 effective_line, in_block_comment = remove_c_style_comments_from_line(raw_line)
+                        # 1.1 XML-Style comment handling (<!-- ... -->)
+                        elif is_xml_style:
+                            if in_block_comment:
+                                if "-->" in raw_line:
+                                    in_block_comment = False
+                                    end_idx = raw_line.find("-->")
+                                    effective_line = raw_line[end_idx + 3:]
+                                else:
+                                    continue
+                            else:
+                                if "<!--" in raw_line:
+                                    start_idx = raw_line.find("<!--")
+                                    end_idx = raw_line.find("-->", start_idx + 4)
+                                    if end_idx != -1:
+                                        effective_line = raw_line[:start_idx] + " " * (end_idx + 3 - start_idx) + raw_line[end_idx + 3:]
+                                    else:
+                                        effective_line = raw_line[:start_idx]
+                                        in_block_comment = True
 
                         effective_str = effective_line.strip()
 
@@ -188,6 +215,8 @@ def scan_directory_for_patterns(code_dir: Path, patterns: List[str], max_matches
                         if not effective_str:
                             continue
                         if effective_str.startswith("//") or effective_str.startswith("#"):
+                            continue
+                        if is_ini_style and effective_str.startswith(";"):
                             continue
 
                         # 3. Python docstring filter: skip docstring lines while preserving all executable lines

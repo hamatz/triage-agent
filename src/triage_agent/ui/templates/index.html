@@ -218,6 +218,19 @@
               <span>📥</span>
               <span>検証結果 (MD)</span>
             </button>
+            <button type="button" id="btn-dl-calendar" class="btn-dawn-outline text-xs py-2 px-3 flex items-center space-x-1.5 hidden" style="border-color: #86efac; color: #166534; background: #f0fdf4;">
+              <span>📅</span>
+              <span>予定表 (.ics)</span>
+            </button>
+            <button type="button" id="btn-dl-checklist" class="btn-dawn-outline text-xs py-2 px-3 flex items-center space-x-1.5" style="border-color: #93c5fd; color: #1e40af; background: #eff6ff;">
+              <span>📥</span>
+              <span>ベンダー早見表 (CSV)</span>
+            </button>
+            <button type="button" id="btn-trigger-import-csv" class="btn-dawn-outline text-xs py-2 px-3 flex items-center space-x-1.5">
+              <span>📤</span>
+              <span>回答取込</span>
+            </button>
+            <input type="file" id="file-vendor-csv" accept=".csv" class="hidden">
           </div>
         </div>
 
@@ -297,6 +310,27 @@
               <ul id="osv-unsupported-list" class="font-mono text-xs mt-2 p-3 space-y-1" style="background: rgba(255, 255, 255, 0.7); border: 1px solid #cbd5e1; border-radius: 8px; color: #334155; list-style-position: inside;"></ul>
             </div>
           </div>
+        </div>
+
+        <!-- Pre-announcements / Early Warning Calendar Panel -->
+        <div id="pre-announcements-panel" class="hidden surface p-5 space-y-4" style="background: #f0fdf4; border: 1.5px solid #86efac; border-left: 4px solid #16a34a; border-radius: 12px;">
+          <div class="flex items-start justify-between">
+            <div class="flex items-start space-x-3">
+              <span style="font-size: 22px; line-height: 1;">📅</span>
+              <div>
+                <div class="eyeb" style="color: #166534; margin-bottom: 2px;">EARLY WARNING CALENDAR (ADR-020)</div>
+                <h3 class="font-bold text-base" style="color: #166534;">事前パッチ予告・定期更新スケジュール</h3>
+                <p style="color: #15803d; margin-top: 3px; font-size: 11px; line-height: 1.5;">
+                  突発的な緊急対応を計画作業へ。自社SBOM該当コンポーネントの事前リリース予告を検知しました。
+                </p>
+              </div>
+            </div>
+            <button type="button" id="btn-quick-dl-calendar" class="btn-dawn-primary text-xs py-1.5 px-3 flex items-center space-x-1" style="background: #16a34a; border-color: #15803d;">
+              <span>📅</span>
+              <span>カレンダーに追加 (.ics)</span>
+            </button>
+          </div>
+          <div id="pre-announcements-list" class="space-y-2.5"></div>
         </div>
 
         <!-- Notices Container -->

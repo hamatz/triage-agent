@@ -171,6 +171,23 @@ class TriageNotice(BaseModel):
     )
 
 
+class PreAnnouncementNotice(BaseModel):
+    source_id: str = Field(description="Identifier of the advisory source (e.g. 'nodejs-security', 'oracle-cpu')")
+    source_name: str = Field(description="Human-readable source name (e.g. 'Node.js Security Releases')")
+    component_name: str = Field(description="Matched SBOM component name (e.g. 'node', 'oracle-jdk')")
+    title: str = Field(description="Title or subject of the pre-announcement")
+    expected_date: Optional[str] = Field(default=None, description="Expected release date (YYYY-MM-DD)")
+    expected_time: Optional[str] = Field(default=None, description="Expected release time or timezone (e.g. '17:00 UTC')")
+    severity_hint: Optional[str] = Field(default=None, description="Max severity hint (e.g. 'High', 'Critical')")
+    summary: str = Field(description="Summary of the pre-announcement or release schedule")
+    url: Optional[str] = Field(default=None, description="Source URL or reference")
+    is_official: bool = Field(default=True, description="True if from official primary source; False if unconfirmed rumor/search signal")
+    recommended_preparations: List[str] = Field(
+        default_factory=list,
+        description="Recommended operational preparations (e.g. '輪番要員の確保', 'ベンダー作業枠の仮押さえ', '変更管理申請(RFC)の先行起票')"
+    )
+
+
 class TriageReport(BaseModel):
     report_title: str = Field(description="Title of the triage report")
     report_version: str = Field(default="1.0", description="Version or edition of the triage report (e.g. '1.0', '2.0')")
@@ -186,6 +203,10 @@ class TriageReport(BaseModel):
     recon_coverage_summary: Optional[str] = Field(
         default=None,
         description="Informational breakdown of reconnaissance coverage (e.g. '上位 10 件を深層調査。残り 22 件はOSV照合（0件）のみ実施')"
+    )
+    pre_announcements: List[PreAnnouncementNotice] = Field(
+        default_factory=list,
+        description="List of detected pre-announcements or scheduled security releases matching the SBOM (ADR-020)"
     )
     notices: List[TriageNotice] = Field(
         default_factory=list,

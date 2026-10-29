@@ -7,6 +7,7 @@ and clearly identifiable via 'DEMO-' prefixed IDs and explicit warnings.
 from typing import List
 from triage_agent.schemas import (
     CheckPointItem,
+    PreAnnouncementNotice,
     TriageNotice,
     TriageReport,
     compute_check_point_id,
@@ -108,4 +109,40 @@ def generate_demo_report() -> TriageReport:
             "[DEMO NOTICE] 本レポートは --demo フラグにより生成された合成データです。実環境の調査結果ではありません。"
         ],
         notices=notices,
+        pre_announcements=[
+            PreAnnouncementNotice(
+                source_id="demo-nodejs-security",
+                source_name="Node.js Security Releases (展示用サンプル)",
+                component_name="nodejs",
+                title="Node.js 次期セキュリティリリース事前予告 (展示用)",
+                expected_date="2026-11-03",
+                expected_time="17:00 UTC (予定)",
+                severity_hint="High",
+                summary="【デモ表示】Node.js 20系および22系を対象としたセキュリティアップデートの事前予告。最高深刻度はHigh。",
+                url="https://nodejs.org/en/blog/vulnerability/ (デモ参考)",
+                is_official=True,
+                recommended_preparations=[
+                    "11月3日夜〜4日朝の輪番要員の手配・代休事前調整",
+                    "フロントエンド/Node.js基盤担当ベンダーの作業枠仮押さえ",
+                    "本番変更管理申請（RFC）の先行起票",
+                ],
+            ),
+            PreAnnouncementNotice(
+                source_id="demo-oracle-cpu",
+                source_name="Oracle Critical Patch Update (展示用サンプル)",
+                component_name="com.oracle:ojdbc8",
+                title="Oracle CPU 次期定期セキュリティアップデート (展示用)",
+                expected_date="2027-01-19",
+                expected_time="20:00 UTC (予定)",
+                severity_hint="定期セキュリティアップデート",
+                summary="【デモ表示】四半期包括セキュリティパッチ (Oracle CPU)。Java/JDBCドライバ関連の修正見込み。",
+                url="https://www.oracle.com/security-alerts/ (デモ参考)",
+                is_official=True,
+                recommended_preparations=[
+                    "四半期パッチ適用枠の事前確保（第3火曜日翌日以降）",
+                    "DBAおよびJava基盤担当ベンダーの作業枠仮押さえ",
+                    "本番変更管理申請（RFC）の先行起票",
+                ],
+            ),
+        ],
     )

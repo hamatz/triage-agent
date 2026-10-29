@@ -1,0 +1,8 @@
+{
+  "name": "benchmark-node-jwt",
+  "version": "1.0.0",
+  "dependencies": {
+    "jsonwebtoken": "8.5.1",
+    "express": "4.18.2"
+  }
+}

@@ -60,6 +60,30 @@ def format_report_markdown(report: TriageReport) -> str:
             lines.append(f"> - ℹ️ `{c}`")
         lines.append("")
 
+    if report.pre_announcements:
+        lines.extend([
+            "## 📅 事前パッチ予告・定期更新スケジュール (Early Warning Calendar)",
+            "",
+            "> 💡 **「突発的な緊急対応を、コントロールされた計画作業へ」**  ",
+            "> 自社SBOMに該当するコンポーネントについて、CVE公表前の事前予告や次回定期更新スケジュールを検知しました。  ",
+            "> iCalendar（`.ics`）ファイルを Google カレンダーや Microsoft Outlook に取り込むことで、**「輪番の事前確保」「ベンダー作業枠の仮押さえ」「本番変更管理申請（RFC）の先行起票」** をパッチ公開前に完了できます（`--calendar output.ics`）。",
+            "",
+            "| 対象コンポーネント | 予定日 / 時期 | 深刻度・概要 | 情報源・公式度 | 事前準備チェックリスト |",
+            "| :--- | :--- | :--- | :--- | :--- |",
+        ])
+        for pa in report.pre_announcements:
+            date_col = f"**{pa.expected_date}**" if pa.expected_date else "事前監視チャンネル"
+            if pa.expected_time:
+                date_col += f"<br>({pa.expected_time})"
+            sev_col = f"[{pa.severity_hint or '要確認'}] {pa.title}"
+            official_tag = "公式一次情報" if pa.is_official else "未確認の予兆"
+            source_col = f"{pa.source_name}<br>({official_tag})"
+            if pa.url:
+                source_col += f"<br><{pa.url}>"
+            checklist_col = "<br>".join([f"・{item}" for item in pa.recommended_preparations])
+            lines.append(f"| `{pa.component_name}` | {date_col} | {sev_col} | {source_col} | {checklist_col} |")
+        lines.extend(["", "---", ""])
+
     for notice in report.notices:
         lines.extend([
             f"## {notice.product_name}（{notice.announcement_date}）",
@@ -175,6 +199,27 @@ def main():
              "unconfirmed (unverified external settings), any.",
     )
     parser.add_argument(
+        "--calendar",
+        type=str,
+        default=None,
+        dest="calendar_output",
+        help="Optional path to export iCalendar file (.ics) for security release schedules (ADR-020)",
+    )
+    parser.add_argument(
+        "--export-checklist",
+        type=str,
+        default=None,
+        dest="export_checklist_path",
+        help="Optional path to export vendor checklist CSV for cybersecurity/vendor inquiry (ADR-019)",
+    )
+    parser.add_argument(
+        "--import-checklist",
+        type=str,
+        default=None,
+        dest="import_checklist_path",
+        help="Import filled vendor checklist CSV into audit_signoff.json (ADR-019)",
+    )
+    parser.add_argument(
         "--gui",
         action="store_true",
         help="Launch the interactive Web GUI dashboard in your browser",
@@ -188,9 +233,14 @@ def main():
         run_gui()
         return
 
-    # Dynamic model override
-    if args.model:
-        os.environ["GEMINI_MODEL"] = args.model
+    # Standalone vendor checklist import (ADR-019)
+    if args.import_checklist_path:
+        from triage_agent.tools.vendor_workflow import import_vendor_checklist
+        count, audit_p = import_vendor_checklist(args.import_checklist_path, args.audit_file)
+        console.print(f"[bold green]✓ ベンダー回答をインポートしました ({count} 件): {audit_p.resolve()}[/bold green]")
+        if args.verify_code is None and not args.self_triage and args.sbom == "sample_sbom.json" and not args.output:
+            # Standalone import completed
+            return
 
     mode = "demo" if args.demo else ("dry-run" if args.dry_run else "live")
 
@@ -306,6 +356,37 @@ def main():
             )
         )
 
+    if triage_report.pre_announcements:
+        cal_table = Table(show_lines=True, header_style="bold green")
+        cal_table.add_column("対象", style="bold")
+        cal_table.add_column("予定日 / 時期", style="bold yellow")
+        cal_table.add_column("予告概要", style="dim")
+        cal_table.add_column("情報源 (公式度)", style="cyan")
+        cal_table.add_column("事前準備チェックリスト", style="green")
+
+        for pa in triage_report.pre_announcements:
+            d_str = pa.expected_date or "事前監視チャンネル"
+            if pa.expected_time:
+                d_str += f"\n({pa.expected_time})"
+            tag = "公式一次情報" if pa.is_official else "未確認の予兆"
+            cl_str = "\n".join([f"• {item}" for item in pa.recommended_preparations])
+            cal_table.add_row(
+                pa.component_name,
+                d_str,
+                f"[{pa.severity_hint or '要確認'}]\n{pa.title}",
+                f"{pa.source_name}\n({tag})",
+                cl_str,
+            )
+
+        console.print(
+            Panel(
+                cal_table,
+                title="[bold green]📅 【事前パッチ予告・定期更新スケジュール (Early Warning Calendar)】[/bold green]",
+                subtitle="[dim]突発的な緊急対応を、コントロールされた計画作業へ (iCalendar出力: --calendar <path.ics>)[/dim]",
+                border_style="green",
+            )
+        )
+
     for notice in triage_report.notices:
         console.print(
             Panel(
@@ -350,6 +431,18 @@ def main():
             md_content = format_report_markdown(triage_report)
             out_path.write_text(md_content, encoding="utf-8")
         console.print(f"[bold green]✓ 現場即応トリアージ指示書を出力しました: {out_path.resolve()}[/bold green]\n")
+
+    # Optional iCalendar file output (ADR-020)
+    if args.calendar_output:
+        from triage_agent.tools.calendar import export_icalendar_file
+        cal_path = export_icalendar_file(triage_report.pre_announcements, args.calendar_output)
+        console.print(f"[bold green]✓ カレンダー予定表（iCalendar .ics）を出力しました: {cal_path.resolve()}[/bold green]\n")
+
+    # Optional vendor checklist CSV export (ADR-019)
+    if args.export_checklist_path:
+        from triage_agent.tools.vendor_workflow import export_checklist_csv
+        _, csv_path = export_checklist_csv(triage_report, args.export_checklist_path)
+        console.print(f"[bold green]✓ ベンダー照会用早見表（CSV）を出力しました: {csv_path.resolve()}[/bold green]\n")
 
     # Optional automated codebase or vendor verification output
     if audit_report:

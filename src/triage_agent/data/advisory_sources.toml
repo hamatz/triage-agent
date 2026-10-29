@@ -1,0 +1,117 @@
+# advisory_sources.toml
+# コミュニティ主導の事前予告・セキュリティリリース監視カタログ (ADR-020)
+#
+# 本ファイルはオープンな宣言型データとして管理され、誰でもPRで新しいOSS監視ソースを追加できます。
+# 1段目として決定論的に参照され、APIキー不要・高速に事前予告やリリース予定日を抽出します。
+
+[[sources]]
+id = "nodejs-security"
+name = "Node.js Security Releases"
+ecosystem = "npm"
+package_patterns = ["node", "nodejs"]
+url = "https://nodejs.org/en/blog/vulnerability/"
+type = "blog_html"
+is_official = true
+cadence_hint = "事前予告は通常、セキュリティリリースの3〜7日前に公式ブログで公開されます。"
+keywords = ["security release", "vulnerabilities", "pre-announcement"]
+default_preparations = [
+    "当該日の輪番要員の手配・翌日代休の事前調整",
+    "ベンダー作業枠の事前仮押さえ",
+    "本番変更管理申請（RFC）の先行起票",
+]
+
+[[sources]]
+id = "openssl-announce"
+name = "OpenSSL Security Releases"
+ecosystem = "generic"
+package_patterns = ["openssl", "libssl", "openssl-devel"]
+url = "https://mta.openssl.org/pipermail/openssl-announce/"
+type = "mailing_list_html"
+is_official = true
+cadence_hint = "最高深刻度（CRITICAL/HIGH）を含むセキュリティリリースは数日前に事前通知されます。"
+keywords = ["sec-announce", "security advisory", "release announcement"]
+default_preparations = [
+    "当該日の輪番要員の手配・翌日代休の事前調整",
+    "ベンダー作業枠の事前仮押さえ",
+    "本番変更管理申請（RFC）の先行起票",
+]
+
+[[sources]]
+id = "golang-announce"
+name = "Go Security Releases"
+ecosystem = "Go"
+package_patterns = ["go", "golang", "golang.org/*"]
+url = "https://groups.google.com/g/golang-announce"
+type = "mailing_list_html"
+is_official = true
+cadence_hint = "Go のセキュリティ修正リリースは数日前に事前アナウンスされます。"
+keywords = ["security release", "pre-announcement", "cve"]
+default_preparations = [
+    "当該日の輪番要員の手配・翌日代休の事前調整",
+    "ベンダー作業枠の事前仮押さえ",
+    "本番変更管理申請（RFC）の先行起票",
+]
+
+[[sources]]
+id = "tomcat-announce"
+name = "Apache Tomcat Security Announcements"
+ecosystem = "Maven"
+package_patterns = ["org.apache.tomcat:*", "tomcat", "tomcat-catalina", "tomcat-coyote"]
+url = "https://lists.apache.org/list.html?announce@tomcat.apache.org"
+type = "mailing_list_html"
+is_official = true
+cadence_hint = "Apache Tomcat のセキュリティリリース予定および脆弱性情報。"
+keywords = ["security advisory", "release candidate", "vulnerability"]
+default_preparations = [
+    "当該日の輪番要員の手配・翌日代休の事前調整",
+    "ベンダー作業枠の事前仮押さえ",
+    "本番変更管理申請（RFC）の先行起票",
+]
+
+[[sources]]
+id = "oracle-cpu"
+name = "Oracle Critical Patch Update (CPU)"
+ecosystem = "Maven"
+package_patterns = ["com.oracle:*", "oracle:*", "openjdk", "java"]
+type = "fixed_schedule"
+is_official = true
+cadence_hint = "四半期ごと（1月・4月・7月・10月の第3火曜日）に定期公開される包括的セキュリティパッチ。"
+schedule_rule = "third_tuesday"
+schedule_months = [1, 4, 7, 10]
+default_preparations = [
+    "四半期パッチ適用枠の事前確保（第3火曜日翌日以降）",
+    "Java/ミドルウェア担当ベンダーの作業枠仮押さえ",
+    "本番変更管理申請（RFC）の先行起票",
+]
+
+[[sources]]
+id = "ms-patch-tuesday"
+name = "Microsoft Patch Tuesday"
+ecosystem = "NuGet"
+package_patterns = ["Microsoft.*", "System.*", "dotnet*", "azure*"]
+type = "fixed_schedule"
+is_official = true
+cadence_hint = "毎月第2火曜日に公開される月次セキュリティ更新プログラム。"
+schedule_rule = "second_tuesday"
+schedule_months = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]
+default_preparations = [
+    "月次パッチ適用枠の事前確保（第2火曜日翌朝以降）",
+    "インフラ・Windows基盤担当ベンダーの待機調整",
+    "変更管理申請（RFC）の先行起票",
+]
+
+[[sources]]
+id = "python-announce"
+name = "Python Security Releases"
+ecosystem = "PyPI"
+package_patterns = ["python", "cpython"]
+url = "https://mail.python.org/archives/list/python-announce-list@python.org/"
+type = "mailing_list_html"
+is_official = true
+cadence_hint = "PythonランタイムのセキュリティリリースおよびRC版アナウンス。"
+keywords = ["security release", "cve", "bugfix release"]
+default_preparations = [
+    "当該日の輪番要員の手配・翌日代休の事前調整",
+    "ベンダー作業枠の事前仮押さえ",
+    "本番変更管理申請（RFC）の先行起票",
+]

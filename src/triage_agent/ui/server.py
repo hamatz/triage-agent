@@ -53,9 +53,9 @@ def resolve_safe_path(path_str: str, base_dir: Optional[Path] = None) -> Path:
     return resolved
 
 
-def resolve_safe_output_path(path_str: str, allowed_extensions: tuple = (".md", ".json")) -> Path:
+def resolve_safe_output_path(path_str: str, allowed_extensions: tuple = (".md", ".json", ".ics", ".csv")) -> Path:
     """Ensure a save path stays strictly within the dedicated 'triage-output/' directory
-    and has an authorized extension (.md, .json).
+    and has an authorized extension (.md, .json, .ics).
 
     Prevents source code overwriting and directory traversal (ADR-013).
     """
@@ -563,6 +563,110 @@ class TriageDashboardHandler(BaseHTTPRequestHandler):
                 self.send_header("Content-Type", "application/json; charset=utf-8")
                 self.end_headers()
                 self.wfile.write(json.dumps({"success": False, "error": str(e)}, ensure_ascii=False).encode("utf-8"))
+
+        elif clean_path == "/api/export-calendar":
+            report_data = req_data.get("report")
+            if not report_data:
+                self.send_response(400)
+                self.send_header("Content-Type", "application/json; charset=utf-8")
+                self.end_headers()
+                self.wfile.write(json.dumps({"error": "レポートデータが空です。"}, ensure_ascii=False).encode("utf-8"))
+                return
+            try:
+                from triage_agent.tools.calendar import generate_icalendar
+                report_obj = TriageReport.model_validate(report_data)
+                ics_text = generate_icalendar(report_obj.pre_announcements)
+                self.send_response(200)
+                self.send_header("Content-Type", "text/calendar; charset=utf-8")
+                self.send_header("Content-Disposition", 'attachment; filename="triage_calendar.ics"')
+                self.end_headers()
+                self.wfile.write(ics_text.encode("utf-8"))
+            except Exception as e:
+                self.send_response(500)
+                self.send_header("Content-Type", "application/json; charset=utf-8")
+                self.end_headers()
+                self.wfile.write(json.dumps({"error": str(e)}, ensure_ascii=False).encode("utf-8"))
+
+        elif clean_path == "/api/export-checklist":
+            report_data = req_data.get("report")
+            if not report_data:
+                self.send_response(400)
+                self.send_header("Content-Type", "application/json; charset=utf-8")
+                self.end_headers()
+                self.wfile.write(json.dumps({"error": "レポートデータが空です。"}, ensure_ascii=False).encode("utf-8"))
+                return
+            try:
+                from triage_agent.tools.vendor_workflow import export_checklist_csv
+                report_obj = TriageReport.model_validate(report_data)
+                csv_text, out_p = export_checklist_csv(report_obj)
+                self.send_response(200)
+                self.send_header("Content-Type", "text/csv; charset=utf-8")
+                self.send_header("Content-Disposition", 'attachment; filename="vendor_checklist.csv"')
+                self.end_headers()
+                self.wfile.write(csv_text.encode("utf-8"))
+            except Exception as e:
+                self.send_response(500)
+                self.send_header("Content-Type", "application/json; charset=utf-8")
+                self.end_headers()
+                self.wfile.write(json.dumps({"error": str(e)}, ensure_ascii=False).encode("utf-8"))
+
+        elif clean_path == "/api/import-checklist":
+            csv_content = req_data.get("csv_content")
+            csv_path_str = req_data.get("csv_path")
+            audit_file_str = req_data.get("audit_file", "sample_audit_signoff.json")
+
+            try:
+                from triage_agent.tools.vendor_workflow import import_vendor_checklist
+                import tempfile
+
+                if csv_content:
+                    with tempfile.NamedTemporaryFile(suffix=".csv", delete=False, mode="w", encoding="utf-8") as tf:
+                        tf.write(csv_content)
+                        tmp_path = tf.name
+                    try:
+                        count, audit_p = import_vendor_checklist(tmp_path, audit_file_str)
+                    finally:
+                        if os.path.exists(tmp_path):
+                            os.remove(tmp_path)
+                elif csv_path_str:
+                    safe_csv_path = resolve_safe_load_path(csv_path_str, allowed_extensions=(".csv",))
+                    count, audit_p = import_vendor_checklist(str(safe_csv_path), audit_file_str)
+                else:
+                    self.send_response(400)
+                    self.send_header("Content-Type", "application/json; charset=utf-8")
+                    self.end_headers()
+                    self.wfile.write(json.dumps({"error": "CSVデータまたはCSVファイルパスが指定されていません。"}, ensure_ascii=False).encode("utf-8"))
+                    return
+
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json; charset=utf-8")
+                self.end_headers()
+                self.wfile.write(
+                    json.dumps({
+                        "success": True,
+                        "imported_count": count,
+                        "audit_file": str(audit_p.resolve()),
+                    }, ensure_ascii=False).encode("utf-8")
+                )
+            except Exception as e:
+                self.send_response(500)
+                self.send_header("Content-Type", "application/json; charset=utf-8")
+                self.end_headers()
+                self.wfile.write(json.dumps({"success": False, "error": str(e)}, ensure_ascii=False).encode("utf-8"))
+
+        elif clean_path == "/api/workflow-metrics":
+            try:
+                from triage_agent.tools.vendor_workflow import get_workflow_metrics
+                metrics = get_workflow_metrics()
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json; charset=utf-8")
+                self.end_headers()
+                self.wfile.write(json.dumps(metrics, ensure_ascii=False).encode("utf-8"))
+            except Exception as e:
+                self.send_response(500)
+                self.send_header("Content-Type", "application/json; charset=utf-8")
+                self.end_headers()
+                self.wfile.write(json.dumps({"error": str(e)}, ensure_ascii=False).encode("utf-8"))
 
         else:
             self.send_error(404, "Not Found")

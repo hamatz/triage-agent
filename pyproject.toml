@@ -25,4 +25,5 @@ build-backend = "setuptools.build_meta"
 where = ["src"]
 
 [tool.setuptools.package-data]
+"triage_agent" = ["data/*.toml", "data/*.json"]
 "triage_agent.ui" = ["templates/*.html", "static/*.css", "static/*.js"]
