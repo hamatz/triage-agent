@@ -99,7 +99,9 @@ def execute_triage_pipeline(
     log("[1/3] Recon Planner: SBOM解析および巡回戦略策定中...", percent=5, phase="Recon Planner", step=1, total_steps=3)
     components = load_sbom_summary(sbom_path)
     osv_hits, osv_errors, osv_unsupported = query_osv_batch(components)
-    catalog_pre_announcements = scan_catalog_pre_announcements(components)
+    catalog_pre_announcements, catalog_feed_errors = scan_catalog_pre_announcements(components)
+    if catalog_feed_errors:
+        unscanned_items.extend(catalog_feed_errors)
     if catalog_pre_announcements:
         log(f"事前予告カタログ照合: {len(catalog_pre_announcements)} 件の監視対象/予定を特定。", percent=17, phase="Recon Planner", step=1, total_steps=3)
 
@@ -221,25 +223,26 @@ def execute_triage_pipeline(
 
     # Populate pre-announcements from catalog and dynamic findings (ADR-020)
     pre_announcements_map = {
-        f"{n.source_id}:{n.component_name}": n for n in catalog_pre_announcements
+        f"{n.source_id}:{n.component_name}:{n.title}": n for n in catalog_pre_announcements
     }
     for res in research_results:
         for f in res.findings:
             if f.is_pre_announcement:
-                dyn_key = f"dynamic-{res.target.name}:{res.target.name}"
+                # Key by component and finding ID/title so multiple pre-announcements for one target are preserved
+                dyn_key = f"dynamic-{res.target.name}:{f.id or f.title}"
                 if dyn_key not in pre_announcements_map:
                     pre_announcements_map[dyn_key] = PreAnnouncementNotice(
                         source_id=f"dynamic-{res.target.name}",
-                        source_name=f"{res.target.name} 公開リポジトリ/アドバイザリ",
+                        source_name=f"{res.target.name} 公開リポジトリ/Web検索",
                         component_name=res.target.name,
                         title=f.title,
                         expected_date=None,
                         severity_hint=f.severity,
                         summary=f.summary,
                         url=f.source_urls[0] if f.source_urls else None,
-                        is_official=True,
+                        is_official=False,  # Web/Search signals are unconfirmed pre-announcements (ADR-020)
                         recommended_preparations=[
-                            "次期パッチ公開予定の事前確認",
+                            "次期パッチ公開予定の事前確認（公式チャンネルの確認）",
                             "ベンダー作業枠の事前仮押さえ",
                             "本番変更管理申請（RFC）の先行起票",
                         ],

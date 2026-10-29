@@ -74,24 +74,30 @@
 
 ### 柱 1: 事前予告カタログとカレンダー連携（Early Warning Calendar / ADR-020）
 - [x] **事前予告データカタログ（`advisory_sources.toml`）の設計・初期データ整備（v0.3対応完了）**
-  - 公式一次情報源（URL、RSS、メーリングリスト、固定リリース日程）を宣言的データとして外部化：
-    - Node.js（公式ブログ、セキュリティリリース事前告知）
+  - 公式一次情報源（URL、RSSフィード、メーリングリスト、固定リリース日程、UTC時刻）を宣言的データとして外部化：
+    - Node.js（公式ブログ RSS フィード: `https://nodejs.org/en/feed/vulnerability.xml`）
     - OpenSSL（メーリングリスト事前予告、最高深刻度事前通知）
     - Go（golang-announce メーリングリスト）
-    - Tomcat（announce メーリングリスト）
-    - Oracle Critical Patch Update（四半期固定日程・第3火曜日ルール）
-    - Microsoft Patch Tuesday（毎月第2火曜日ルール）
+    - Tomcat（announce メーリングリストおよび RSS/API）
+    - Oracle Critical Patch Update（四半期固定日程・第3火曜日ルール・21:00 UTC / 翌水曜 06:00 JST）
+    - Microsoft Patch Tuesday（毎月第2火曜日ルール・18:00 UTC / 翌水曜 03:00 JST）
     - Python（python-announce-list メーリングリスト）
+  - Spring Boot同梱の `tomcat-embed-core` 等に対応するため、`purl_patterns`（`pkg:maven/org.apache.tomcat*/*` 等）や `group:name` マッチングを実装。
   - 利用者がPRで監視対象を追加・共有できるオープンコミュニティ資産（堀）として `src/triage_agent/data/advisory_sources.toml` を設計。
 - [x] **2段階定点巡回エンジン（Researcher）の実装（v0.3対応完了）**
-  - **1段目:** `advisory_sources.toml` に基づく公式一次ソースの決定論的フェッチ・次回予定日自動算出（APIキー不要・結果固定・高速）。
+  - **1段目:** `advisory_sources.toml` に基づく公式一次ソースの決定論的フェッチ・RSSフィード巡回・次回予定日自動算出（APIキー不要・結果固定・高速）。
+  - **巡回失敗の明示:** フィード取得エラーやタイムアウトが発生した場合は握り潰さず、レポートの `unscanned_or_failed_components` に未調査警告として明示（「調べなかったものを隠さない」「作った内容を本物に見せない」原則の厳格適用）。
   - **2段目:** 検出された事前予告を自社SBOMコンポーネントと照合し、推奨初動チェックリスト（輪番確保、変更管理RFC起票、ベンダー仮枠押さえ）を生成。
   - **フォールバック:** カタログ未登録パッケージ向けに Google Search Grounding を補助網として維持。
 - [x] **公式一次情報と「未確認の予兆」の明示的区別（v0.3対応完了）**
-  - 公式一次ソースからの「確定予告」と、Web検索等からの「未確認の予兆」をレポートおよび画面で厳格に分離（「調べなかったものを隠さない」原則）。
-- [x] **iCalendar（`.ics`）エクスポート機能（v0.3対応完了）**
-  - 自社SBOMに該当するコンポーネントの事前リリース予定日時（日時、対象パッケージ、最高深刻度、推奨初動）を RFC 5545 準拠 `.ics` 形式で出力。
-  - Google カレンダー / Microsoft Outlook に直接インポート可能にし、「輪番の事前確保」「ベンダーの作業枠仮押さえ」「変更管理申請（RFC）の先回り起票」を支援。
+  - 公式一次ソースからの「確定予告」（`is_official=True`）と、Web検索・LLM調査等からの「未確認の予兆」（`is_official=False`）を厳格に分離。
+  - 同一コンポーネントに複数の予兆がある場合にも破棄せず全件を保持。
+- [x] **iCalendar（`.ics`）エクスポートの実用化・機密保護（v0.3対応完了）**
+  - **決定論的 UID:** 再インポート時に予定が重複せず、上書き更新されるUID算出。
+  - **情報源 × 予定日の集約:** Patch Tuesday に複数パッケージが該当しても 1 件のイベント枠に集約（タイトルに対象件数を表示）。
+  - **UTC 時刻化（日米時差対応）:** 終日指定ではなく `DTSTART:...Z` の UTC 時刻枠を出力し、カレンダーアプリが日本時間（水曜深夜〜早朝）で自動正しく配置。
+  - **機密性保護（ADR-013）:** 外部カレンダーサービスの DESCRIPTION に自社全パッケージ一覧を丸出しにせず、件数とトリアージレポート参照にとどめて攻撃地図化を防止。
+  - **RFC 5545 準拠:** 75オクテット Line Folding（`\r\n `）およびエスケープ処理（`\,`, `\;`, `\\`, `\n`）。
   - CLI オプション `--calendar output.ics` および Web UI アクションバーへの「📅 予定表ダウンロード」ボタン・モーダルUI追加。
 
 ### 柱 2: Verifier の実戦的拡張（設定ファイル ＋ 主要3言語 / ADR-019）

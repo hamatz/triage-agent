@@ -9,11 +9,13 @@ id = "nodejs-security"
 name = "Node.js Security Releases"
 ecosystem = "npm"
 package_patterns = ["node", "nodejs"]
+purl_patterns = ["pkg:npm/node*", "pkg:generic/node*"]
 url = "https://nodejs.org/en/blog/vulnerability/"
-type = "blog_html"
+feed_url = "https://nodejs.org/en/feed/vulnerability.xml"
+type = "rss_feed"
 is_official = true
 cadence_hint = "事前予告は通常、セキュリティリリースの3〜7日前に公式ブログで公開されます。"
-keywords = ["security release", "vulnerabilities", "pre-announcement"]
+keywords = ["security release", "vulnerabilities", "pre-announcement", "upcoming"]
 default_preparations = [
     "当該日の輪番要員の手配・翌日代休の事前調整",
     "ベンダー作業枠の事前仮押さえ",
@@ -25,6 +27,7 @@ id = "openssl-announce"
 name = "OpenSSL Security Releases"
 ecosystem = "generic"
 package_patterns = ["openssl", "libssl", "openssl-devel"]
+purl_patterns = ["pkg:generic/openssl*", "pkg:deb/openssl*", "pkg:rpm/openssl*"]
 url = "https://mta.openssl.org/pipermail/openssl-announce/"
 type = "mailing_list_html"
 is_official = true
@@ -41,6 +44,7 @@ id = "golang-announce"
 name = "Go Security Releases"
 ecosystem = "Go"
 package_patterns = ["go", "golang", "golang.org/*"]
+purl_patterns = ["pkg:golang/*", "pkg:generic/go*"]
 url = "https://groups.google.com/g/golang-announce"
 type = "mailing_list_html"
 is_official = true
@@ -56,9 +60,18 @@ default_preparations = [
 id = "tomcat-announce"
 name = "Apache Tomcat Security Announcements"
 ecosystem = "Maven"
-package_patterns = ["org.apache.tomcat:*", "tomcat", "tomcat-catalina", "tomcat-coyote"]
+package_patterns = [
+    "org.apache.tomcat:*", "tomcat", "tomcat-*", "tomcat-catalina", "tomcat-coyote",
+    "tomcat-embed-*", "tomcat-embed-core"
+]
+purl_patterns = [
+    "pkg:maven/org.apache.tomcat*/*",
+    "pkg:maven/org.apache.tomcat.embed/*",
+    "pkg:generic/tomcat*"
+]
 url = "https://lists.apache.org/list.html?announce@tomcat.apache.org"
-type = "mailing_list_html"
+feed_url = "https://lists.apache.org/api/source.lua/announce@tomcat.apache.org"
+type = "rss_feed"
 is_official = true
 cadence_hint = "Apache Tomcat のセキュリティリリース予定および脆弱性情報。"
 keywords = ["security advisory", "release candidate", "vulnerability"]
@@ -73,13 +86,16 @@ id = "oracle-cpu"
 name = "Oracle Critical Patch Update (CPU)"
 ecosystem = "Maven"
 package_patterns = ["com.oracle:*", "oracle:*", "openjdk", "java"]
+purl_patterns = ["pkg:maven/com.oracle*/*", "pkg:generic/oracle*", "pkg:generic/openjdk*"]
 type = "fixed_schedule"
 is_official = true
 cadence_hint = "四半期ごと（1月・4月・7月・10月の第3火曜日）に定期公開される包括的セキュリティパッチ。"
 schedule_rule = "third_tuesday"
 schedule_months = [1, 4, 7, 10]
+schedule_time_utc = "21:00 UTC" # 米国太平洋時間 13:00 PT = 21:00 UTC (日本時間 翌水曜 06:00 JST)
+url = "https://www.oracle.com/security-alerts/"
 default_preparations = [
-    "四半期パッチ適用枠の事前確保（第3火曜日翌日以降）",
+    "四半期パッチ適用枠の事前確保（第3火曜日翌朝/水曜日以降）",
     "Java/ミドルウェア担当ベンダーの作業枠仮押さえ",
     "本番変更管理申請（RFC）の先行起票",
 ]
@@ -89,13 +105,16 @@ id = "ms-patch-tuesday"
 name = "Microsoft Patch Tuesday"
 ecosystem = "NuGet"
 package_patterns = ["Microsoft.*", "System.*", "dotnet*", "azure*"]
+purl_patterns = ["pkg:nuget/Microsoft.*", "pkg:nuget/System.*", "pkg:nuget/Azure.*"]
 type = "fixed_schedule"
 is_official = true
 cadence_hint = "毎月第2火曜日に公開される月次セキュリティ更新プログラム。"
 schedule_rule = "second_tuesday"
 schedule_months = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]
+schedule_time_utc = "18:00 UTC" # 米国太平洋時間 10:00 PT = 18:00 UTC (日本時間 翌水曜 03:00 JST)
+url = "https://msrc.microsoft.com/update-guide"
 default_preparations = [
-    "月次パッチ適用枠の事前確保（第2火曜日翌朝以降）",
+    "月次パッチ適用枠の事前確保（第2火曜日翌朝/水曜日以降）",
     "インフラ・Windows基盤担当ベンダーの待機調整",
     "変更管理申請（RFC）の先行起票",
 ]
@@ -105,6 +124,7 @@ id = "python-announce"
 name = "Python Security Releases"
 ecosystem = "PyPI"
 package_patterns = ["python", "cpython"]
+purl_patterns = ["pkg:generic/python*", "pkg:pypi/cpython*"]
 url = "https://mail.python.org/archives/list/python-announce-list@python.org/"
 type = "mailing_list_html"
 is_official = true
