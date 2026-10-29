@@ -70,7 +70,7 @@ purl_patterns = [
     "pkg:generic/tomcat*"
 ]
 url = "https://lists.apache.org/list.html?announce@tomcat.apache.org"
-feed_url = "https://lists.apache.org/api/source.lua/announce@tomcat.apache.org"
+feed_url = "https://lists.apache.org/api/feed.lua?list=announce&domain=tomcat.apache.org"
 type = "rss_feed"
 is_official = true
 cadence_hint = "Apache Tomcat のセキュリティリリース予定および脆弱性情報。"

@@ -122,14 +122,14 @@ def generate_icalendar(
     for (source_id, date_str), notices in sorted(grouped.items(), key=lambda x: x[0][1]):
         primary = notices[0]
         comp_count = len(notices)
-        components_label = f" (対象 {comp_count} 件)" if comp_count > 1 else f": {primary.component_name}"
+        components_label = f" (対象 {comp_count} 件)"
 
         # Severity
         sev = primary.severity_hint or "要確認"
         summary_text = f"【事前予告 [{sev}]】{primary.source_name}{components_label}"
 
-        # Deterministic UID based on source_id, date, and notice titles
-        raw_uid_key = f"{source_id}-{date_str}-count{comp_count}"
+        # Deterministic UID based solely on source_id and date (stable across SBOM component count changes)
+        raw_uid_key = f"{source_id}-{date_str}"
         uid_hash = hashlib.sha256(raw_uid_key.encode("utf-8")).hexdigest()[:12]
         clean_date_str = date_str.replace("-", "")
         uid = f"{source_id}-{clean_date_str}-{uid_hash}@triage-agent"
@@ -164,6 +164,8 @@ def generate_icalendar(
 
         description_text = escape_rfc5545_text("\n".join(desc_parts))
 
+        event_status = "CONFIRMED" if primary.is_official else "TENTATIVE"
+
         event_lines = [
             "BEGIN:VEVENT",
             f"UID:{uid}",
@@ -174,10 +176,11 @@ def generate_icalendar(
             f"DESCRIPTION:{description_text}",
         ]
         if primary.url:
-            event_lines.append(f"URL:{escape_rfc5545_text(primary.url)}")
+            # RFC 5545 Section 3.8.4.6: URL property is a URI and must not be backslash-escaped
+            event_lines.append(f"URL:{primary.url.strip()}")
 
         event_lines.extend([
-            "STATUS:CONFIRMED",
+            f"STATUS:{event_status}",
             "TRANSP:TRANSPARENT",
             "END:VEVENT",
         ])
