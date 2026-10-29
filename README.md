@@ -155,8 +155,11 @@ python -m triage_agent.cli --sbom my_sbom.json --model gemini-2.5-flash
 # 機械可読なJSON形式で指示書を出力 (verifier との連携用)
 python -m triage_agent.cli --sbom my_sbom.json --output triage_report.json
 
+# 事前予告カレンダー（iCalendar）を同時出力
+python -m triage_agent.cli --sbom my_sbom.json --calendar pre_advisories.ics
+
 # 機能展示・デモモード（明確に DEMO-* と識別可能な合成データで即座に挙動確認）
-python -m triage_agent.cli --demo --output demo_triage_report.json
+python -m triage_agent.cli --demo --output demo_triage_report.json --calendar demo_calendar.ics
 ```
 
 ### 3.3 自社コードベース自動検証（補助CLI: triage-verifier）
@@ -304,6 +307,58 @@ LLMによる文章生成は、実行ごとに言い回しが微妙に変わる�
 4. **新情報・新バージョン公開時:**
    `triage-agent` で新版（第2版）を作成。内容に変更があった脆弱性のみ `notice_hash` により自動で再確認（黄色）を促します。
 
+### 3.7 事前予告カレンダー（Early Warning Calendar）と事前準備フロー
+
+#### どんな時に作られるのか？
+`triage-agent` の実行時、第1フェーズ（Recon Planner）において自社の SBOM 内のコンポーネントがコミュニティ監視カタログ（`advisory_sources.toml`）と自動突合されます。
+Node.js 公式ブログ、OpenSSL、Go、Tomcat などの公式フィード（RSS/Atom）を定点巡回して「未来のパッチ予告（Upcoming Security Releases）」を検知するか、Oracle CPU や Microsoft Patch Tuesday のような次回パッチ提供日（第3火曜日など）が計算されたタイミングで、**事前予告イベント** が生成されます。
+
+CLI 引数に `--calendar <path.ics>` を指定するか、Web GUI の「📅 予定表 (.ics)」ボタンをクリックすることで、RFC 5545 準拠の標準 iCalendar ファイルとして即座に出力されます。
+
+```bash
+# SBOM 照会と同時に事前予告カレンダーを生成
+python -m triage_agent.cli --sbom my_sbom.json --output triage_report.md --calendar upcoming_patches.ics
+```
+
+#### 実務におけるメリット：パッチ公開前に何ができるか？
+従来の脆弱性管理は「CVEが公開された直後」から始まります。しかし、金曜夕方や連休前夜に Critical CVE が公表されると、担当者の確保や変更管理申請が間に合わずパニックに陥ります。
+
+事前予告カレンダーを自社の Google カレンダー、Outlook、またはチーム共有カレンダーにインポート（購読）することで、**CVE が発行される前に以下の先回りアクションを完了** できます：
+
+1. **オンコール・当番エンジニアの事前確保:**
+   「来週火曜日に Node.js の High 深刻度セキュリティリリースがある」ことが分かっていれば、リリースの数日前に夜間・翌朝の対応担当者をあらかじめアサインしておけます。
+2. **委託先ベンダーへの事前アラート（作業枠の仮押さえ）:**
+   「○月○日に基盤ライブラリのパッチが出る見込みのため、翌営業日の適用テスト枠を空けておいてほしい」と事前に合意でき、当日の連絡の滞留や追加コストを防ぎます。
+3. **本番変更管理申請（RFC: Request for Change）の先行起票:**
+   厳格な金融システム等では本番適用の数日前までに変更申請の提出が必要です。「○月○日に予定されているセキュリティ修正の適用準備」として事前にドラフト申請を通しておくことで、パッチ公開後のリードタイムを最小化できます。
+
+```text
+【従来の運用】
+パッチ公開(金曜夕方) ──> 緊急招集パニック ──> ベンダー連絡つかず ──> 週明け月曜から対応着手 (初動に数日要する)
+
+【triage-agent の事前予告運用】
+予告検知(1週間前) ──> 📅カレンダー予定登録 ──> 担当者確保・RFC先行起票 ──> パッチ公開当日に即応 (即座にYes/No判定へ)
+```
+
+#### 機密保護・社内情報の漏洩防止設計（ADR-013）
+生成される `.ics` ファイルは共有カレンダーや外部SaaS（Google Calendar / Outlook）に登録されることを想定しています。そのため、カレンダーのタイトルや本文には **自社の内部パッケージ名、独自サービス名、および具体的なインベントリ情報は一切記載されません**：
+- **予定タイトル:** `【セキュリティ事前予告】Node.js Official Blog (対象 2 件)`
+- **予定説明:** 内部パッケージ名は伏せられ、`【該当コンポーネント】2 件 (詳細は社内トリアージレポートを参照)` と記載。
+外部カレンダーの同期や共有設定ミスによって社内のシステム構成（攻撃対象領域）が外部に漏洩することを根本から防ぎます。
+
+#### 監視対象プロジェクトの追加方法（`advisory_sources.toml`）
+事前予告を拾うロジックはコードではなく宣言的な TOML データ（[advisory_sources.toml](src/triage_agent/data/advisory_sources.toml)）として分離されています。社内で利用しているOSSや独自ベンダーがある場合、このファイルに項目を追加するだけでカレンダー連携の対象を自由に拡張できます：
+
+```toml
+[[sources]]
+id = "my-framework"
+name = "My Framework Security Feed"
+type = "feed"
+url = "https://example.com/security/feed.xml"
+purl_patterns = ["pkg:generic/my-framework", "my-framework"]
+check_point_hint = "My Framework のセキュリティ設定を確認しているか"
+```
+
 ---
 
 ## 4. プロジェクト構成とドキュメント
@@ -335,15 +390,21 @@ triage-agent/
         │   └── templates/    # HTMLテンプレート（index.html）
         └── verifier/         # 自社コードベース自動検証補助パッケージ
             ├── scanner.py    # AST構文解析・テストコード判定・走査ロジック
+            ├── config_scanner.py # ミドルウェア設定ファイル走査（server.xml, php.ini, nginx等）
             ├── attestation.py# サインオフ突合・ハッシュ計算・ドリフト検知
             ├── engine.py     # 自動検証エンジン
             ├── report.py     # Markdownレポート生成
             └── cli.py        # triage-verifier CLIエントリポイント
         ├── tools/
-        │   ├── sbom.py       # Syft CycloneDX / JSON パーサー
-        │   ├── osv.py        # OSV.dev 一括照会 API
-        │   ├── github.py     # GitHub Advisories / Commits / Diff 取得
-        │   └── web.py        # Webページ本文スクレイパー
+            ├── sbom.py       # Syft CycloneDX / JSON パーサー
+            ├── osv.py        # OSV.dev 一括照会 API
+            ├── github.py     # GitHub Advisories / Commits / Diff 取得
+            ├── web.py        # Webページ本文スクレイパー
+            ├── advisory_catalog.py # 事前予告カタログ照合＆フィード巡回
+            ├── calendar.py   # RFC 5545 iCalendar (.ics) 生成
+            └── vendor_workflow.py # ベンダー往復用 Excel/CSV 入出力＆メトリクス集計
+        ├── data/
+            └── advisory_sources.toml # 事前予告監視先カタログ定義
         └── agents/
             ├── planner.py    # Recon Planner エージェント
             ├── researcher.py # Researcher エージェント

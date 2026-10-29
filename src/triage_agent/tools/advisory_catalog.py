@@ -142,13 +142,18 @@ def match_component_to_sources(
 
 
 def extract_iso_date_from_text(text: str) -> Optional[str]:
-    """Attempt to extract an upcoming ISO release date (YYYY-MM-DD) from feed title or summary."""
+    """Attempt to extract an upcoming ISO release date (YYYY-MM-DD) from feed title or summary.
+    
+    Supports:
+    - YYYY-MM-DD (e.g. 2026-11-10)
+    - [Weekday,] Month DD, YYYY (e.g. Tuesday, November 10, 2026)
+    - [Weekday,] DD Month YYYY (e.g. 10 November 2026, 10th Nov 2026)
+    """
     # 1. Look for YYYY-MM-DD
-    iso_match = re.search(r"\b(202[4-9]-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12]\d|3[01]))\b", text)
+    iso_match = re.search(r"\b(20\d{2}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12]\d|3[01]))\b", text)
     if iso_match:
         return iso_match.group(1)
 
-    # 2. Look for Month DD, YYYY or Weekday, Month DD, YYYY (e.g. Tuesday, November 10, 2026 or Nov 10, 2026)
     months = {
         "jan": "01", "january": "01", "feb": "02", "february": "02",
         "mar": "03", "march": "03", "apr": "04", "april": "04",
@@ -157,8 +162,10 @@ def extract_iso_date_from_text(text: str) -> Optional[str]:
         "oct": "10", "october": "10", "nov": "11", "november": "11",
         "dec": "12", "december": "12"
     }
+
+    # 2. Look for [Weekday,] Month DD, YYYY (e.g. Tuesday, November 10, 2026 or Nov 10, 2026)
     m_re = re.search(
-        r"(?:(?:mon|tue|wed|thu|fri|sat|sun)[a-z]*,?\s+)?\b([A-Za-z]+)\s+([0-3]?\d)(?:st|nd|rd|th)?,?\s+(202[4-9])\b",
+        r"(?:(?:mon|tue|wed|thu|fri|sat|sun)[a-z]*,?\s+)?\b([A-Za-z]+)\s+([0-3]?\d)(?:st|nd|rd|th)?,?\s+(20\d{2})\b",
         text,
         re.IGNORECASE
     )
@@ -168,6 +175,19 @@ def extract_iso_date_from_text(text: str) -> Optional[str]:
             m_num = months[m_name]
             day_num = f"{int(m_re.group(2)):02d}"
             return f"{m_re.group(3)}-{m_num}-{day_num}"
+
+    # 3. Look for [Weekday,] DD Month YYYY (e.g. 10 November 2026 or 10th Nov 2026)
+    m_re_dmy = re.search(
+        r"(?:(?:mon|tue|wed|thu|fri|sat|sun)[a-z]*,?\s+)?\b([0-3]?\d)(?:st|nd|rd|th)?\s+([A-Za-z]+),?\s+(20\d{2})\b",
+        text,
+        re.IGNORECASE
+    )
+    if m_re_dmy:
+        m_name = m_re_dmy.group(2).lower()
+        if m_name in months:
+            m_num = months[m_name]
+            day_num = f"{int(m_re_dmy.group(1)):02d}"
+            return f"{m_re_dmy.group(3)}-{m_num}-{day_num}"
 
     return None
 
@@ -232,7 +252,8 @@ def fetch_advisory_feed(
         keywords = [k.lower() for k in source.get("keywords", ["security", "release"])]
         pre_announcement_signals = [
             "upcoming", "pre-announcement", "advance notice", "scheduled for",
-            "will be released", "will release", "target date", "planned release", "security release pre"
+            "will be released", "will release", "target date", "planned release",
+            "security release pre", "forthcoming"
         ]
 
         undated_candidate = None
@@ -281,6 +302,23 @@ def fetch_advisory_feed(
             else:
                 # No date in text: retain as undated candidate only if explicit pre-announcement signal is present
                 if any(sig in combined_text for sig in pre_announcement_signals):
+                    # Check article publication freshness: must not be older than 14 days
+                    pub_elem = _find_child_elem(
+                        entry,
+                        ["pubdate", "pubDate", "updated", "{http://www.w3.org/2005/Atom}updated"]
+                    )
+                    pub_text = (pub_elem.text or "").strip() if pub_elem is not None else ""
+                    if pub_text:
+                        pub_date_str = extract_iso_date_from_text(pub_text)
+                        if pub_date_str:
+                            try:
+                                pub_d = date.fromisoformat(pub_date_str)
+                                if pub_d < (reference_date - timedelta(days=14)):
+                                    # Stale undated announcement published >14 days ago: skip
+                                    continue
+                            except Exception:
+                                pass
+
                     if undated_candidate is None:
                         sev = extract_severity_hint_from_text(f"{title} {summary}")
                         undated_candidate = {
