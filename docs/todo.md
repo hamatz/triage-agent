@@ -166,12 +166,22 @@ Engineering Enablement（専門家依存の解消と組織的な即応）を実�
 - [ ] **全社資産管理・脆弱性基盤（Dependency-Track 等）との役割分担・連携**
   - 全社何百システム・数万コンポーネントの機械的網羅スキャンは Dependency-Track などの基盤に委ね、triage-agent は「緊急度・優先度の高い脆弱性の深層調査・指示書化・現場トリアージ」を担う専門レイヤーとして接続。
 
-### ② サインオフのコンテキスト紐付け（Contextual Attestation & TTL）
+### ② サインオフのコンテキスト紐付け ＆ OS/カーネル・インフラ層への拡張（Contextual Attestation & Infrastructure Triaging）
 - [ ] **環境・バージョン・有効期限（TTL）付きサインオフ**
   - 手動/ベンダーサインオフに対し、以下のコンテキスト情報を付与可能にする：
     - **対象環境:** `Production` / `Staging` / `Development`
     - **構成バージョン:** リリースバージョン番号、コンテナタグ、または Git コミットSHA
     - **有効期限（TTL）:** 「次回メジャーリリースまで」「2026-12-31まで」等を設定し、期限切れ時に自動で再確認を喚起。
+- [ ] **Linuxカーネル・OS/コンテナ層の攻撃連鎖（Exploit Chain）トリアージ統合**
+  - **背景・課題:** Web層RCE（PHP2Shell等）とカーネルLPE（Fragnesia / CVE-2026-46300 等のローカル権限昇格・コンテナ脱出）の連鎖による root 制圧リスクへの即応。
+  - **Researcher の強化（緩和策・発火条件の構造化抽出）:**
+    - 年間数千件に及ぶカーネルCVEスパムを排除し、「非特権ユーザーからのLPE（root昇格）」および「コンテナエスケープ」に絞り込み。
+    - 公式ディストリビューション（Red Hat RHSA, Ubuntu USN, Debian Tracker）のアドバイザリから、パッチ適用・再起動前の**「緩和策（Mitigation: sysctl パラメータ、modprobe ブラックリスト設定、要求ケーパビリティ）」**を自動抽出。
+  - **Verifier の強化（OS設定 ＆ IaC/マニフェスト走査）:**
+    - リポジトリや構成管理資産から以下を自動走査し、緩和策が適用済みか（客観的3状態: YES/外部設定要確認/NO）を即答：
+      1. **OS設定ファイル:** `/etc/sysctl.conf`, `/etc/sysctl.d/*.conf`, `/etc/modprobe.d/*.conf`（該当モジュールの無効化確認）
+      2. **コンテナマニフェスト (Kubernetes / Docker Compose):** `securityContext`（`allowPrivilegeEscalation: false`, `readOnlyRootFilesystem: true`, `capabilities.drop: ["ALL"]`, `privileged: false` 等）
+      3. **Dockerfile / ホスト構成コード:** 非特権実行（`USER` ディレクティブ）、Ansible/Terraform のセキュリティパラメータ設定。
 
 ### ③ ベンダー・現場回答の「組織知（System Architectural Profile）」化
 - [ ] **システム構成プロファイル（System Profile）機能**
