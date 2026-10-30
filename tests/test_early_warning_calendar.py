@@ -13,6 +13,7 @@ from triage_agent.tools.advisory_catalog import (
     extract_iso_date_from_text,
     extract_severity_hint_from_text,
     fetch_advisory_feed,
+    get_primary_advisories_for_components,
     load_advisory_catalog,
     match_component_to_sources,
     scan_catalog_pre_announcements,
@@ -366,6 +367,49 @@ class TestEarlyWarningCalendar(unittest.TestCase):
         raw = "Line1\nLine2; with, commas and \\ backslashes"
         escaped = escape_rfc5545_text(raw)
         self.assertEqual(escaped, "Line1\\nLine2\\; with\\, commas and \\\\ backslashes")
+
+    def test_schedule_calculation_first_monday_and_second_thursday(self):
+        """Fixed schedule rules: Django (first_monday) and PostgreSQL (second_thursday)."""
+        # Ref date: 2026-10-29 (Thu). Next first Monday in Nov 2026 is 2026-11-02.
+        django_date = compute_next_scheduled_date(
+            schedule_rule="first_monday",
+            schedule_months=list(range(1, 13)),
+            reference_date=self.ref_date,
+        )
+        self.assertEqual(django_date, datetime.date(2026, 11, 2))
+
+        # Next second Thursday in Nov 2026 is 2026-11-12.
+        pg_date = compute_next_scheduled_date(
+            schedule_rule="second_thursday",
+            schedule_months=[2, 5, 8, 11],
+            reference_date=self.ref_date,
+        )
+        self.assertEqual(pg_date, datetime.date(2026, 11, 12))
+
+    def test_primary_advisory_category_skipped_from_pre_announcements(self):
+        """category='primary_advisory' (nginx, httpd) must NOT create pre-announcement calendar items."""
+        comp_nginx = ComponentInfo(name="nginx", version="1.24.0", ecosystem="generic")
+        notices, errors = scan_catalog_pre_announcements(
+            [comp_nginx],
+            reference_date=self.ref_date,
+            fetch_feeds=False,
+        )
+        # Must not generate pre-announcement notices
+        self.assertEqual(len(notices), 0, "Primary advisory should not pollute pre-announcement calendar")
+        self.assertEqual(len(errors), 0)
+
+    def test_get_primary_advisories_for_components(self):
+        """Primary advisories can be retrieved directly via get_primary_advisories_for_components."""
+        comp_nginx = ComponentInfo(name="nginx", version="1.24.0", ecosystem="generic")
+        comp_httpd = ComponentInfo(name="httpd", version="2.4.58", ecosystem="generic")
+        advisories = get_primary_advisories_for_components([comp_nginx, comp_httpd])
+
+        self.assertEqual(len(advisories), 2)
+        nginx_adv = next(a for a in advisories if a["source_id"] == "nginx-security")
+        self.assertIn("https://nginx.org/en/security_advisories.html", nginx_adv["url"])
+
+        httpd_adv = next(a for a in advisories if a["source_id"] == "apache-httpd")
+        self.assertIn("vulnerabilities_24.html", httpd_adv["url"])
 
 
 if __name__ == "__main__":

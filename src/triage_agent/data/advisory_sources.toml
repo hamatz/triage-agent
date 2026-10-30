@@ -135,3 +135,79 @@ default_preparations = [
     "ベンダー作業枠の事前仮押さえ",
     "本番変更管理申請（RFC）の先行起票",
 ]
+
+[[sources]]
+id = "django-security"
+name = "Django Security & Bugfix Releases"
+category = "pre_announcement"
+ecosystem = "PyPI"
+package_patterns = ["django", "Django"]
+purl_patterns = ["pkg:pypi/django*", "pkg:pypi/Django*"]
+type = "fixed_schedule"
+is_official = true
+cadence_hint = "毎月第1月曜日に公開される月次セキュリティおよびバグ修正リリース。"
+schedule_rule = "first_monday"
+schedule_months = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]
+schedule_time_utc = "14:00 UTC" # 14:00 UTC = 日本時間 23:00 JST
+url = "https://www.djangoproject.com/weblog/"
+default_preparations = [
+    "月次パッチ適用枠の事前確保（第1月曜日夜〜翌火曜日）",
+    "Djangoフレームワーク担当ベンダーの待機調整",
+    "変更管理申請（RFC）の先行起票",
+]
+
+[[sources]]
+id = "postgresql-security"
+name = "PostgreSQL Scheduled Security Releases"
+category = "pre_announcement"
+ecosystem = "generic"
+package_patterns = ["postgresql", "postgres", "postgresql-*", "libpq", "libpq*", "postgresql-server"]
+purl_patterns = ["pkg:generic/postgresql*", "pkg:deb/*/postgresql*", "pkg:rpm/*/postgresql*", "pkg:docker/postgres*"]
+type = "fixed_schedule"
+is_official = true
+cadence_hint = "四半期ごと（2月・5月・8月・11月の第2木曜日）に定期公開されるマイナーセキュリティアップデート。"
+schedule_rule = "second_thursday"
+schedule_months = [2, 5, 8, 11]
+schedule_time_utc = "13:00 UTC" # 13:00 UTC = 日本時間 22:00 JST
+url = "https://www.postgresql.org/support/security/"
+default_preparations = [
+    "四半期パッチ適用枠の事前確保（第2木曜日夜〜翌金曜日）",
+    "対象DBの構成と担当ベンダーの待機調整",
+    "アップグレード検証環境とバックアップ・復旧手順を準備",
+]
+
+[[sources]]
+id = "apache-httpd"
+name = "Apache HTTP Server Announcements"
+category = "primary_advisory"
+ecosystem = "generic"
+package_patterns = ["httpd", "apache2", "apache-httpd", "apache-http-server"]
+purl_patterns = ["pkg:generic/httpd*", "pkg:deb/*/apache2*", "pkg:rpm/*/httpd*"]
+url = "https://httpd.apache.org/security/vulnerabilities_24.html"
+type = "blog_html"
+is_official = true
+cadence_hint = "Apache HTTP Server公式アナウンス・脆弱性情報（公開後公式アドバイザリ）。"
+keywords = ["security", "release", "vulnerability"]
+default_preparations = [
+    "公開系Webサーバのバージョンと設定を確認",
+    "WAF・代替緩和策の適用可否を検討",
+    "変更枠を準備",
+]
+
+[[sources]]
+id = "nginx-security"
+name = "nginx Security Advisories"
+category = "primary_advisory"
+ecosystem = "generic"
+package_patterns = ["nginx", "nginx-*", "nginx-core", "nginx-full"]
+purl_patterns = ["pkg:generic/nginx*", "pkg:deb/*/nginx*", "pkg:rpm/*/nginx*", "pkg:docker/nginx*"]
+url = "https://nginx.org/en/security_advisories.html"
+type = "blog_html"
+is_official = true
+cadence_hint = "nginx公式の既知脆弱性・修正版一覧（公開後公式アドバイザリ）。"
+keywords = ["security advisory", "vulnerable", "CVE"]
+default_preparations = [
+    "公開系リバースプロキシのバージョンと設定を確認",
+    "代替緩和策を確認",
+    "計画停止と切り戻し手順を準備",
+]

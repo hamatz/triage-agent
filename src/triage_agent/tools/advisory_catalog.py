@@ -59,6 +59,20 @@ def load_advisory_catalog(custom_path: Optional[str | Path] = None) -> List[Dict
     return []
 
 
+SCHEDULE_RULE_MAP: Dict[str, Tuple[int, int]] = {
+    # rule_name: (target_weekday [0=Mon, 1=Tue, 2=Wed, 3=Thu, 4=Fri, 5=Sat, 6=Sun], nth_occurrence)
+    "first_monday": (0, 1),
+    "second_monday": (0, 2),
+    "first_tuesday": (1, 1),
+    "second_tuesday": (1, 2),
+    "third_tuesday": (1, 3),
+    "fourth_tuesday": (1, 4),
+    "first_thursday": (3, 1),
+    "second_thursday": (3, 2),
+    "third_thursday": (3, 3),
+}
+
+
 def _get_nth_weekday_of_month(year: int, month: int, target_weekday: int, n: int) -> date:
     """Get the n-th target weekday (0=Monday, 1=Tuesday, ...) of the given year/month."""
     d1 = date(year, month, 1)
@@ -73,18 +87,24 @@ def compute_next_scheduled_date(
     reference_date: Optional[date] = None,
 ) -> date:
     """Compute the next upcoming scheduled release date based on rules
-    (e.g. 'third_tuesday' for Oracle CPU, 'second_tuesday' for Patch Tuesday).
+    (e.g. 'third_tuesday' for Oracle CPU, 'second_tuesday' for Patch Tuesday,
+    'first_monday' for Django, 'second_thursday' for PostgreSQL).
     """
     if reference_date is None:
         reference_date = date.today()
 
-    n = 2 if schedule_rule == "second_tuesday" else 3 if schedule_rule == "third_tuesday" else 2
+    if schedule_rule in SCHEDULE_RULE_MAP:
+        target_weekday, n = SCHEDULE_RULE_MAP[schedule_rule]
+    else:
+        # Fallback for legacy or unrecognized rules
+        target_weekday = 1
+        n = 3 if "third" in schedule_rule else 2
 
     # Check candidates for current year and next year
     current_year = reference_date.year
     for yr in [current_year, current_year + 1]:
         for mo in sorted(schedule_months):
-            candidate = _get_nth_weekday_of_month(yr, mo, target_weekday=1, n=n)
+            candidate = _get_nth_weekday_of_month(yr, mo, target_weekday=target_weekday, n=n)
             if candidate >= reference_date:
                 return candidate
 
@@ -362,6 +382,11 @@ def scan_catalog_pre_announcements(
     for comp in components:
         matched_sources = match_component_to_sources(comp, catalog)
         for src in matched_sources:
+            # If source is explicitly marked as primary_advisory (post-release advisory reference),
+            # skip from pre-announcement calendar to avoid polluting the schedule with undated entries.
+            if src.get("category") == "primary_advisory":
+                continue
+
             src_id = src.get("id", "unknown-source")
             key = f"{src_id}:{comp.name}"
             if key in seen_keys:
@@ -460,3 +485,30 @@ def scan_catalog_pre_announcements(
                 )
 
     return notices, feed_errors
+
+
+def get_primary_advisories_for_components(
+    components: List[ComponentInfo],
+    custom_catalog_path: Optional[str | Path] = None,
+) -> List[Dict[str, Any]]:
+    """Retrieve official primary advisory reference channels for matched components."""
+    catalog = load_advisory_catalog(custom_path=custom_catalog_path)
+    advisories = []
+    seen = set()
+    for comp in components:
+        matched = match_component_to_sources(comp, catalog)
+        for src in matched:
+            if src.get("category") == "primary_advisory":
+                src_id = src.get("id", "unknown")
+                key = f"{src_id}:{comp.name}"
+                if key not in seen:
+                    seen.add(key)
+                    advisories.append({
+                        "source_id": src_id,
+                        "source_name": src.get("name", src_id),
+                        "component_name": comp.name,
+                        "url": src.get("url"),
+                        "cadence_hint": src.get("cadence_hint", ""),
+                        "default_preparations": src.get("default_preparations", []),
+                    })
+    return advisories

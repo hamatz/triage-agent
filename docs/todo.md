@@ -82,6 +82,10 @@
     - Oracle Critical Patch Update（四半期固定日程・第3火曜日ルール・21:00 UTC / 翌水曜 06:00 JST）
     - Microsoft Patch Tuesday（毎月第2火曜日ルール・18:00 UTC / 翌水曜 03:00 JST）
     - Python（python-announce-list メーリングリスト）
+    - Django（毎月第1月曜日・固定リリースルール・14:00 UTC / 翌火曜 23:00 JST）
+    - PostgreSQL（四半期固定日程・2/5/8/11月第2木曜日ルール・13:00 UTC / 翌金曜 22:00 JST）
+    - Apache HTTP Server / Nginx（`category = "primary_advisory"` 公式一次アドバイザリ参照枠）
+  - スキーマに `category`（`pre_announcement` vs `primary_advisory`）を導入し、事後アドバイザリ情報源が事前予告カレンダーを日付なしノイズで汚染しないよう防護。
   - Spring Boot同梱の `tomcat-embed-core` 等に対応するため、`purl_patterns`（`pkg:maven/org.apache.tomcat*/*` 等）や `group:name` マッチングを実装。
   - 利用者がPRで監視対象を追加・共有できるオープンコミュニティ資産（堀）として `src/triage_agent/data/advisory_sources.toml` を設計。
 - [x] **2段階定点巡回エンジン（Researcher）の実装（v0.3対応完了）**
