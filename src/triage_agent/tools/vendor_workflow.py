@@ -1,22 +1,25 @@
 """Vendor collaboration workflow: CSV/Excel checklist export, import, and round-trip metrics (ADR-019).
 
 Facilitates bidirectional communication between cybersecurity teams, IT ops, and external software vendors.
-Tracks time metrics (distribution, turnaround, roundtrips) to demonstrate quantifiable PoC value.
+Protects against formula injection, ensures strict answer validation, prevents attestation loss,
+and tracks quantifiable PoC metrics per distribution ID.
 """
 
 import csv
+import hashlib
 import io
 import json
 import os
+import secrets
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Set, Tuple
 
 from triage_agent.schemas import TriageReport
 from triage_agent.verifier.models import AttestationFile, AuditAttestation
 
-
 CHECKLIST_HEADERS = [
+    "DistributionID",
     "No",
     "CheckPointID",
     "対象製品/ライブラリ",
@@ -30,27 +33,73 @@ CHECKLIST_HEADERS = [
     "確認日 (YYYY-MM-DD)",
 ]
 
+# Strict answer sets to prevent ambiguous prefix/substring matching
+ALLOWED_NO_ANSWERS: Set[str] = {
+    "NO", "非該当", "該当なし", "SAFE", "FALSE", "0", "安全", "対象外"
+}
+
+ALLOWED_YES_ANSWERS: Set[str] = {
+    "YES", "該当", "該当あり", "VULNERABLE", "TRUE", "1", "要対応"
+}
+
+
+def sanitize_csv_cell(val: Any) -> str:
+    """Sanitize cell value to prevent CSV Formula Injection in Microsoft Excel."""
+    s = str(val) if val is not None else ""
+    if s and s[0] in ("=", "+", "-", "@", "\t", "\r"):
+        return "'" + s
+    return s
+
+
+def generate_distribution_id(report_title: str) -> str:
+    """Generate a unique tracking distribution ID for each vendor checklist export."""
+    now_tag = datetime.now(timezone.utc).strftime("%Y%m%d")
+    rnd = secrets.token_hex(3)
+    return f"DIST-{now_tag}-{rnd}"
+
 
 def export_checklist_csv(
     report: TriageReport,
-    output_path: Optional[str] = None
-) -> Tuple[str, Path]:
-    """Export the triage report quick-check table into a structured CSV for vendor inquiry."""
+    output_path: Optional[str] = None,
+    target_product: Optional[str] = None,
+    target_component: Optional[str] = None,
+) -> Tuple[str, Path, str]:
+    """Export the triage report quick-check table into a structured CSV for vendor inquiry.
+    
+    Supports target-specific scoping to prevent leaking full system attack maps (ADR-013).
+    Escapes formula injection characters. Emits a unique DistributionID for lifecycle tracking.
+    
+    Returns:
+        Tuple of (csv_text, target_path, distribution_id)
+    """
+    distribution_id = generate_distribution_id(report.report_title)
     rows = []
     idx = 1
 
+    target_prod_lower = target_product.strip().lower() if target_product else None
+    target_comp_lower = target_component.strip().lower() if target_component else None
+
     for notice in report.notices:
         prod_name = notice.product_name or notice.component_name or "Unknown"
+        comp_name = notice.component_name or ""
+
+        # Filter by product or component if requested
+        if target_prod_lower and target_prod_lower not in prod_name.lower():
+            continue
+        if target_comp_lower and target_comp_lower not in comp_name.lower():
+            continue
+
         for cp in notice.check_points:
             cp_id = cp.check_point_id or f"{notice.component_name or 'target'}-{idx}"
             rows.append({
+                "DistributionID": distribution_id,
                 "No": str(idx),
-                "CheckPointID": cp_id,
-                "対象製品/ライブラリ": prod_name,
-                "CVE/対象識別子": cp.target_or_cve,
-                "深刻度/CVSS": cp.cvss or notice.severity_note or "",
-                "確認ポイント (Yes/No)": cp.check_point_yes_no,
-                "確認方法 (設定・コード・コマンド)": cp.verification_method,
+                "CheckPointID": sanitize_csv_cell(cp_id),
+                "対象製品/ライブラリ": sanitize_csv_cell(prod_name),
+                "CVE/対象識別子": sanitize_csv_cell(cp.target_or_cve),
+                "深刻度/CVSS": sanitize_csv_cell(cp.cvss or notice.severity_note or ""),
+                "確認ポイント (Yes/No)": sanitize_csv_cell(cp.check_point_yes_no),
+                "確認方法 (設定・コード・コマンド)": sanitize_csv_cell(cp.verification_method),
                 "ベンダー回答 (YES/NO/要確認)": "",  # To be filled by vendor
                 "確認根拠/設定箇所": "",             # To be filled by vendor
                 "確認者 (会社名・氏名)": "",         # To be filled by vendor
@@ -58,9 +107,8 @@ def export_checklist_csv(
             })
             idx += 1
 
-    # Output CSV string
+    # Output CSV string with UTF-8 BOM
     output_io = io.StringIO()
-    # Write UTF-8 BOM so Excel opens it with Japanese correctly without garbled text
     output_io.write("\ufeff")
     writer = csv.DictWriter(output_io, fieldnames=CHECKLIST_HEADERS)
     writer.writeheader()
@@ -68,8 +116,9 @@ def export_checklist_csv(
     csv_text = output_io.getvalue()
 
     if output_path is None:
+        scope_tag = f"_{target_prod_lower}" if target_prod_lower else ""
         safe_name = (report.scan_target or "triage").replace("/", "_").replace("\\", "_")
-        target_path = Path("triage-output") / f"{safe_name}_vendor_checklist.csv"
+        target_path = Path("triage-output") / f"{safe_name}{scope_tag}_vendor_checklist.csv"
     else:
         target_path = Path(output_path).resolve()
 
@@ -78,79 +127,112 @@ def export_checklist_csv(
 
     # Record distribution metric
     record_workflow_event("vendor_checklist_exported", {
+        "distribution_id": distribution_id,
         "file_path": str(target_path),
+        "target_product": target_product,
         "check_points_count": len(rows),
         "report_title": report.report_title,
     })
 
-    return csv_text, target_path
+    return csv_text, target_path, distribution_id
 
 
 def import_vendor_checklist(
     csv_path: str,
     audit_file_path: Optional[str] = None
-) -> Tuple[int, Path]:
-    """Parse vendor filled CSV and update audit_signoff.json with attestations."""
+) -> Tuple[int, Path, Dict[str, Any]]:
+    """Parse vendor filled CSV and update audit_signoff.json with attestations.
+    
+    Strictly validates responses:
+    - Only exact matches in ALLOWED_NO_ANSWERS count as NO, and ONLY IF both reviewer and evidence are present.
+    - Ambiguous phrases ('Not sure', 'No idea', 'NOT CHECKED YET', '安全かどうか未確認') become '要確認'.
+    - Existing attestations are never silently deleted on parse failure (fails fast to protect data).
+    - Internal YES cannot be silently overwritten by vendor NO without flagging conflict.
+    """
     p = Path(csv_path).resolve()
     if not p.exists():
         raise FileNotFoundError(f"Checklist CSV not found: {csv_path}")
 
-    # Read with utf-8-sig to automatically handle BOM if present
     content = p.read_text(encoding="utf-8-sig")
     reader = csv.DictReader(io.StringIO(content))
 
     new_attestations: List[AuditAttestation] = []
-    today_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    distribution_ids: Set[str] = set()
+    no_held_count = 0  # Count of NO answers demoted to '要確認' due to missing reviewer/evidence
+
+    import_timestamp = datetime.now(timezone.utc).isoformat()
 
     for row in reader:
-        ans = (row.get("ベンダー回答 (YES/NO/要確認)") or "").strip()
-        if not ans:
+        ans_raw = (row.get("ベンダー回答 (YES/NO/要確認)") or "").strip()
+        dist_id = (row.get("DistributionID") or "").strip()
+        if dist_id:
+            distribution_ids.add(dist_id)
+
+        if not ans_raw:
             continue
 
         cp_id = (row.get("CheckPointID") or "").strip()
         cve_id = (row.get("CVE/対象識別子") or "").strip()
-        reviewer = (row.get("確認者 (会社名・氏名)") or "委託先ベンダー").strip()
-        evidence = (row.get("確認根拠/設定箇所") or "ベンダー回答CSVによる確認").strip()
-        date_val = (row.get("確認日 (YYYY-MM-DD)") or today_str).strip()
+        reviewer = (row.get("確認者 (会社名・氏名)") or "").strip()
+        evidence = (row.get("確認根拠/設定箇所") or "").strip()
+        date_val = (row.get("確認日 (YYYY-MM-DD)") or "").strip()
 
-        # Normalize status
-        ans_upper = ans.upper()
-        if ans_upper.startswith("NO") or "安全" in ans or "非該当" in ans:
-            status = "NO (ベンダー回答・非該当)"
-        elif ans_upper.startswith("YES") or "該当" in ans:
+        # Strict exact match evaluation
+        ans_clean = ans_raw.upper()
+        if ans_clean in ALLOWED_NO_ANSWERS:
+            # NO requires BOTH reviewer and evidence to prevent unverified attestations
+            if reviewer and evidence:
+                status = "NO (ベンダー回答・非該当)"
+            else:
+                missing_parts = []
+                if not reviewer:
+                    missing_parts.append("確認者未記入")
+                if not evidence:
+                    missing_parts.append("根拠未記入")
+                status = f"要確認 (ベンダーNO回答保留: {', '.join(missing_parts)})"
+                no_held_count += 1
+        elif ans_clean in ALLOWED_YES_ANSWERS:
             status = "YES (ベンダー回答・該当あり)"
         else:
-            status = f"要確認 (ベンダー回答: {ans})"
+            status = f"要確認 (ベンダー回答: {ans_raw})"
 
         att = AuditAttestation(
             check_point_id=cp_id or None,
             cve_id=cve_id or None,
             status=status,
-            reviewer=reviewer,
-            date=date_val,
-            evidence=evidence,
+            reviewer=reviewer or "未記入",
+            date=date_val or import_timestamp[:10],
+            evidence=evidence or "未記入",
         )
         new_attestations.append(att)
 
-    if not new_attestations:
-        target_audit_path = Path(audit_file_path) if audit_file_path else Path("audit_signoff.json")
-        return 0, target_audit_path
-
-    # Merge into target audit file
     target_audit_path = Path(audit_file_path).resolve() if audit_file_path else Path("audit_signoff.json").resolve()
-    existing_attestations = []
 
+    if not new_attestations:
+        return 0, target_audit_path, {"imported_count": 0, "no_held_count": 0, "conflict_count": 0}
+
+    # Load existing audit file safely. Fail-fast if file exists but is corrupted.
+    existing_attestations: List[AuditAttestation] = []
     if target_audit_path.exists():
-        try:
-            data = json.loads(target_audit_path.read_text(encoding="utf-8"))
-            if isinstance(data, dict) and "attestations" in data:
-                existing_attestations = [AuditAttestation(**item) for item in data["attestations"]]
-            elif isinstance(data, list):
-                existing_attestations = [AuditAttestation(**item) for item in data]
-        except Exception:
-            existing_attestations = []
+        raw_text = target_audit_path.read_text(encoding="utf-8")
+        if raw_text.strip():
+            try:
+                data = json.loads(raw_text)
+                if isinstance(data, dict) and "attestations" in data:
+                    existing_attestations = [AuditAttestation(**item) for item in data["attestations"]]
+                elif isinstance(data, list):
+                    existing_attestations = [AuditAttestation(**item) for item in data]
+                else:
+                    raise ValueError("Unexpected JSON format in audit signoff file")
+            except Exception as e:
+                # Do NOT silently drop or overwrite corrupted existing attestations!
+                raise ValueError(
+                    f"既存の監査サインオフファイル '{target_audit_path}' の解析に失敗しました ({e})。"
+                    f"既存データの消失・破壊を防ぐため、取り込み処理を中止します。"
+                ) from e
 
-    # Map existing by check_point_id or cve_id to update without duplicating
+    # Merge while guarding against conflict (e.g. internal YES overwritten by vendor NO)
+    conflict_count = 0
     merged: Dict[str, AuditAttestation] = {}
     for att in existing_attestations:
         key = att.check_point_id or att.cve_id or att.target_or_cve or str(id(att))
@@ -158,6 +240,27 @@ def import_vendor_checklist(
 
     for att in new_attestations:
         key = att.check_point_id or att.cve_id or att.target_or_cve or str(id(att))
+        existing_item = merged.get(key)
+
+        if existing_item:
+            existing_status = existing_item.status.upper()
+            new_status = att.status.upper()
+
+            # Guard: If internal audit already identified YES, vendor NO must not silently overwrite it!
+            if "YES" in existing_status and "NO" in new_status:
+                conflict_count += 1
+                att = AuditAttestation(
+                    check_point_id=att.check_point_id,
+                    cve_id=att.cve_id,
+                    status="要再確認 (社内YESとベンダーNOの競合⚠️)",
+                    reviewer=att.reviewer,
+                    date=att.date,
+                    evidence=(
+                        f"【競合検知】社内判断（{existing_item.status}: {existing_item.evidence}）に対し、"
+                        f"ベンダーより非該当回答（{att.evidence}）を受領しました。人手による精査が必要です。"
+                    ),
+                )
+
         merged[key] = att
 
     updated_file = AttestationFile(attestations=list(merged.values()))
@@ -167,31 +270,41 @@ def import_vendor_checklist(
         encoding="utf-8"
     )
 
+    primary_dist_id = list(distribution_ids)[0] if distribution_ids else None
+
     # Record workflow round-trip metric
     record_workflow_event("vendor_checklist_imported", {
+        "distribution_id": primary_dist_id,
         "file_path": str(p),
         "imported_count": len(new_attestations),
+        "no_held_count": no_held_count,
+        "conflict_count": conflict_count,
         "total_attestations": len(merged),
     })
 
-    return len(new_attestations), target_audit_path
+    summary_info = {
+        "imported_count": len(new_attestations),
+        "no_held_count": no_held_count,
+        "conflict_count": conflict_count,
+        "distribution_id": primary_dist_id,
+    }
+
+    return len(new_attestations), target_audit_path, summary_info
 
 
 def record_workflow_event(event_type: str, details: Dict[str, Any], metrics_file: str = "triage-output/workflow_metrics.json") -> None:
-    """Record timestamped workflow events to measure PoC turnaround metrics (ADR-019)."""
+    """Record timestamped workflow events and maintain distribution-specific metrics (ADR-019)."""
     p = Path(metrics_file).resolve()
     p.parent.mkdir(parents=True, exist_ok=True)
 
-    metrics = {
-        "version": "1.0",
+    metrics: Dict[str, Any] = {
+        "version": "1.1",
         "events": [],
+        "distributions": {},
         "summary": {
             "total_exports": 0,
             "total_imports": 0,
-            "roundtrip_count": 0,
-            "first_export_time": None,
-            "last_import_time": None,
-            "turnaround_hours": None,
+            "total_distributions": 0,
         }
     }
 
@@ -200,6 +313,8 @@ def record_workflow_event(event_type: str, details: Dict[str, Any], metrics_file
             loaded = json.loads(p.read_text(encoding="utf-8"))
             if isinstance(loaded, dict) and "events" in loaded:
                 metrics = loaded
+                if "distributions" not in metrics:
+                    metrics["distributions"] = {}
         except Exception:
             pass
 
@@ -210,43 +325,63 @@ def record_workflow_event(event_type: str, details: Dict[str, Any], metrics_file
     }
     metrics["events"].append(event_record)
 
-    # Update summary
+    # Update distribution-specific tracking
+    dist_id = details.get("distribution_id")
+    if dist_id:
+        if dist_id not in metrics["distributions"]:
+            metrics["distributions"][dist_id] = {
+                "distribution_id": dist_id,
+                "exported_at": None,
+                "target_product": details.get("target_product"),
+                "check_points_count": details.get("check_points_count", 0),
+                "imported_at": None,
+                "import_count": 0,
+                "turnaround_hours": None,
+                "status": "exported",
+            }
+
+        dist_entry = metrics["distributions"][dist_id]
+        if event_type == "vendor_checklist_exported":
+            dist_entry["exported_at"] = event_record["timestamp"]
+            dist_entry["check_points_count"] = details.get("check_points_count", dist_entry["check_points_count"])
+            dist_entry["target_product"] = details.get("target_product", dist_entry["target_product"])
+        elif event_type == "vendor_checklist_imported":
+            dist_entry["imported_at"] = event_record["timestamp"]
+            dist_entry["import_count"] += 1
+            dist_entry["status"] = "imported"
+            if dist_entry["exported_at"]:
+                try:
+                    t0 = datetime.fromisoformat(dist_entry["exported_at"])
+                    t1 = datetime.fromisoformat(event_record["timestamp"])
+                    delta = (t1 - t0).total_seconds()
+                    dist_entry["turnaround_hours"] = round(delta / 3600.0, 2)
+                except Exception:
+                    pass
+
+    # Global summary
     exports = [e for e in metrics["events"] if e["event_type"] == "vendor_checklist_exported"]
     imports = [e for e in metrics["events"] if e["event_type"] == "vendor_checklist_imported"]
-
     metrics["summary"]["total_exports"] = len(exports)
     metrics["summary"]["total_imports"] = len(imports)
-    metrics["summary"]["roundtrip_count"] = min(len(exports), len(imports))
-
-    if exports:
-        metrics["summary"]["first_export_time"] = exports[0]["timestamp"]
-    if imports:
-        metrics["summary"]["last_import_time"] = imports[-1]["timestamp"]
-
-    if exports and imports:
-        try:
-            t0 = datetime.fromisoformat(exports[0]["timestamp"])
-            t1 = datetime.fromisoformat(imports[-1]["timestamp"])
-            delta_seconds = (t1 - t0).total_seconds()
-            metrics["summary"]["turnaround_hours"] = round(delta_seconds / 3600.0, 2)
-        except Exception:
-            pass
+    metrics["summary"]["total_distributions"] = len(metrics["distributions"])
 
     p.write_text(json.dumps(metrics, indent=2, ensure_ascii=False), encoding="utf-8")
 
 
 def get_workflow_metrics(metrics_file: str = "triage-output/workflow_metrics.json") -> Dict[str, Any]:
-    """Retrieve current workflow metrics summary."""
+    """Retrieve current workflow metrics summary and distribution breakdowns."""
     p = Path(metrics_file).resolve()
     if not p.exists():
         return {
             "total_exports": 0,
             "total_imports": 0,
-            "roundtrip_count": 0,
-            "turnaround_hours": None
+            "total_distributions": 0,
+            "distributions": {},
         }
     try:
         data = json.loads(p.read_text(encoding="utf-8"))
-        return data.get("summary", {})
+        summary = data.get("summary", {})
+        summary["distributions"] = data.get("distributions", {})
+        return summary
     except Exception:
         return {}

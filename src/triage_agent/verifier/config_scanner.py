@@ -246,9 +246,10 @@ def scan_php_ini(code_dir: Path, target_cve: Optional[str] = None) -> Optional[C
             continue
 
     # Also check php-fpm pool configs or .htaccess / .user.ini for overrides
-    fpm_enabled = None
-    fpm_evidence_file = None
-    fpm_line_no = None
+    # If ANY file enables upload_progress (e.g. php_admin_value or php_flag), it's immediately YES.
+    fpm_explicit_off = False
+    fpm_off_evidence_file = None
+    fpm_off_line_no = None
 
     for fpath in pool_and_htaccess_files:
         rel_path = str(fpath.relative_to(code_dir))
@@ -266,30 +267,24 @@ def scan_php_ini(code_dir: Path, target_cve: Optional[str] = None) -> Optional[C
                 if "session.upload_progress.enabled" in stripped.lower():
                     clean_str = stripped.lower()
                     if any(on_tok in clean_str for on_tok in [" on", "=on", " 1", "=1", "= true", " true"]):
-                        fpm_enabled = True
-                        fpm_evidence_file = rel_path
-                        fpm_line_no = idx
-                        break
+                        return ConfigVerificationResult(
+                            is_applicable=True,
+                            status="YES (設定有効: プール/Web設定で session.upload_progress 有効)",
+                            evidence_file=rel_path,
+                            line_number=idx,
+                            detail=f"{rel_path}:{idx} PHP-FPMプールまたはWeb設定で session.upload_progress.enabled が有効 (On) に設定されています。"
+                        )
                     elif any(off_tok in clean_str for off_tok in [" off", "=off", " 0", "=0", "= false", " false"]):
-                        fpm_enabled = False
-                        fpm_evidence_file = rel_path
-                        fpm_line_no = idx
+                        fpm_explicit_off = True
+                        fpm_off_evidence_file = rel_path
+                        fpm_off_line_no = idx
         except Exception:
             continue
 
-    # Evaluate hierarchy: FPM/Web server override wins if explicitly present
-    if fpm_enabled is True:
-        return ConfigVerificationResult(
-            is_applicable=True,
-            status="YES (設定有効: プール/Web設定で session.upload_progress 有効)",
-            evidence_file=fpm_evidence_file,
-            line_number=fpm_line_no,
-            detail=f"{fpm_evidence_file}:{fpm_line_no} PHP-FPMプールまたはWeb設定で session.upload_progress.enabled が有効 (On) に設定されています。"
-        )
-    elif fpm_enabled is False:
+    if fpm_explicit_off:
         latest_state = False
-        latest_evidence_file = fpm_evidence_file
-        latest_line_no = fpm_line_no
+        latest_evidence_file = fpm_off_evidence_file
+        latest_line_no = fpm_off_line_no
 
     # If conf.d / php.ini enabled
     if latest_state is True:
@@ -302,7 +297,7 @@ def scan_php_ini(code_dir: Path, target_cve: Optional[str] = None) -> Optional[C
         )
     elif latest_state is False:
         # If set to Off in ini, but unparsed pool or .user.ini exists, must be careful
-        if pool_and_htaccess_files and fpm_enabled is None:
+        if pool_and_htaccess_files and not fpm_explicit_off:
             return ConfigVerificationResult(
                 is_applicable=True,
                 status="外部設定要確認 (プール設定/Web設定による上書き可能性あり)",

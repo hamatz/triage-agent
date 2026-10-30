@@ -213,6 +213,13 @@ def main():
         help="Optional path to export vendor checklist CSV for cybersecurity/vendor inquiry (ADR-019)",
     )
     parser.add_argument(
+        "--export-checklist-target",
+        type=str,
+        default=None,
+        dest="export_checklist_target",
+        help="Optional target product/component filter to scope the exported checklist and prevent attack map leakage (ADR-013)",
+    )
+    parser.add_argument(
         "--import-checklist",
         type=str,
         default=None,
@@ -236,8 +243,10 @@ def main():
     # Standalone vendor checklist import (ADR-019)
     if args.import_checklist_path:
         from triage_agent.tools.vendor_workflow import import_vendor_checklist
-        count, audit_p = import_vendor_checklist(args.import_checklist_path, args.audit_file)
-        console.print(f"[bold green]✓ ベンダー回答をインポートしました ({count} 件): {audit_p.resolve()}[/bold green]")
+        count, audit_p, summary = import_vendor_checklist(args.import_checklist_path, args.audit_file)
+        held_note = f" (※根拠・確認者未記入による保留: {summary['no_held_count']} 件)" if summary.get("no_held_count") else ""
+        conflict_note = f" (⚠️社内YESとの競合検知: {summary['conflict_count']} 件)" if summary.get("conflict_count") else ""
+        console.print(f"[bold green]✓ ベンダー回答をインポートしました ({count} 件{held_note}{conflict_note}): {audit_p.resolve()}[/bold green]")
         if args.verify_code is None and not args.self_triage and args.sbom == "sample_sbom.json" and not args.output:
             # Standalone import completed
             return
@@ -441,8 +450,12 @@ def main():
     # Optional vendor checklist CSV export (ADR-019)
     if args.export_checklist_path:
         from triage_agent.tools.vendor_workflow import export_checklist_csv
-        _, csv_path = export_checklist_csv(triage_report, args.export_checklist_path)
-        console.print(f"[bold green]✓ ベンダー照会用早見表（CSV）を出力しました: {csv_path.resolve()}[/bold green]\n")
+        _, csv_path, dist_id = export_checklist_csv(
+            triage_report,
+            output_path=args.export_checklist_path,
+            target_product=args.export_checklist_target,
+        )
+        console.print(f"[bold green]✓ ベンダー照会用早見表（CSV, {dist_id}）を出力しました: {csv_path.resolve()}[/bold green]\n")
 
     # Optional automated codebase or vendor verification output
     if audit_report:

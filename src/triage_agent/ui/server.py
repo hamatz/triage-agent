@@ -589,6 +589,7 @@ class TriageDashboardHandler(BaseHTTPRequestHandler):
 
         elif clean_path == "/api/export-checklist":
             report_data = req_data.get("report")
+            target_product = req_data.get("target_product")
             if not report_data:
                 self.send_response(400)
                 self.send_header("Content-Type", "application/json; charset=utf-8")
@@ -598,10 +599,10 @@ class TriageDashboardHandler(BaseHTTPRequestHandler):
             try:
                 from triage_agent.tools.vendor_workflow import export_checklist_csv
                 report_obj = TriageReport.model_validate(report_data)
-                csv_text, out_p = export_checklist_csv(report_obj)
+                csv_text, out_p, dist_id = export_checklist_csv(report_obj, target_product=target_product)
                 self.send_response(200)
                 self.send_header("Content-Type", "text/csv; charset=utf-8")
-                self.send_header("Content-Disposition", 'attachment; filename="vendor_checklist.csv"')
+                self.send_header("Content-Disposition", f'attachment; filename="vendor_checklist_{dist_id}.csv"')
                 self.end_headers()
                 self.wfile.write(csv_text.encode("utf-8"))
             except Exception as e:
@@ -619,18 +620,25 @@ class TriageDashboardHandler(BaseHTTPRequestHandler):
                 from triage_agent.tools.vendor_workflow import import_vendor_checklist
                 import tempfile
 
+                # Strictly protect destination audit path against traversal and non-JSON corruption
+                safe_audit_path = resolve_safe_output_path(
+                    audit_file_str,
+                    default_dir="triage-output",
+                    allowed_extensions=(".json",)
+                )
+
                 if csv_content:
                     with tempfile.NamedTemporaryFile(suffix=".csv", delete=False, mode="w", encoding="utf-8") as tf:
                         tf.write(csv_content)
                         tmp_path = tf.name
                     try:
-                        count, audit_p = import_vendor_checklist(tmp_path, audit_file_str)
+                        count, audit_p, summary = import_vendor_checklist(tmp_path, str(safe_audit_path))
                     finally:
                         if os.path.exists(tmp_path):
                             os.remove(tmp_path)
                 elif csv_path_str:
                     safe_csv_path = resolve_safe_load_path(csv_path_str, allowed_extensions=(".csv",))
-                    count, audit_p = import_vendor_checklist(str(safe_csv_path), audit_file_str)
+                    count, audit_p, summary = import_vendor_checklist(str(safe_csv_path), str(safe_audit_path))
                 else:
                     self.send_response(400)
                     self.send_header("Content-Type", "application/json; charset=utf-8")
@@ -645,6 +653,9 @@ class TriageDashboardHandler(BaseHTTPRequestHandler):
                     json.dumps({
                         "success": True,
                         "imported_count": count,
+                        "no_held_count": summary.get("no_held_count", 0),
+                        "conflict_count": summary.get("conflict_count", 0),
+                        "distribution_id": summary.get("distribution_id"),
                         "audit_file": str(audit_p.resolve()),
                     }, ensure_ascii=False).encode("utf-8")
                 )

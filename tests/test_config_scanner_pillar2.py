@@ -149,6 +149,24 @@ class TestConfigScannerPillar2(unittest.TestCase):
         self.assertTrue(res.status.startswith("外部設定要確認"))
         self.assertIn("上書き可能性", res.status)
 
+    def test_php_pool_on_not_overwritten_by_user_ini_off(self):
+        """If php-fpm sets On via php_admin_value, but .user.ini sets Off, On must NOT be cancelled (YES)."""
+        php_ini = self.code_path / "php.ini"
+        php_ini.write_text("session.upload_progress.enabled = Off\n", encoding="utf-8")
+
+        fpm_dir = self.code_path / "php-fpm.d"
+        fpm_dir.mkdir()
+        www_conf = fpm_dir / "www.conf"
+        www_conf.write_text("[www]\nphp_admin_value[session.upload_progress.enabled] = on\n", encoding="utf-8")
+
+        user_ini = self.code_path / ".user.ini"
+        user_ini.write_text("session.upload_progress.enabled = 0\n", encoding="utf-8")
+
+        res = scan_php_ini(self.code_path)
+        self.assertIsNotNone(res)
+        self.assertTrue(res.status.startswith("YES"))
+        self.assertIn("www.conf", res.evidence_file)
+
     def test_multiline_ajp_connector_line_number(self):
         """Multiline <Connector ... > block must accurately report the opening tag line number."""
         server_xml = self.code_path / "server.xml"
