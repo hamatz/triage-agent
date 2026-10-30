@@ -385,6 +385,13 @@ default_preparations = [
 ]
 ```
 
+> 💡 **定期日程（fixed_schedule）の追加ルール:**
+> 定期日程は一行の書き間違いで毎月誤った確定予定を出してしまうリスクがあるため（「作った内容を本物に見せない」原則）、公式ドキュメントで日程算出規則が明記されているもの（Oracle CPU, Microsoft Patch Tuesday, PostgreSQL等）のみ登録可能です。TOML 内での `schedule_source_url`（公式根拠URL）の記載を必須とし、推測や慣行に基づく日程は受け付けません。
+> 
+> 💡 **役割カテゴリ（category）の指定:**
+> - `category = "pre_announcement"`（既定）: 事前予告フィードや定期日程。カレンダー（.ics）生成や事前輪番確保の対象。
+> - `category = "primary_advisory"`: Nginx や Apache HTTP Server などの公開後公式アドバイザリ一覧。カレンダーを日付なし項目で汚染することなく、公式一次情報源の参照リンクとして保持。
+
 ---
 
 ## 4. プロジェクト構成とドキュメント

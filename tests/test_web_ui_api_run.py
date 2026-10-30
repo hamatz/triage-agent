@@ -367,6 +367,98 @@ class TestWebUiApiRun(unittest.TestCase):
         if dest_audit_path.exists():
             dest_audit_path.unlink()
 
+    def test_api_import_checklist_seamless_migration_from_root(self):
+        """Opus Review Point 1: When triage-output/ doesn't have the audit file yet,
+
+        importing vendor checklist must load and merge from root workspace audit file,
+        preserving internal signoffs without silent data loss.
+        """
+        class MockServer:
+            server_port = 8080
+
+        class DummyHandler(TriageDashboardHandler):
+            def __init__(self, path, body, headers=None):
+                self.path = path
+                self.rfile = BytesIO(body)
+                self.wfile = BytesIO()
+                self.headers = dict(headers or {})
+                self.headers["Content-Length"] = str(len(body))
+                self.server = MockServer()
+                self._headers_sent = []
+                self.status_code = None
+
+            def send_response(self, code, message=None):
+                self.status_code = code
+
+            def send_header(self, keyword, value):
+                self._headers_sent.append((keyword, value))
+
+            def end_headers(self):
+                pass
+
+        from triage_agent.ui.server import resolve_safe_output_path
+        from pathlib import Path
+
+        root_audit_file = Path("test_migration_sample_audit.json")
+        root_audit_file.write_text(
+            json.dumps({
+                "attestations": [
+                    {
+                        "check_point_id": "cp-internal",
+                        "status": "NO (手動確認済み)",
+                        "reviewer": "社内田中",
+                        "date": "2026-10-25",
+                        "evidence": "社内確認済み",
+                    }
+                ]
+            }),
+            encoding="utf-8"
+        )
+
+        dest_audit_path = resolve_safe_output_path("test_migration_sample_audit.json", allowed_extensions=(".json",))
+        if dest_audit_path.exists():
+            dest_audit_path.unlink()
+
+        csv_content = (
+            "\ufeffDistributionID,No,CheckPointID,対象製品/ライブラリ,CVE/対象識別子,深刻度/CVSS,確認ポイント (Yes/No),確認方法 (設定・コード・コマンド),ベンダー回答 (YES/NO/要確認),確認根拠/設定箇所,確認者 (会社名・氏名),確認日 (YYYY-MM-DD)\n"
+            "DIST-20261025-MIGR,1,cp-vendor,Apache Tomcat,CVE-2020-1938,9.8 Critical,AJP コネクタ無効化,server.xml,NO,無効化確認済み,SRE山田,2026-10-25\n"
+        )
+
+        headers = {
+            "Content-Type": "application/json",
+            "Origin": "http://127.0.0.1:8080",
+            "Host": "127.0.0.1:8080",
+            "X-CSRF-Token": SERVER_CSRF_TOKEN,
+        }
+
+        payload = json.dumps({
+            "csv_content": csv_content,
+            "audit_file": "test_migration_sample_audit.json",
+        }).encode("utf-8")
+
+        handler = DummyHandler("/api/import-checklist", payload, headers=headers)
+        handler.do_POST()
+
+        self.assertEqual(handler.status_code, 200)
+        res_data = json.loads(handler.wfile.getvalue().decode("utf-8"))
+        self.assertTrue(res_data["success"])
+        # Check migration warning/notice
+        warnings = res_data.get("warnings", [])
+        self.assertTrue(any("移行・統合しました" in w for w in warnings))
+
+        # Check destination file contains BOTH cp-internal and cp-vendor!
+        self.assertTrue(dest_audit_path.exists())
+        saved_audit = json.loads(dest_audit_path.read_text(encoding="utf-8"))
+        cp_ids = [item.get("check_point_id") for item in saved_audit.get("attestations", [])]
+        self.assertIn("cp-internal", cp_ids, "Internal root signoff must NOT be lost!")
+        self.assertIn("cp-vendor", cp_ids, "Vendor signoff must be merged!")
+
+        # Cleanup
+        if root_audit_file.exists():
+            root_audit_file.unlink()
+        if dest_audit_path.exists():
+            dest_audit_path.unlink()
+
     def test_resolve_safe_output_path_supports_subdirectories(self):
         from triage_agent.ui.server import resolve_safe_output_path, DEFAULT_OUTPUT_DIR
         import shutil

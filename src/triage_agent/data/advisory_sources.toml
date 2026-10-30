@@ -93,6 +93,7 @@ cadence_hint = "四半期ごと（1月・4月・7月・10月の第3火曜日）�
 schedule_rule = "third_tuesday"
 schedule_months = [1, 4, 7, 10]
 schedule_time_utc = "21:00 UTC" # 米国太平洋時間 13:00 PT = 21:00 UTC (日本時間 翌水曜 06:00 JST)
+schedule_source_url = "https://www.oracle.com/security-alerts/"
 url = "https://www.oracle.com/security-alerts/"
 default_preparations = [
     "四半期パッチ適用枠の事前確保（第3火曜日翌朝/水曜日以降）",
@@ -112,6 +113,7 @@ cadence_hint = "毎月第2火曜日に公開される月次セキュリティ更
 schedule_rule = "second_tuesday"
 schedule_months = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]
 schedule_time_utc = "18:00 UTC" # 米国太平洋時間 10:00 PT = 18:00 UTC (日本時間 翌水曜 03:00 JST)
+schedule_source_url = "https://msrc.microsoft.com/update-guide"
 url = "https://msrc.microsoft.com/update-guide"
 default_preparations = [
     "月次パッチ適用枠の事前確保（第2火曜日翌朝/水曜日以降）",
@@ -138,22 +140,21 @@ default_preparations = [
 
 [[sources]]
 id = "django-security"
-name = "Django Security & Bugfix Releases"
+name = "Django Security Announcements"
 category = "pre_announcement"
 ecosystem = "PyPI"
 package_patterns = ["django", "Django"]
 purl_patterns = ["pkg:pypi/django*", "pkg:pypi/Django*"]
-type = "fixed_schedule"
-is_official = true
-cadence_hint = "毎月第1月曜日に公開される月次セキュリティおよびバグ修正リリース。"
-schedule_rule = "first_monday"
-schedule_months = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]
-schedule_time_utc = "14:00 UTC" # 14:00 UTC = 日本時間 23:00 JST
 url = "https://www.djangoproject.com/weblog/"
+feed_url = "https://www.djangoproject.com/rss/weblog/"
+type = "rss_feed"
+is_official = true
+cadence_hint = "セキュリティリリースは通常、数日前に公式Weblogおよびメーリングリスト（django-announce）で事前予告されます。"
+keywords = ["security release", "pre-announcement", "vulnerability", "security releases issued", "security"]
 default_preparations = [
-    "月次パッチ適用枠の事前確保（第1月曜日夜〜翌火曜日）",
-    "Djangoフレームワーク担当ベンダーの待機調整",
-    "変更管理申請（RFC）の先行起票",
+    "当該日の輪番要員の手配・翌日代休の事前調整",
+    "Djangoフレームワーク担当ベンダーの作業枠仮押さえ",
+    "本番変更管理申請（RFC）の先行起票",
 ]
 
 [[sources]]
@@ -169,6 +170,7 @@ cadence_hint = "四半期ごと（2月・5月・8月・11月の第2木曜日）�
 schedule_rule = "second_thursday"
 schedule_months = [2, 5, 8, 11]
 schedule_time_utc = "13:00 UTC" # 13:00 UTC = 日本時間 22:00 JST
+schedule_source_url = "https://www.postgresql.org/developer/roadmap/"
 url = "https://www.postgresql.org/support/security/"
 default_preparations = [
     "四半期パッチ適用枠の事前確保（第2木曜日夜〜翌金曜日）",

@@ -278,6 +278,47 @@ class TestVendorWorkflow(unittest.TestCase):
         self.assertTrue(att["status"].startswith("要再確認 (社内YESとベンダーNOの競合⚠️)"))
         self.assertIn("競合検知", att["evidence"])
 
+    def test_internal_yes_preserved_and_shows_actual_vendor_answer(self):
+        """Opus Review Point 2: When internal YES is preserved against vendor 'わからない'/Not sure,
+
+        evidence text must display the vendor's actual answer, not the overwritten YES status.
+        """
+        audit_path = self.tmppath / "existing_yes_audit_unknown.json"
+        existing_data = {
+            "attestations": [
+                {
+                    "check_point_id": "cp-yes-preserve",
+                    "status": "YES (本番コード内検出・要実地確認)",
+                    "reviewer": "社内セキュリティチーム",
+                    "date": "2026-10-25",
+                    "evidence": "server.js:45 で脆弱コードを検出",
+                }
+            ]
+        }
+        audit_path.write_text(json.dumps(existing_data), encoding="utf-8")
+
+        csv_path = self.tmppath / "vendor_claims_unknown.csv"
+        with open(csv_path, "w", encoding="utf-8-sig", newline="") as f:
+            writer = csv.DictWriter(f, fieldnames=CHECKLIST_HEADERS)
+            writer.writeheader()
+            writer.writerow({
+                "CheckPointID": "cp-yes-preserve",
+                "ベンダー回答 (YES/NO/要確認)": "わからない",
+                "確認根拠/設定箇所": "担当者不在",
+                "確認者 (会社名・氏名)": "B社 担当者",
+            })
+
+        count, _, summary = import_vendor_checklist(str(csv_path), str(audit_path))
+        data = json.loads(audit_path.read_text(encoding="utf-8"))
+        att = data["attestations"][0]
+
+        # Status must remain YES
+        self.assertEqual(att["status"], "YES (本番コード内検出・要実地確認)")
+        # Evidence must show the actual vendor answer ("わからない"), NOT "YES"
+        self.assertIn("※ベンダー回答: 要確認 (ベンダー回答: わからない)", att["evidence"])
+        self.assertIn("B社 担当者", att["evidence"])
+        self.assertNotIn("※ベンダー回答: YES", att["evidence"])
+
     def test_distribution_id_metrics_tracking(self):
         """Workflow metrics must accurately record turnaround time and roundtrip per DistributionID."""
         metrics_file = self.tmppath / "workflow_metrics.json"

@@ -412,5 +412,53 @@ class TestEarlyWarningCalendar(unittest.TestCase):
         self.assertIn("vulnerabilities_24.html", httpd_adv["url"])
 
 
+    def test_fixed_schedule_sources_have_schedule_source_url(self):
+        """Opus Review Point 4: All fixed_schedule catalog sources MUST have schedule_source_url."""
+        catalog = load_advisory_catalog()
+        fixed_sources = [s for s in catalog if s.get("type") == "fixed_schedule"]
+        self.assertGreater(len(fixed_sources), 0)
+        for src in fixed_sources:
+            self.assertIn(
+                "schedule_source_url",
+                src,
+                f"Source '{src.get('id')}' is fixed_schedule but missing schedule_source_url!"
+            )
+            self.assertTrue(
+                src["schedule_source_url"].startswith("http"),
+                f"Source '{src.get('id')}' has invalid schedule_source_url: {src.get('schedule_source_url')}"
+            )
+
+    def test_django_rss_feed_pre_announcement_detected(self):
+        """Opus Review Point 3: Django uses rss_feed and detects genuine future pre-announcements."""
+        django_src = {
+            "id": "django-security",
+            "name": "Django Security Announcements",
+            "feed_url": "https://www.djangoproject.com/rss/weblog/",
+            "url": "https://www.djangoproject.com/weblog/",
+            "keywords": ["security release", "pre-announcement", "vulnerability"],
+        }
+        django_xml = """<?xml version="1.0" encoding="utf-8"?>
+<rss version="2.0">
+  <channel>
+    <title>The Django weblog</title>
+    <item>
+      <title>Django security releases forthcoming: 6.1.3 and 5.2.19</title>
+      <link>https://www.djangoproject.com/weblog/2026/nov/03/forthcoming-security-releases/</link>
+      <description>The Django team will issue security releases on Tuesday, November 10, 2026 at 14:00 UTC. Severity is moderate.</description>
+      <pubDate>Tue, 03 Nov 2026 12:00:00 -0500</pubDate>
+    </item>
+  </channel>
+</rss>
+"""
+        with patch("urllib.request.urlopen") as mock_url:
+            mock_url.return_value.__enter__.return_value.read.return_value = django_xml.encode("utf-8")
+            res, err = fetch_advisory_feed(django_src, reference_date=self.ref_date)
+
+        self.assertIsNone(err)
+        self.assertIsNotNone(res)
+        self.assertEqual(res["expected_date"], "2026-11-10")
+        self.assertEqual(res["severity_hint"], "Medium")
+
+
 if __name__ == "__main__":
     unittest.main()

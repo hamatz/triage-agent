@@ -622,23 +622,40 @@ class TriageDashboardHandler(BaseHTTPRequestHandler):
                 import tempfile
 
                 # Strictly protect destination audit path against traversal and non-JSON corruption
-                safe_audit_path = resolve_safe_output_path(
+                safe_audit_output_path = resolve_safe_output_path(
                     audit_file_str,
                     allowed_extensions=(".json",)
                 )
+
+                # Prioritize reading from existing file via resolve_safe_load_path
+                source_audit_to_read = None
+                try:
+                    safe_audit_load_path = resolve_safe_load_path(audit_file_str, allowed_extensions=(".json",))
+                    if safe_audit_load_path.exists():
+                        source_audit_to_read = str(safe_audit_load_path)
+                except Exception:
+                    pass
 
                 if csv_content:
                     with tempfile.NamedTemporaryFile(suffix=".csv", delete=False, mode="w", encoding="utf-8") as tf:
                         tf.write(csv_content)
                         tmp_path = tf.name
                     try:
-                        count, audit_p, summary = import_vendor_checklist(tmp_path, str(safe_audit_path))
+                        count, audit_p, summary = import_vendor_checklist(
+                            tmp_path,
+                            audit_file_path=str(safe_audit_output_path),
+                            source_audit_path=source_audit_to_read,
+                        )
                     finally:
                         if os.path.exists(tmp_path):
                             os.remove(tmp_path)
                 elif csv_path_str:
                     safe_csv_path = resolve_safe_load_path(csv_path_str, allowed_extensions=(".csv",))
-                    count, audit_p, summary = import_vendor_checklist(str(safe_csv_path), str(safe_audit_path))
+                    count, audit_p, summary = import_vendor_checklist(
+                        str(safe_csv_path),
+                        audit_file_path=str(safe_audit_output_path),
+                        source_audit_path=source_audit_to_read,
+                    )
                 else:
                     self.send_response(400)
                     self.send_header("Content-Type", "application/json; charset=utf-8")
@@ -657,6 +674,7 @@ class TriageDashboardHandler(BaseHTTPRequestHandler):
                         "conflict_count": summary.get("conflict_count", 0),
                         "distribution_id": summary.get("distribution_id"),
                         "audit_file": str(audit_p.resolve()),
+                        "warnings": summary.get("warnings", []),
                     }, ensure_ascii=False).encode("utf-8")
                 )
             except Exception as e:

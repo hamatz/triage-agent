@@ -141,7 +141,8 @@ def export_checklist_csv(
 
 def import_vendor_checklist(
     csv_path: str,
-    audit_file_path: Optional[str] = None
+    audit_file_path: Optional[str] = None,
+    source_audit_path: Optional[str] = None,
 ) -> Tuple[int, Path, Dict[str, Any]]:
     """Parse vendor filled CSV and update audit_signoff.json with attestations.
     
@@ -151,6 +152,7 @@ def import_vendor_checklist(
     - Existing attestations are never silently deleted on parse failure (fails fast to protect data).
     - Internal YES cannot be silently overwritten by vendor NO (flags conflict) or downgraded by '要確認' (preserves YES).
     - Maintains a full audit history trail across round-trips.
+    - When writing to triage-output/ for the first time, seamlessly migrates and merges from existing root audit sign-off.
     """
     p = Path(csv_path).resolve()
     if not p.exists():
@@ -175,8 +177,8 @@ def import_vendor_checklist(
         if not ans_raw:
             continue
 
-        cp_id = (row.get("CheckPointID") or "").strip()
-        cve_id = (row.get("CVE/対象識別子") or "").strip()
+        cp_id = (row.get("CheckPointID") or "").strip().lstrip("'")
+        cve_id = (row.get("CVE/対象識別子") or "").strip().lstrip("'")
         reviewer = (row.get("確認者 (会社名・氏名)") or "").strip()
         evidence = (row.get("確認根拠/設定箇所") or "").strip()
         date_val = (row.get("確認日 (YYYY-MM-DD)") or "").strip()
@@ -216,6 +218,25 @@ def import_vendor_checklist(
     if len(distribution_ids) > 1:
         warnings.append(f"単一CSV内に複数の配布IDが混在しています: {', '.join(sorted(distribution_ids))}")
 
+    # Determine which file to load existing attestations from.
+    # If target (e.g. in triage-output/) doesn't exist yet, look for source_audit_path or root workspace file.
+    read_path: Optional[Path] = None
+    migrated_notice: Optional[str] = None
+
+    if target_audit_path.exists():
+        read_path = target_audit_path
+    elif source_audit_path and Path(source_audit_path).resolve().exists():
+        read_path = Path(source_audit_path).resolve()
+        migrated_notice = f"既存のサインオフ '{read_path.name}' を読み込み、{target_audit_path.parent.name}/{target_audit_path.name} に移行・統合しました。"
+    else:
+        root_candidate = (Path.cwd() / target_audit_path.name).resolve()
+        if root_candidate != target_audit_path and root_candidate.exists():
+            read_path = root_candidate
+            migrated_notice = f"既存のサインオフ '{root_candidate.name}' を読み込み、{target_audit_path.parent.name}/{target_audit_path.name} に移行・統合しました。"
+
+    if migrated_notice:
+        warnings.append(migrated_notice)
+
     if not new_attestations:
         return 0, target_audit_path, {
             "imported_count": 0,
@@ -226,8 +247,8 @@ def import_vendor_checklist(
 
     # Load existing audit file safely. Fail-fast if file exists but is corrupted.
     existing_attestations: List[AuditAttestation] = []
-    if target_audit_path.exists():
-        raw_text = target_audit_path.read_text(encoding="utf-8")
+    if read_path and read_path.exists():
+        raw_text = read_path.read_text(encoding="utf-8")
         if raw_text.strip():
             try:
                 data = json.loads(raw_text)
@@ -240,7 +261,7 @@ def import_vendor_checklist(
             except Exception as e:
                 # Do NOT silently drop or overwrite corrupted existing attestations!
                 raise ValueError(
-                    f"既存の監査サインオフファイル '{target_audit_path}' の解析に失敗しました ({e})。"
+                    f"既存の監査サインオフファイル '{read_path}' の解析に失敗しました ({e})。"
                     f"既存データの消失・破壊を防ぐため、取り込み処理を中止します。"
                 ) from e
 
@@ -280,10 +301,11 @@ def import_vendor_checklist(
                 )
             # Guard 2: If internal audit already identified YES, vendor '要確認' (unknown/not checked) must NOT downgrade YES!
             elif "YES" in existing_status and "YES" not in new_status:
+                vendor_status = att.status
                 att.status = existing_item.status
                 att.evidence = (
                     f"{existing_item.evidence} "
-                    f"（※ベンダー回答: {att.status} / {att.reviewer}: {att.evidence} - 社内該当確認済のためYES維持）"
+                    f"（※ベンダー回答: {vendor_status} / {att.reviewer}: {att.evidence} - 社内該当確認済のためYES維持）"
                 )
 
         merged[key] = att
