@@ -47,6 +47,18 @@ class AuditAttestation(BaseModel):
     reviewer: str = Field(description="Name/ID of the security reviewer or engineer")
     date: str = Field(description="Date of attestation (e.g. '2026-10-25')")
     evidence: str = Field(description="Audit justification, config proof, or architecture rationale")
+    environment: Optional[str] = Field(
+        default=None,
+        description="Target host/cluster environment ('Production', 'Staging', 'Development')",
+    )
+    valid_until: Optional[str] = Field(
+        default=None,
+        description="Expiration date of sign-off ('YYYY-MM-DD'). When expired, Verifier flags it for re-attestation.",
+    )
+    evidence_type: Optional[str] = Field(
+        default=None,
+        description="Category of rationale: 'iac_config' (intent in repo), 'live_telemetry' (script output), or 'vendor_attestation'",
+    )
     history: List[Dict[str, Any]] = Field(
         default_factory=list,
         description="Audit trail of previous attestations and vendor replies"

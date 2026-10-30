@@ -128,12 +128,19 @@ def export_checklist_csv(
     target_path.write_text(csv_text, encoding="utf-8")
 
     # Record distribution metric
+    ann_date = None
+    for n in report.notices:
+        if n.announcement_date:
+            ann_date = n.announcement_date
+            break
+
     record_workflow_event("vendor_checklist_exported", {
         "distribution_id": distribution_id,
         "file_path": str(target_path),
         "target_product": target_product,
         "check_points_count": len(rows),
         "report_title": report.report_title,
+        "announced_at": ann_date,
     })
 
     return csv_text, target_path, distribution_id
@@ -342,18 +349,23 @@ def import_vendor_checklist(
 
 
 def record_workflow_event(event_type: str, details: Dict[str, Any], metrics_file: str = "triage-output/workflow_metrics.json") -> None:
-    """Record timestamped workflow events and maintain distribution-specific metrics (ADR-019)."""
+    """Record lifecycle metrics event to track timeline T(-1) to T(4), turnaround, and off-hours (v0.3.1)."""
+    from triage_agent.tools.lifecycle_metrics import calculate_case_metrics, is_off_hours_jst
+
     p = Path(metrics_file).resolve()
     p.parent.mkdir(parents=True, exist_ok=True)
 
     metrics: Dict[str, Any] = {
-        "version": "1.1",
+        "version": "1.2",
         "events": [],
         "distributions": {},
         "summary": {
             "total_exports": 0,
             "total_imports": 0,
             "total_distributions": 0,
+            "total_off_hours_events": 0,
+            "average_turnaround_hours": None,
+            "average_announce_to_dispatch_hours": None,
         }
     }
 
@@ -364,12 +376,16 @@ def record_workflow_event(event_type: str, details: Dict[str, Any], metrics_file
                 metrics = loaded
                 if "distributions" not in metrics:
                     metrics["distributions"] = {}
+                if "summary" not in metrics:
+                    metrics["summary"] = {}
         except Exception:
             pass
 
+    now_dt = datetime.now(timezone.utc)
     event_record = {
         "event_type": event_type,
-        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "timestamp": now_dt.isoformat(),
+        "is_off_hours": is_off_hours_jst(now_dt),
         "details": details,
     }
     metrics["events"].append(event_record)
@@ -380,39 +396,67 @@ def record_workflow_event(event_type: str, details: Dict[str, Any], metrics_file
         if dist_id not in metrics["distributions"]:
             metrics["distributions"][dist_id] = {
                 "distribution_id": dist_id,
+                "announced_at": details.get("announced_at"),
                 "exported_at": None,
                 "target_product": details.get("target_product"),
                 "check_points_count": details.get("check_points_count", 0),
                 "imported_at": None,
                 "import_count": 0,
+                "lead_time_announce_to_dispatch_hours": None,
                 "turnaround_hours": None,
+                "total_lead_time_hours": None,
+                "lead_time_saved_hours": None,
                 "status": "exported",
             }
 
         dist_entry = metrics["distributions"][dist_id]
+        if details.get("announced_at") and not dist_entry.get("announced_at"):
+            dist_entry["announced_at"] = details.get("announced_at")
+
         if event_type == "vendor_checklist_exported":
             dist_entry["exported_at"] = event_record["timestamp"]
             dist_entry["check_points_count"] = details.get("check_points_count", dist_entry["check_points_count"])
             dist_entry["target_product"] = details.get("target_product", dist_entry["target_product"])
         elif event_type == "vendor_checklist_imported":
             dist_entry["imported_at"] = event_record["timestamp"]
-            dist_entry["import_count"] += 1
+            dist_entry["import_count"] = dist_entry.get("import_count", 0) + 1
             dist_entry["status"] = "imported"
-            if dist_entry["exported_at"]:
-                try:
-                    t0 = datetime.fromisoformat(dist_entry["exported_at"])
-                    t1 = datetime.fromisoformat(event_record["timestamp"])
-                    delta = (t1 - t0).total_seconds()
-                    dist_entry["turnaround_hours"] = round(delta / 3600.0, 2)
-                except Exception:
-                    pass
+
+        # Calculate metrics using lifecycle_metrics engine
+        case_calc = calculate_case_metrics(
+            t_minus_1_announced=dist_entry.get("announced_at"),
+            t2_dispatched=dist_entry.get("exported_at"),
+            t3_attested=dist_entry.get("imported_at"),
+        )
+        dist_entry["lead_time_announce_to_dispatch_hours"] = case_calc["lead_time_announce_to_dispatch_hours"]
+        dist_entry["turnaround_hours"] = case_calc["turnaround_dispatch_to_attest_hours"]
+        dist_entry["total_lead_time_hours"] = case_calc["total_lead_time_hours"]
+        dist_entry["lead_time_saved_hours"] = case_calc["lead_time_saved_hours"]
 
     # Global summary
-    exports = [e for e in metrics["events"] if e["event_type"] == "vendor_checklist_exported"]
-    imports = [e for e in metrics["events"] if e["event_type"] == "vendor_checklist_imported"]
+    exports = [e for e in metrics["events"] if e.get("event_type") == "vendor_checklist_exported"]
+    imports = [e for e in metrics["events"] if e.get("event_type") == "vendor_checklist_imported"]
+    off_hours = [e for e in metrics["events"] if e.get("is_off_hours")]
+
+    turnarounds = [
+        d["turnaround_hours"] for d in metrics["distributions"].values()
+        if d.get("turnaround_hours") is not None
+    ]
+    dispatch_leads = [
+        d["lead_time_announce_to_dispatch_hours"] for d in metrics["distributions"].values()
+        if d.get("lead_time_announce_to_dispatch_hours") is not None
+    ]
+
     metrics["summary"]["total_exports"] = len(exports)
     metrics["summary"]["total_imports"] = len(imports)
     metrics["summary"]["total_distributions"] = len(metrics["distributions"])
+    metrics["summary"]["total_off_hours_events"] = len(off_hours)
+    metrics["summary"]["average_turnaround_hours"] = (
+        round(sum(turnarounds) / len(turnarounds), 2) if turnarounds else None
+    )
+    metrics["summary"]["average_announce_to_dispatch_hours"] = (
+        round(sum(dispatch_leads) / len(dispatch_leads), 2) if dispatch_leads else None
+    )
 
     p.write_text(json.dumps(metrics, indent=2, ensure_ascii=False), encoding="utf-8")
 

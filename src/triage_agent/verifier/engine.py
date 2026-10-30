@@ -130,59 +130,82 @@ def verify_codebase(
             current_matches_hash = compute_matches_hash(code_matches)
 
             if matched_attestation:
-                # Validate attestation status safely: only "NO..." without code drift counts as safe!
-                att_status = matched_attestation.status.strip()
-                matches = code_matches
-                advice = None
-
-                if att_status.upper().startswith("NO"):
-                    if code_matches:
-                        if matched_attestation.matches_hash and matched_attestation.matches_hash == current_matches_hash:
-                            # False positive safely confirmed: code matches match exactly what reviewer approved
-                            status = "NO (コード確認済み・非該当)"
-                            total_safe += 1
-                            reason = (
-                                f"【手動監査済・該当コード確認済】{matched_attestation.reviewer}（{matched_attestation.date}）により"
-                                f"該当コード箇所（{len(code_matches)}件）は確認済み・非該当と判断されています: {matched_attestation.evidence}"
-                            )
-                        elif matched_attestation.matches_hash and matched_attestation.matches_hash != current_matches_hash:
-                            # Code drift detected! Matches have changed since sign-off
-                            status = "要再確認 (コード変更検知・サインオフ要更新⚠️)"
-                            has_unverified = True
-                            total_unverified += 1
-                            reason = (
-                                f"【コード変更検知⚠️】サインオフ時点とコード検出内容が変化しました。"
-                                f"{matched_attestation.reviewer}（{matched_attestation.date}）のサインオフを自動失効し再確認対象とします。"
-                                f"（現在 {len(code_matches)} 箇所検出: {code_matches[0].file_path}:{code_matches[0].line_number} 等）"
-                            )
-                            advice = f"変更されたコード箇所（{code_matches[0].file_path}:{code_matches[0].line_number} 等）を確認し、サインオフを更新してください。"
-                        else:
-                            # Attestation has no matches_hash (e.g. signed off assuming 0 matches, but matches exist)
-                            status = "要再確認 (サインオフ済・コード該当あり⚠️)"
-                            has_unverified = True
-                            total_unverified += 1
-                            reason = (
-                                f"【要再確認・コード該当あり⚠️】{matched_attestation.reviewer}（{matched_attestation.date}）による非該当サインオフ（{matched_attestation.evidence}）がありますが、"
-                                f"コード走査により該当キーワード（{', '.join(scan_patterns)}）が {len(code_matches)} 箇所検出されました（{code_matches[0].file_path}:{code_matches[0].line_number} 等）。"
-                                f"コード変更または例外的な許容根拠の再確認が必要です。"
-                            )
-                            advice = f"該当箇所（{code_matches[0].file_path}:{code_matches[0].line_number} 等）の設定を確認し、必要に応じてサインオフの更新または修正を行ってください。"
-                    else:
-                        status = matched_attestation.status
-                        total_safe += 1
-                        reason = f"【安全確認済（サインオフ記録）】{matched_attestation.reviewer}（{matched_attestation.date}）: {matched_attestation.evidence}"
-                    if has_unverified is False:
+                # 0. Check TTL expiration (valid_until)
+                is_expired = False
+                if matched_attestation.valid_until:
+                    try:
+                        from datetime import date as d_cls
+                        exp_d = d_cls.fromisoformat(matched_attestation.valid_until.strip())
+                        today_d = d_cls.today()
+                        if today_d > exp_d:
+                            is_expired = True
+                    except Exception:
                         pass
-                elif att_status.upper().startswith("YES"):
-                    status = matched_attestation.status
-                    has_yes = True
-                    total_yes += 1
-                    reason = f"【該当あり（サインオフ記録）】{matched_attestation.reviewer}（{matched_attestation.date}）: {matched_attestation.evidence}"
-                else:
-                    status = matched_attestation.status
+
+                if is_expired:
+                    status = f"要再確認 (サインオフ期限切れ⚠️: {matched_attestation.valid_until} 満了)"
                     has_unverified = True
                     total_unverified += 1
-                    reason = f"【要確認（サインオフ記録）】{matched_attestation.reviewer}（{matched_attestation.date}）: {matched_attestation.evidence}"
+                    reason = (
+                        f"【サインオフ期限切れ⚠️】{matched_attestation.reviewer} のサインオフは有効期限 "
+                        f"（{matched_attestation.valid_until}）を経過したため自動失効しました: {matched_attestation.evidence}"
+                    )
+                    advice = f"有効期限（{matched_attestation.valid_until}）が満了しています。最新の構成・設定を再監査し、サインオフを更新してください。"
+                    matches = code_matches
+                else:
+                    # Validate attestation status safely: only "NO..." without code drift counts as safe!
+                    att_status = matched_attestation.status.strip()
+                    matches = code_matches
+                    advice = None
+
+                    if att_status.upper().startswith("NO"):
+                        if code_matches:
+                            if matched_attestation.matches_hash and matched_attestation.matches_hash == current_matches_hash:
+                                # False positive safely confirmed: code matches match exactly what reviewer approved
+                                status = "NO (コード確認済み・非該当)"
+                                total_safe += 1
+                                reason = (
+                                    f"【手動監査済・該当コード確認済】{matched_attestation.reviewer}（{matched_attestation.date}）により"
+                                    f"該当コード箇所（{len(code_matches)}件）は確認済み・非該当と判断されています: {matched_attestation.evidence}"
+                                )
+                            elif matched_attestation.matches_hash and matched_attestation.matches_hash != current_matches_hash:
+                                # Code drift detected! Matches have changed since sign-off
+                                status = "要再確認 (コード変更検知・サインオフ要更新⚠️)"
+                                has_unverified = True
+                                total_unverified += 1
+                                reason = (
+                                    f"【コード変更検知⚠️】サインオフ時点とコード検出内容が変化しました。"
+                                    f"{matched_attestation.reviewer}（{matched_attestation.date}）のサインオフを自動失効し再確認対象とします。"
+                                    f"（現在 {len(code_matches)} 箇所検出: {code_matches[0].file_path}:{code_matches[0].line_number} 等）"
+                                )
+                                advice = f"変更されたコード箇所（{code_matches[0].file_path}:{code_matches[0].line_number} 等）を確認し、サインオフを更新してください。"
+                            else:
+                                # Attestation has no matches_hash (e.g. signed off assuming 0 matches, but matches exist)
+                                status = "要再確認 (サインオフ済・コード該当あり⚠️)"
+                                has_unverified = True
+                                total_unverified += 1
+                                reason = (
+                                    f"【要再確認・コード該当あり⚠️】{matched_attestation.reviewer}（{matched_attestation.date}）による非該当サインオフ（{matched_attestation.evidence}）がありますが、"
+                                    f"コード走査により該当キーワード（{', '.join(scan_patterns)}）が {len(code_matches)} 箇所検出されました（{code_matches[0].file_path}:{code_matches[0].line_number} 等）。"
+                                    f"コード変更または例外的な許容根拠の再確認が必要です。"
+                                )
+                                advice = f"該当箇所（{code_matches[0].file_path}:{code_matches[0].line_number} 等）の設定を確認し、必要に応じてサインオフの更新または修正を行ってください。"
+                        else:
+                            status = matched_attestation.status
+                            total_safe += 1
+                            reason = f"【安全確認済（サインオフ記録）】{matched_attestation.reviewer}（{matched_attestation.date}）: {matched_attestation.evidence}"
+                        if has_unverified is False:
+                            pass
+                    elif att_status.upper().startswith("YES"):
+                        status = matched_attestation.status
+                        has_yes = True
+                        total_yes += 1
+                        reason = f"【該当あり（サインオフ記録）】{matched_attestation.reviewer}（{matched_attestation.date}）: {matched_attestation.evidence}"
+                    else:
+                        status = matched_attestation.status
+                        has_unverified = True
+                        total_unverified += 1
+                        reason = f"【要確認（サインオフ記録）】{matched_attestation.reviewer}（{matched_attestation.date}）: {matched_attestation.evidence}"
             else:
                 if code_dir is None:
                     status = "要手動確認 (ベンダー照会要)"
