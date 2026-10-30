@@ -11,11 +11,16 @@ import json
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+from rich.console import Console
+
+console = Console()
+
 
 def load_user_baselines(baselines_path: Optional[str] = "triage-output/baselines.json") -> List[Dict[str, Any]]:
     """Load user-supplied verifiable historical baselines from local storage.
     
     Upholds 'Never present fabricated data as truth'. Does not hardcode internal corporate metrics into OSS.
+    Strictly filters out entries missing a verifiable 'source' or 'evidence' (e.g. ticket number, postmortem URL).
     Returns empty list if file does not exist or has no entries.
     """
     if not baselines_path:
@@ -25,10 +30,40 @@ def load_user_baselines(baselines_path: Optional[str] = "triage-output/baselines
         return []
     try:
         data = json.loads(p.read_text(encoding="utf-8"))
+        raw_list: List[Dict[str, Any]] = []
         if isinstance(data, list):
-            return data
-        if isinstance(data, dict) and "baselines" in data:
-            return data["baselines"]
+            raw_list = data
+        elif isinstance(data, dict) and "baselines" in data:
+            raw_list = data["baselines"]
+
+        valid_baselines: List[Dict[str, Any]] = []
+        skipped_no_source = 0
+
+        for b in raw_list:
+            if not isinstance(b, dict):
+                continue
+
+            try:
+                hours = float(b.get("baseline_lead_time_hours", 0))
+                if hours <= 0:
+                    continue
+            except (ValueError, TypeError):
+                continue
+
+            source = str(b.get("source") or b.get("evidence") or "").strip()
+            if not source:
+                skipped_no_source += 1
+                continue
+
+            valid_baselines.append(b)
+
+        if skipped_no_source > 0:
+            console.print(
+                f"[yellow]ℹ️ 基準値読み込み: 出典（source: チケット番号やURL）が未記載の {skipped_no_source} 件を読み飛ばしました。"
+                f"（「出典付きの実測値のみを基準とする」方針に基づく監査保護）[/yellow]"
+            )
+
+        return valid_baselines
     except Exception:
         pass
     return []
@@ -123,7 +158,9 @@ def calculate_case_metrics(
         valid_lead_times = [
             float(b["baseline_lead_time_hours"])
             for b in user_baselines
-            if "baseline_lead_time_hours" in b and float(b["baseline_lead_time_hours"]) > 0
+            if "baseline_lead_time_hours" in b
+            and float(b["baseline_lead_time_hours"]) > 0
+            and bool(str(b.get("source") or b.get("evidence") or "").strip())
         ]
         if valid_lead_times:
             baseline_count = len(valid_lead_times)

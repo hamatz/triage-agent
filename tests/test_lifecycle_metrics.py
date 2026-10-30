@@ -69,12 +69,20 @@ class TestLifecycleMetrics(unittest.TestCase):
         self.assertEqual(metrics["reduction_percentage"], 52.0)
 
     def test_load_user_baselines_file(self):
-        """Verify loading user baselines from local json storage safely."""
+        """Verify loading user baselines from local json storage safely, skipping items without source."""
         with tempfile.TemporaryDirectory() as tmp_dir:
             f = Path(tmp_dir) / "baselines.json"
-            f.write_text(json.dumps([{"baseline_lead_time_hours": 48.0}]), encoding="utf-8")
+            f.write_text(
+                json.dumps([
+                    {"case_id": "valid", "baseline_lead_time_hours": 48.0, "source": "https://example.com/incident"},
+                    {"case_id": "no_source", "baseline_lead_time_hours": 36.0},  # Missing source -> skipped
+                    {"case_id": "empty_source", "baseline_lead_time_hours": 50.0, "source": "   "},  # Empty source -> skipped
+                ]),
+                encoding="utf-8"
+            )
             loaded = load_user_baselines(str(f))
             self.assertEqual(len(loaded), 1)
+            self.assertEqual(loaded[0]["case_id"], "valid")
 
             # Missing file returns empty list
             self.assertEqual(load_user_baselines(str(Path(tmp_dir) / "nonexistent.json")), [])
