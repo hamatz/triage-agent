@@ -37,6 +37,12 @@ def main():
         help="Optional path to human audit sign-off file (e.g. audit_signoff.json) to record verified safe settings",
     )
     parser.add_argument(
+        "--environment",
+        type=str,
+        default=None,
+        help="Target environment (e.g. 'Production', 'Staging', 'Development') to enforce sign-off scope",
+    )
+    parser.add_argument(
         "--output",
         type=str,
         default="verification_audit_report.md",
@@ -65,7 +71,12 @@ def main():
         )
     )
 
-    audit_report = verify_codebase(report, args.code_dir, audit_file_path=args.audit_file)
+    audit_report = verify_codebase(
+        report,
+        args.code_dir,
+        audit_file_path=args.audit_file,
+        target_environment=args.environment,
+    )
 
     # Console display with corrected color logic (Fixed '要手動確認' being green)
     if audit_report.overall_status.startswith("YES"):

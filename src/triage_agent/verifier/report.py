@@ -19,7 +19,7 @@ def format_verification_markdown(audit: CodebaseAuditReport) -> str:
         f"- **総検査項目数:** {audit.summary_counts.get('total_checks', 0)} 件",
         f"- **判定: YES (発火関連コード検出・要実地確認):** {audit.summary_counts.get('yes_count', 0)} 件",
         f"- **判定: コード内未検出 (外部設定・既定値の要確認):** {audit.summary_counts.get('unverified_count', 0)} 件",
-        f"- **判定: NO (非該当・手動監査サインオフ済):** {audit.summary_counts.get('safe_count', 0)} 件",
+        f"- **判定: NO (安全・確認済み/該当脆弱性なし):** {audit.summary_counts.get('safe_count', 0)} 件",
         "",
         "---",
         "",
@@ -33,38 +33,46 @@ def format_verification_markdown(audit: CodebaseAuditReport) -> str:
             f"**自社判定結果:** `{n_res.overall_status}`",
             f"**対応方針:** {n_res.action_deadline_advice}",
             "",
-            "| 対象 / CVE (CVSS) | 確認ポイント（Yes/No） | 自社判定 | 検出コード / 判定根拠 / 外部確認事項 |",
-            "| :--- | :--- | :--- | :--- |",
         ])
 
-        for c_res in n_res.results:
-            cp = c_res.check_point
-            target_cve = cp.target_or_cve.replace("|", "/")
-            yes_no_q = cp.check_point_yes_no.replace("|", "/")
-            status = c_res.status
+        if not n_res.results:
+            lines.extend([
+                "> 💡 **確認不要:** 現在導入されているバージョンにおいて該当する脆弱性は報告されていません（確認ポイントなし）。",
+                "",
+            ])
+        else:
+            lines.extend([
+                "| 対象 / CVE (CVSS) | 確認ポイント（Yes/No） | 自社判定 | 検出コード / 判定根拠 / 外部確認事項 |",
+                "| :--- | :--- | :--- | :--- |",
+            ])
+            for c_res in n_res.results:
+                cp = c_res.check_point
+                target_cve = cp.target_or_cve.replace("|", "/")
+                yes_no_q = cp.check_point_yes_no.replace("|", "/")
+                status = c_res.status
 
-            if c_res.matches:
-                match_desc = "<br>".join(
-                    [
-                        f"• `{'[TEST] ' if m.is_test else ''}{m.file_path}:{m.line_number}`: `{m.line_content[:100]}`"
-                        for m in c_res.matches[:5]
-                    ]
-                )
-                if len(c_res.matches) > 5:
-                    match_desc += f"<br>• ...他 {len(c_res.matches) - 5} 箇所"
-                if c_res.attestation:
-                    match_desc = (
-                        f"⚠️ **サインオフ（{c_res.attestation.reviewer}）:** {c_res.attestation.evidence}<br>"
-                        f"📍 **コード内検出箇所（要照合）:**<br>" + match_desc
+                if c_res.matches:
+                    match_desc = "<br>".join(
+                        [
+                            f"• `{'[TEST] ' if m.is_test else ''}{m.file_path}:{m.line_number}`: `{m.line_content[:100]}`"
+                            for m in c_res.matches[:5]
+                        ]
                     )
-            else:
-                match_desc = f"{c_res.reasoning}"
-                if c_res.external_check_advice:
-                    match_desc += f"<br>👉 **確認すべき外部設定:** {c_res.external_check_advice}"
+                    if len(c_res.matches) > 5:
+                        match_desc += f"<br>• ...他 {len(c_res.matches) - 5} 箇所"
+                    if c_res.attestation:
+                        match_desc = (
+                            f"⚠️ **サインオフ（{c_res.attestation.reviewer}）:** {c_res.attestation.evidence}<br>"
+                            f"📍 **コード内検出箇所（要照合）:**<br>" + match_desc
+                        )
+                else:
+                    match_desc = f"{c_res.reasoning}"
+                    if c_res.external_check_advice:
+                        match_desc += f"<br>👉 **確認すべき外部設定:** {c_res.external_check_advice}"
 
-            lines.append(f"| {target_cve} | {yes_no_q} | **{status}** | {match_desc} |")
+                lines.append(f"| {target_cve} | {yes_no_q} | **{status}** | {match_desc} |")
 
-        lines.append("")
+            lines.append("")
         if notice.workaround and (n_res.overall_status.startswith("YES") or "要確認" in n_res.overall_status):
             lines.append(f"> **推奨回避策:** {notice.workaround}")
             lines.append("")

@@ -34,10 +34,10 @@
     },
     {
       "id": "php_session_upload_progress",
-      "name": "PHP Session Upload Progress Enabled",
+      "name": "PHP session.upload_progress LFI to RCE Vector Enabled",
       "target_dir": "cases/php_session",
       "component_name": "php",
-      "target_cve": "CVE-2019-11043",
+      "target_cve": "PHP-SESSION-UPLOAD-PROGRESS",
       "test_type": "config",
       "config_type": "ini",
       "config_file": "conf/php.ini",
@@ -45,7 +45,7 @@
       "expected": "YES",
       "expected_status_display": "YES (設定有効)",
       "expected_evidence_file": "conf/php.ini",
-      "description": "php.ini enables session.upload_progress.enabled. Verifier must report YES (設定有効)."
+      "description": "php.ini enables session.upload_progress.enabled (LFI to RCE vector). Verifier must report YES (設定有効)."
     },
     {
       "id": "http2_shell_rapid_reset",
@@ -80,10 +80,10 @@
     },
     {
       "id": "php_session_safe_disabled",
-      "name": "PHP Session Upload Progress Explicitly Disabled",
+      "name": "PHP session.upload_progress LFI to RCE Vector Explicitly Disabled",
       "target_dir": "cases_negative/php_session_safe",
       "component_name": "php",
-      "target_cve": "CVE-2019-11043",
+      "target_cve": "PHP-SESSION-UPLOAD-PROGRESS",
       "test_type": "config",
       "config_type": "ini",
       "config_file": "conf/php.ini",
@@ -137,7 +137,7 @@
       "name": "Case G: PHP conf.d overrides base php.ini Off to On",
       "target_dir": "cases_hard/case_g_php_conf_d_override",
       "component_name": "php",
-      "target_cve": "CVE-2019-11043",
+      "target_cve": "PHP-SESSION-UPLOAD-PROGRESS",
       "test_type": "config",
       "config_check": "php_upload_progress",
       "expected": "YES",

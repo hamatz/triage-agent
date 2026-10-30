@@ -478,3 +478,49 @@ def get_workflow_metrics(metrics_file: str = "triage-output/workflow_metrics.jso
         return summary
     except Exception:
         return {}
+
+
+def record_remediation_completed(
+    distribution_id: str,
+    remediated_at: Optional[str] = None,
+    note: Optional[str] = None,
+    metrics_file: str = "triage-output/workflow_metrics.json",
+) -> Dict[str, Any]:
+    """Manually record T4 remediation / patch deployment completion timestamp for a distribution ID (ADR-019 / v0.3.1)."""
+    from triage_agent.tools.lifecycle_metrics import calculate_case_metrics, load_user_baselines
+
+    p = Path(metrics_file).resolve()
+    if not p.exists():
+        raise FileNotFoundError(f"Workflow metrics file not found: {metrics_file}")
+
+    data = json.loads(p.read_text(encoding="utf-8"))
+    dists = data.get("distributions", {})
+    if distribution_id not in dists:
+        raise KeyError(f"Distribution ID '{distribution_id}' not found in workflow metrics.")
+
+    dist_entry = dists[distribution_id]
+    ts = remediated_at or datetime.now(timezone.utc).isoformat()
+    dist_entry["remediated_at"] = ts
+    dist_entry["remediation_note"] = note
+    dist_entry["status"] = "remediated"
+
+    # Recalculate metrics with T4 and user baselines
+    user_baselines = load_user_baselines()
+    case_calc = calculate_case_metrics(
+        t_minus_1_announced=dist_entry.get("announced_at"),
+        t2_dispatched=dist_entry.get("exported_at"),
+        t3_attested=dist_entry.get("imported_at"),
+        t4_remediated=ts,
+        user_baselines=user_baselines,
+    )
+    dist_entry["total_lead_time_hours"] = case_calc["total_lead_time_hours"]
+    dist_entry["lead_time_saved_hours"] = case_calc["lead_time_saved_hours"]
+
+    # Record event in workflow metrics
+    record_workflow_event("remediation_completed", {
+        "distribution_id": distribution_id,
+        "remediated_at": ts,
+        "note": note,
+    }, metrics_file=metrics_file)
+
+    return dist_entry
