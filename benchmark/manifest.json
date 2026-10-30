@@ -70,5 +70,43 @@
       "expected_evidence_file": "conf/nginx.conf",
       "description": "nginx.conf contains 'http2 on;' directive outside of comments. Verifier must report YES (設定有効)."
     }
+  ],
+  "negative_cases": [
+    {
+      "id": "tomcat_ajp_safe_commented",
+      "name": "Apache Tomcat AJP Connector Commented Out",
+      "target_dir": "cases_negative/tomcat_ajp_safe",
+      "component_name": "tomcat-catalina",
+      "target_cve": "CVE-2020-1938",
+      "test_type": "config",
+      "config_type": "xml",
+      "config_file": "conf/server.xml",
+      "expected_status": "NO or 外部設定要確認 (非YES)",
+      "description": "server.xml has AJP connector commented out. Verifier must NOT report YES."
+    },
+    {
+      "id": "php_session_safe_disabled",
+      "name": "PHP Session Upload Progress Explicitly Disabled",
+      "target_dir": "cases_negative/php_session_safe",
+      "component_name": "php",
+      "target_cve": "CVE-2019-11043",
+      "test_type": "config",
+      "config_type": "ini",
+      "config_file": "conf/php.ini",
+      "expected_status": "NO (設定無効化確認済み)",
+      "description": "php.ini sets session.upload_progress.enabled = Off. Verifier must NOT report YES."
+    },
+    {
+      "id": "http2_safe_disabled",
+      "name": "Nginx HTTP/2 Explicitly Disabled with Commented Match",
+      "target_dir": "cases_negative/http2_safe",
+      "component_name": "nginx",
+      "target_cve": "CVE-2023-44487",
+      "test_type": "config",
+      "config_type": "nginx_conf",
+      "config_file": "conf/nginx.conf",
+      "expected_status": "NO (設定無効化確認済み)",
+      "description": "nginx.conf has 'http2 off;' and '# http2 on;'. Verifier must NOT report YES."
+    }
   ]
 }

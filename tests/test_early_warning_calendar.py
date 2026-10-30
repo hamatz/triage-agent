@@ -459,6 +459,68 @@ class TestEarlyWarningCalendar(unittest.TestCase):
         self.assertEqual(res["expected_date"], "2026-11-10")
         self.assertEqual(res["severity_hint"], "Medium")
 
+    def test_opus_review_case_django_rc_release_and_eol_not_pre_announcement(self):
+        """Opus Review: 'Django 6.0 RC 1 released. Final release on 2026-12-03. 5.1 security support ends'
+
+        must NOT be falsely detected as a security pre-announcement.
+        """
+        src = {
+            "id": "django-blog",
+            "name": "Django Weblog",
+            "feed_url": "https://www.djangoproject.com/rss/weblog/",
+            "keywords": ["security", "release"],
+        }
+        xml = """<?xml version="1.0" encoding="utf-8"?>
+<rss version="2.0">
+  <channel>
+    <title>The Django weblog</title>
+    <item>
+      <title>Django 6.0 RC 1 released</title>
+      <link>https://example.com/rc1</link>
+      <description>Final release scheduled for 2026-12-03. 5.1 security support ends.</description>
+      <pubDate>Thu, 29 Oct 2026 12:00:00 -0500</pubDate>
+    </item>
+  </channel>
+</rss>
+"""
+        with patch("urllib.request.urlopen") as mock_url:
+            mock_url.return_value.__enter__.return_value.read.return_value = xml.encode("utf-8")
+            res, err = fetch_advisory_feed(src, reference_date=self.ref_date)
+
+        self.assertIsNone(err)
+        self.assertIsNone(res, "RC release and EOL support end post must not be detected as pre-announcement")
+
+    def test_opus_review_case_djangocon_conference_cfp_not_pre_announcement(self):
+        """Opus Review: 'DjangoCon Europe 2027 announced. Taking place on 21 April 2027. Calling for security talks'
+
+        must NOT be falsely detected as a security pre-announcement.
+        """
+        src = {
+            "id": "django-blog",
+            "name": "Django Weblog",
+            "feed_url": "https://www.djangoproject.com/rss/weblog/",
+            "keywords": ["security", "release"],
+        }
+        xml = """<?xml version="1.0" encoding="utf-8"?>
+<rss version="2.0">
+  <channel>
+    <title>The Django weblog</title>
+    <item>
+      <title>DjangoCon Europe 2027 announced</title>
+      <link>https://example.com/djangocon</link>
+      <description>Taking place on 21 April 2027. Calling for security and other community talks.</description>
+      <pubDate>Thu, 29 Oct 2026 12:00:00 -0500</pubDate>
+    </item>
+  </channel>
+</rss>
+"""
+        with patch("urllib.request.urlopen") as mock_url:
+            mock_url.return_value.__enter__.return_value.read.return_value = xml.encode("utf-8")
+            res, err = fetch_advisory_feed(src, reference_date=self.ref_date)
+
+        self.assertIsNone(err)
+        self.assertIsNone(res, "Conference CFP mentioning security talks must not be detected as pre-announcement")
+
 
 if __name__ == "__main__":
     unittest.main()

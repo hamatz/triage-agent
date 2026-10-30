@@ -139,18 +139,17 @@ default_preparations = [
 ]
 
 [[sources]]
-id = "django-security"
+id = "django-announce"
 name = "Django Security Announcements"
 category = "pre_announcement"
 ecosystem = "PyPI"
 package_patterns = ["django", "Django"]
 purl_patterns = ["pkg:pypi/django*", "pkg:pypi/Django*"]
-url = "https://www.djangoproject.com/weblog/"
-feed_url = "https://www.djangoproject.com/rss/weblog/"
-type = "rss_feed"
+url = "https://groups.google.com/g/django-announce"
+type = "mailing_list_html"
 is_official = true
-cadence_hint = "セキュリティリリースは通常、数日前に公式Weblogおよびメーリングリスト（django-announce）で事前予告されます。"
-keywords = ["security release", "pre-announcement", "vulnerability", "security releases issued", "security"]
+cadence_hint = "セキュリティリリースは通常、公開の約1週間前に django-announce メーリングリストで事前予告（日付・概算時刻・深刻度）されます。"
+keywords = ["security release", "security releases", "pre-announcement"]
 default_preparations = [
     "当該日の輪番要員の手配・翌日代休の事前調整",
     "Djangoフレームワーク担当ベンダーの作業枠仮押さえ",

@@ -295,8 +295,17 @@ def fetch_advisory_feed(
 
             combined_text = f"{title} {summary}".lower()
 
-            # Must be security-related
+            # Must match configured source keywords
             if not any(k in combined_text for k in keywords):
+                continue
+
+            # Must have explicit security release / advisory intent (prevent conference, RC release, EOL, prize blog false positives)
+            security_release_indicators = [
+                "security release", "security releases", "security advisory", "security advisories",
+                "security update", "security updates", "security patch", "security patches",
+                "pre-announcement", "forthcoming security"
+            ]
+            if not any(ind in combined_text for ind in security_release_indicators):
                 continue
 
             detected_date_str = extract_iso_date_from_text(f"{title} {summary}")
