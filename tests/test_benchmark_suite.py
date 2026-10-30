@@ -41,7 +41,17 @@ class TestBenchmarkSuite(unittest.TestCase):
         for case in self.manifest["cases"]:
             self.assertIn("id", case)
             self.assertIn("target_dir", case)
-            self.assertIn("expected_status", case)
+            self.assertIn("expected", case)
+
+    def test_benchmark_runner_full_suite(self):
+        """Benchmark runner module must execute cleanly with 100% accuracy and produce headline summary."""
+        from triage_agent.benchmark import run_benchmark_suite
+        summary = run_benchmark_suite(benchmark_dir=BENCHMARK_DIR)
+        self.assertEqual(summary["failed_cases"], 0)
+        self.assertEqual(summary["accuracy_rate"], 100.0)
+        self.assertGreaterEqual(summary["total_cases"], 17)
+        self.assertIn("陽性", summary["headline"])
+        self.assertIn("陰性", summary["headline"])
 
     def test_case_node_jwt(self):
         """Node.js jsonwebtoken case: calls in src/ must trigger YES, tests/ ignored."""

@@ -1,6 +1,6 @@
 {
-  "description": "v0.3.0 Ground-Truth Benchmark Suite for Verifier Engine (ADR-019)",
-  "version": "1.0.0",
+  "description": "v0.3.0 Ground-Truth Benchmark Suite for Verifier Engine & Advisory Feeds (ADR-019)",
+  "version": "1.1.0",
   "cases": [
     {
       "id": "node_jwt_insecure_verify",
@@ -11,7 +11,8 @@
       "test_type": "code",
       "language": "javascript",
       "search_keywords": ["verify"],
-      "expected_status": "YES (本番コード内検出・要実地確認)",
+      "expected": "YES",
+      "expected_status_display": "YES (本番コード内検出・要実地確認)",
       "expected_evidence_file": "src/auth.js",
       "negative_evidence_file": "tests/auth.test.js",
       "description": "Production code calls jwt.verify without algorithm restriction, test code specifies algorithms. Verifier must detect call in src/ and ignore tests/."
@@ -25,14 +26,9 @@
       "test_type": "config",
       "config_type": "xml",
       "config_file": "conf/server.xml",
-      "check_condition": {
-        "tag": "Connector",
-        "attributes": {
-          "protocol": "AJP/1.3"
-        },
-        "vulnerable_if_absent": ["secretRequired=\"true\"", "secret="]
-      },
-      "expected_status": "YES (設定有効)",
+      "config_check": "tomcat_ajp",
+      "expected": "YES",
+      "expected_status_display": "YES (設定有効)",
       "expected_evidence_file": "conf/server.xml",
       "description": "server.xml defines active AJP/1.3 connector without secretRequired or secret set. Verifier must report YES (設定有効)."
     },
@@ -45,11 +41,9 @@
       "test_type": "config",
       "config_type": "ini",
       "config_file": "conf/php.ini",
-      "check_condition": {
-        "directive": "session.upload_progress.enabled",
-        "expected_value": "On"
-      },
-      "expected_status": "YES (設定有効)",
+      "config_check": "php_upload_progress",
+      "expected": "YES",
+      "expected_status_display": "YES (設定有効)",
       "expected_evidence_file": "conf/php.ini",
       "description": "php.ini enables session.upload_progress.enabled. Verifier must report YES (設定有効)."
     },
@@ -62,11 +56,9 @@
       "test_type": "config",
       "config_type": "nginx_conf",
       "config_file": "conf/nginx.conf",
-      "check_condition": {
-        "directive": "http2",
-        "expected_value": "on"
-      },
-      "expected_status": "YES (設定有効)",
+      "config_check": "nginx_http2",
+      "expected": "YES",
+      "expected_status_display": "YES (設定有効)",
       "expected_evidence_file": "conf/nginx.conf",
       "description": "nginx.conf contains 'http2 on;' directive outside of comments. Verifier must report YES (設定有効)."
     }
@@ -81,7 +73,9 @@
       "test_type": "config",
       "config_type": "xml",
       "config_file": "conf/server.xml",
-      "expected_status": "NO or 外部設定要確認 (非YES)",
+      "config_check": "tomcat_ajp",
+      "expected": "NOT_YES",
+      "expected_status_display": "NO or 外部設定要確認 (非YES)",
       "description": "server.xml has AJP connector commented out. Verifier must NOT report YES."
     },
     {
@@ -93,7 +87,9 @@
       "test_type": "config",
       "config_type": "ini",
       "config_file": "conf/php.ini",
-      "expected_status": "NO (設定無効化確認済み)",
+      "config_check": "php_upload_progress",
+      "expected": "NOT_YES",
+      "expected_status_display": "NO (設定無効化確認済み)",
       "description": "php.ini sets session.upload_progress.enabled = Off. Verifier must NOT report YES."
     },
     {
@@ -105,8 +101,116 @@
       "test_type": "config",
       "config_type": "nginx_conf",
       "config_file": "conf/nginx.conf",
-      "expected_status": "NO (設定無効化確認済み)",
+      "config_check": "nginx_http2",
+      "expected": "NOT_YES",
+      "expected_status_display": "NO (設定無効化確認済み)",
       "description": "nginx.conf has 'http2 off;' and '# http2 on;'. Verifier must NOT report YES."
+    }
+  ],
+  "hard_cases": [
+    {
+      "id": "case_a_nginx_conf_d",
+      "name": "Case A: Nginx HTTP/2 in conf.d included file",
+      "target_dir": "cases_hard/case_a_nginx_conf_d",
+      "component_name": "nginx",
+      "target_cve": "CVE-2023-44487",
+      "test_type": "config",
+      "config_check": "nginx_http2",
+      "expected": "YES",
+      "expected_status_display": "YES (設定有効: conf.d/site.conf)",
+      "description": "nginx.conf has no http2 directive, but conf.d/site.conf enables listen 443 ssl http2. Verifier must traverse conf.d and report YES."
+    },
+    {
+      "id": "case_c2_multiple_server_xml",
+      "name": "Case C2: Multiple server.xml with unprotected instance",
+      "target_dir": "cases_hard/case_c2_multiple_server_xml",
+      "component_name": "tomcat-catalina",
+      "target_cve": "CVE-2020-1938",
+      "test_type": "config",
+      "config_check": "tomcat_ajp",
+      "expected": "YES",
+      "expected_status_display": "YES (未保護AJP検出: conf2/server.xml)",
+      "description": "Two server.xml files exist. One is protected, the second is unprotected (secretRequired=false). Verifier must report YES regardless of evaluation order."
+    },
+    {
+      "id": "case_g_php_conf_d_override",
+      "name": "Case G: PHP conf.d overrides base php.ini Off to On",
+      "target_dir": "cases_hard/case_g_php_conf_d_override",
+      "component_name": "php",
+      "target_cve": "CVE-2019-11043",
+      "test_type": "config",
+      "config_check": "php_upload_progress",
+      "expected": "YES",
+      "expected_status_display": "YES (conf.d上書き有効化)",
+      "description": "php.ini sets session.upload_progress.enabled = Off, but conf.d/custom.ini re-enables it to On. Verifier must apply override order and report YES."
+    },
+    {
+      "id": "case_d_tomcat_http2_isolation",
+      "name": "Case D: Tomcat HTTP/2 check not intercepted by AJP checker",
+      "target_dir": "cases_hard/case_d_tomcat_http2",
+      "component_name": "tomcat-catalina",
+      "target_cve": "CVE-2023-44487",
+      "test_type": "config",
+      "config_check": null,
+      "expected": "UNVERIFIED",
+      "expected_status_display": "外部設定要確認 (手動確認要)",
+      "description": "Question asks about HTTP/2 on Tomcat. AJP connector is present in server.xml, but must NOT trigger AJP checker or falsely report YES."
+    },
+    {
+      "id": "case_e_malformed_xml_handling",
+      "name": "Case E: Malformed XML server.xml safely handled",
+      "target_dir": "cases_hard/case_e_malformed_xml",
+      "component_name": "tomcat-catalina",
+      "target_cve": "CVE-2020-1938",
+      "test_type": "config",
+      "config_check": "tomcat_ajp",
+      "expected": "UNVERIFIED",
+      "expected_status_display": "外部設定要確認 (構文エラー)",
+      "description": "server.xml has XML parsing error. Verifier must NOT crash or silently ignore; must report safe fallback to 要確認."
+    }
+  ],
+  "feed_cases": [
+    {
+      "id": "feed_nodejs_upcoming",
+      "name": "Node.js upcoming pre-announcement feed",
+      "feed_file": "feeds/nodejs_upcoming.xml",
+      "source_id": "nodejs-security",
+      "expected": "YES",
+      "expected_date": "2026-11-10",
+      "expected_severity": "High",
+      "description": "Node.js format 'will release on or shortly after Tuesday, November 10, 2026'. Must extract future date and severity."
+    },
+    {
+      "id": "feed_nodejs_past_completed",
+      "name": "Node.js past completed release article",
+      "feed_file": "feeds/nodejs_past_completed.xml",
+      "source_id": "nodejs-security",
+      "expected": "NOT_YES",
+      "description": "Completed past release from July 2025. Must NOT be reported as upcoming pre-announcement."
+    },
+    {
+      "id": "feed_django_rc1_eol",
+      "name": "Django RC release and EOL support end post",
+      "feed_file": "feeds/django_rc1_eol.xml",
+      "source_id": "django-announce",
+      "expected": "NOT_YES",
+      "description": "Release candidate article mentioning security support end date. Must NOT trigger future pre-announcement."
+    },
+    {
+      "id": "feed_djangocon_cfp",
+      "name": "DjangoCon conference CFP post",
+      "feed_file": "feeds/djangocon_cfp.xml",
+      "source_id": "django-announce",
+      "expected": "NOT_YES",
+      "description": "Conference announcement mentioning security talks. Must NOT trigger future pre-announcement."
+    },
+    {
+      "id": "feed_tomcat_rc_eol",
+      "name": "Tomcat RC release mentioning security updates",
+      "feed_file": "feeds/tomcat_rc_eol.xml",
+      "source_id": "tomcat-announce",
+      "expected": "NOT_YES",
+      "description": "Tomcat RC post mentioning security updates end. Must NOT trigger future pre-announcement."
     }
   ]
 }

@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<rss version="2.0">
+  <channel>
+    <title>The Django weblog</title>
+    <item>
+      <title>Django 6.0 RC 1 released</title>
+      <link>https://example.com/rc1</link>
+      <description>Final release scheduled for 2026-12-03. 5.1 security support ends.</description>
+      <pubDate>Thu, 29 Oct 2026 12:00:00 -0500</pubDate>
+    </item>
+  </channel>
+</rss>

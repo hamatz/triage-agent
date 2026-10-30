@@ -163,7 +163,7 @@ def generate_self_sbom(
         pyproject_candidate = Path(__file__).resolve().parents[2] / "pyproject.toml"
 
     direct_pkgs: List[str] = []
-    agent_version = "0.2.5"
+    agent_version = "0.3.0"
     if pyproject_candidate.exists():
         try:
             with open(pyproject_candidate, "rb") as f:

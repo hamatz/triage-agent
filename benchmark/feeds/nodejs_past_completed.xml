@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<rss version="2.0">
+  <channel>
+    <title>Node.js Blog</title>
+    <item>
+      <title>Tuesday, July 15, 2025 Security Releases</title>
+      <link>https://nodejs.org/en/blog/vulnerability/july-2025-security-releases</link>
+      <description>The Node.js project has released updates for all active release lines.</description>
+      <pubDate>Tue, 15 Jul 2025 17:00:00 GMT</pubDate>
+    </item>
+  </channel>
+</rss>

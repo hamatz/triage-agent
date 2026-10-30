@@ -521,6 +521,37 @@ class TestEarlyWarningCalendar(unittest.TestCase):
         self.assertIsNone(err)
         self.assertIsNone(res, "Conference CFP mentioning security talks must not be detected as pre-announcement")
 
+    def test_opus_review_tomcat_rc_with_security_updates_not_pre_announcement(self):
+        """Opus Review: Tomcat feed with 'Tomcat 11.0 RC 1 released. Final on 2026-12-03. 9.0 security updates end'
+
+        must NOT trigger false pre-announcement since 'security updates' is not a security release announcement.
+        """
+        src = {
+            "id": "tomcat-announce",
+            "name": "Apache Tomcat Security Announcements",
+            "feed_url": "https://lists.apache.org/api/feed.lua",
+            "keywords": ["security advisory", "vulnerability", "security release", "security releases"],
+        }
+        xml = """<?xml version="1.0" encoding="utf-8"?>
+<rss version="2.0">
+  <channel>
+    <title>Tomcat Announce</title>
+    <item>
+      <title>Tomcat 11.0.0-M1 released</title>
+      <link>https://example.com/tomcat-rc</link>
+      <description>Final release scheduled for 2026-12-03. 9.0 will stop receiving security updates.</description>
+      <pubDate>Thu, 29 Oct 2026 12:00:00 -0500</pubDate>
+    </item>
+  </channel>
+</rss>
+"""
+        with patch("urllib.request.urlopen") as mock_url:
+            mock_url.return_value.__enter__.return_value.read.return_value = xml.encode("utf-8")
+            res, err = fetch_advisory_feed(src, reference_date=self.ref_date)
+
+        self.assertIsNone(err)
+        self.assertIsNone(res, "Tomcat RC post mentioning security updates must not be detected as pre-announcement")
+
 
 if __name__ == "__main__":
     unittest.main()

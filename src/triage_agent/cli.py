@@ -231,8 +231,19 @@ def main():
         action="store_true",
         help="Launch the interactive Web GUI dashboard in your browser",
     )
+    parser.add_argument(
+        "--benchmark",
+        action="store_true",
+        help="Run the ground-truth benchmark suite for Verifier and feeds (ADR-019 / Pillar 4)",
+    )
 
     args = parser.parse_args()
+
+    # Run benchmark suite if requested
+    if args.benchmark:
+        from triage_agent.benchmark import main as benchmark_main
+        benchmark_main()
+        return
 
     # Launch GUI dashboard if requested
     if args.gui:

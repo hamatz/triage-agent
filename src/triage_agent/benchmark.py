@@ -1,0 +1,350 @@
+"""Ground-Truth Benchmark Suite Runner for Verifier and Advisory Feeds (ADR-019 / Pillar 4).
+
+Executes all positive, negative, hard edge cases, and feed pre-announcement fixtures
+from benchmark/manifest.json, evaluates accuracy, and outputs quantifiable metrics
+for PoC trial evaluation and governance reporting.
+"""
+
+from datetime import date, datetime, timezone
+import json
+from pathlib import Path
+import sys
+from typing import Any, Dict, List, Optional
+from unittest.mock import patch
+
+from triage_agent.schemas import CheckPointItem, TriageNotice, TriageReport
+from triage_agent.tools.advisory_catalog import fetch_advisory_feed
+from triage_agent.verifier.engine import verify_codebase
+
+
+def find_benchmark_dir() -> Path:
+    """Locate benchmark directory across local development, scratch, and installed modes."""
+    candidates = [
+        Path(__file__).resolve().parent.parent.parent / "benchmark",
+        Path.cwd() / "benchmark",
+        Path(__file__).resolve().parent / "benchmark",
+    ]
+    for c in candidates:
+        if c.exists() and (c / "manifest.json").exists():
+            return c
+    raise FileNotFoundError("Could not find 'benchmark/manifest.json' in repository tree.")
+
+
+def _build_checkpoint_for_case(case: Dict[str, Any]) -> CheckPointItem:
+    """Construct a precise CheckPointItem from benchmark case definition."""
+    cp_yes_no = case.get("check_point_yes_no")
+    cp_method = case.get("verification_method")
+
+    if not cp_yes_no:
+        cfg = case.get("config_check")
+        if case.get("test_type") == "code":
+            kw = case.get("search_keywords", ["verify"])[0]
+            cp_yes_no = f"{kw} 呼び出しで algorithms が指定されているか"
+            cp_method = f"`jwt.{kw}` の呼び出し箇所で第三引数 options.algorithms が指定されているか確認"
+        elif cfg == "tomcat_ajp":
+            cp_yes_no = "AJP コネクタを有効にしているか"
+            cp_method = "`server.xml` で `<Connector protocol=\"AJP/1.3\"` が有効か確認"
+        elif cfg == "nginx_http2":
+            cp_yes_no = "HTTP/2 を有効にしているか"
+            cp_method = "`nginx.conf` で `http2 on;` または `listen ... http2;` を確認"
+        elif cfg == "php_upload_progress":
+            cp_yes_no = "session.upload_progress.enabled が有効か"
+            cp_method = "`php.ini` の `session.upload_progress.enabled` を確認"
+        elif case["id"] == "case_d_tomcat_http2_isolation":
+            cp_yes_no = "HTTP/2 を有効にしているか"
+            cp_method = "`server.xml` で `http2` UpgradeProtocol を確認"
+        else:
+            cp_yes_no = "脆弱な設定が存在するか"
+            cp_method = "`server.xml` や `php.ini` などの設定ファイルを確認"
+
+    return CheckPointItem(
+        target_or_cve=case["target_cve"],
+        cvss="9.0",
+        content_summary=case["name"],
+        affected_versions="all",
+        check_point_yes_no=cp_yes_no,
+        verification_method=cp_method,
+        config_check=case.get("config_check"),
+    )
+    """Locate benchmark directory across local development, scratch, and installed modes."""
+    candidates = [
+        Path(__file__).resolve().parent.parent.parent / "benchmark",
+        Path.cwd() / "benchmark",
+        Path(__file__).resolve().parent / "benchmark",
+    ]
+    for c in candidates:
+        if c.exists() and (c / "manifest.json").exists():
+            return c
+    raise FileNotFoundError("Could not find 'benchmark/manifest.json' in repository tree.")
+
+
+def run_benchmark_suite(benchmark_dir: Optional[Path] = None, output_file: Optional[Path] = None) -> Dict[str, Any]:
+    """Execute all benchmark test cases and return structured results."""
+    b_dir = benchmark_dir or find_benchmark_dir()
+    manifest_path = b_dir / "manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+
+    ref_date = date(2026, 10, 29)
+    results: List[Dict[str, Any]] = []
+
+    pos_total = 0
+    pos_detected = 0
+    neg_total = 0
+    neg_safe = 0
+    unverified_count = 0
+
+    # 1. Standard Positive Cases
+    for case in manifest.get("cases", []):
+        pos_total += 1
+        target_dir = b_dir / case["target_dir"]
+        report = TriageReport(
+            report_title=f"Benchmark: {case['name']}",
+            scan_target=case["id"],
+            total_dependencies=1,
+            notices=[
+                TriageNotice(
+                    product_name=case.get("component_name", "target"),
+                    component_name=case.get("component_name", "target"),
+                    announcement_date="2026-10-25",
+                    conclusion=case.get("description", ""),
+                    fixed_versions="fixed",
+                    severity_note="High",
+                    check_points=[_build_checkpoint_for_case(case)],
+                )
+            ],
+        )
+        audit_res = verify_codebase(report, code_dir_path=str(target_dir))
+        cp_res = audit_res.notice_results[0].results[0]
+        is_yes = "YES" in cp_res.status.upper()
+        passed = (case["expected"] == "YES" and is_yes) or (case["expected"] != "YES" and not is_yes)
+        if is_yes:
+            pos_detected += 1
+
+        results.append({
+            "id": case["id"],
+            "category": "positive",
+            "name": case["name"],
+            "expected": case["expected"],
+            "actual_status": cp_res.status,
+            "passed": passed,
+            "reasoning": cp_res.reasoning,
+        })
+
+    # 2. Negative Cases
+    for case in manifest.get("negative_cases", []):
+        neg_total += 1
+        target_dir = b_dir / case["target_dir"]
+        report = TriageReport(
+            report_title=f"Benchmark Negative: {case['name']}",
+            scan_target=case["id"],
+            total_dependencies=1,
+            notices=[
+                TriageNotice(
+                    product_name=case.get("component_name", "target"),
+                    component_name=case.get("component_name", "target"),
+                    announcement_date="2026-10-25",
+                    conclusion=case.get("description", ""),
+                    fixed_versions="fixed",
+                    severity_note="High",
+                    check_points=[_build_checkpoint_for_case(case)],
+                )
+            ],
+        )
+        audit_res = verify_codebase(report, code_dir_path=str(target_dir))
+        cp_res = audit_res.notice_results[0].results[0]
+        is_yes = "YES" in cp_res.status.upper()
+        passed = not is_yes  # Negative cases must NOT report YES
+        if passed:
+            neg_safe += 1
+
+        results.append({
+            "id": case["id"],
+            "category": "negative",
+            "name": case["name"],
+            "expected": case["expected"],
+            "actual_status": cp_res.status,
+            "passed": passed,
+            "reasoning": cp_res.reasoning,
+        })
+
+    # 3. Hard Edge Cases (Pillar 2 Discoveries)
+    for case in manifest.get("hard_cases", []):
+        target_dir = b_dir / case["target_dir"]
+        expected = case["expected"]
+        if expected == "YES":
+            pos_total += 1
+        else:
+            neg_total += 1
+
+        report = TriageReport(
+            report_title=f"Benchmark Hard: {case['name']}",
+            scan_target=case["id"],
+            total_dependencies=1,
+            notices=[
+                TriageNotice(
+                    product_name=case.get("component_name", "target"),
+                    component_name=case.get("component_name", "target"),
+                    announcement_date="2026-10-25",
+                    conclusion=case.get("description", ""),
+                    fixed_versions="fixed",
+                    severity_note="High",
+                    check_points=[_build_checkpoint_for_case(case)],
+                )
+            ],
+        )
+        audit_res = verify_codebase(report, code_dir_path=str(target_dir))
+        cp_res = audit_res.notice_results[0].results[0]
+
+        is_yes = "YES" in cp_res.status.upper()
+        is_unverified = "要確認" in cp_res.status or "外部設定要確認" in cp_res.status or "要手動確認" in cp_res.status
+
+        if expected == "YES":
+            passed = is_yes
+            if is_yes:
+                pos_detected += 1
+        elif expected == "UNVERIFIED":
+            passed = is_unverified and not is_yes
+            if is_unverified:
+                unverified_count += 1
+            if not is_yes:
+                neg_safe += 1
+        else:
+            passed = not is_yes
+            if not is_yes:
+                neg_safe += 1
+
+        results.append({
+            "id": case["id"],
+            "category": "hard",
+            "name": case["name"],
+            "expected": expected,
+            "actual_status": cp_res.status,
+            "passed": passed,
+            "reasoning": cp_res.reasoning,
+        })
+
+    # 4. Feed Pre-announcement Cases
+    feed_sources_config = {
+        "nodejs-security": {
+            "id": "nodejs-security",
+            "name": "Node.js Security Releases",
+            "feed_url": "https://example.com/node.xml",
+            "keywords": ["security release", "vulnerabilities"],
+        },
+        "django-announce": {
+            "id": "django-announce",
+            "name": "Django Security Announcements",
+            "feed_url": "https://example.com/django.xml",
+            "keywords": ["security release", "security releases", "pre-announcement"],
+        },
+        "tomcat-announce": {
+            "id": "tomcat-announce",
+            "name": "Apache Tomcat Security Announcements",
+            "feed_url": "https://example.com/tomcat.xml",
+            "keywords": ["security advisory", "vulnerability", "security release", "security releases"],
+        },
+    }
+
+    for case in manifest.get("feed_cases", []):
+        feed_path = b_dir / case["feed_file"]
+        xml_content = feed_path.read_text(encoding="utf-8")
+        src = feed_sources_config.get(case["source_id"], {
+            "id": case["source_id"],
+            "name": "Advisory Feed",
+            "keywords": ["security release", "security releases", "pre-announcement"],
+        })
+
+        with patch("urllib.request.urlopen") as mock_url:
+            mock_url.return_value.__enter__.return_value.read.return_value = xml_content.encode("utf-8")
+            feed_res, feed_err = fetch_advisory_feed(src, reference_date=ref_date)
+
+        expected = case["expected"]
+        if expected == "YES":
+            pos_total += 1
+            passed = feed_res is not None
+            if passed:
+                pos_detected += 1
+                if "expected_date" in case and feed_res.get("expected_date") != case["expected_date"]:
+                    passed = False
+        else:
+            neg_total += 1
+            passed = feed_res is None
+            if passed:
+                neg_safe += 1
+
+        results.append({
+            "id": case["id"],
+            "category": "feed",
+            "name": case["name"],
+            "expected": expected,
+            "actual_status": "FEED_DETECTED" if feed_res else "FEED_NONE",
+            "passed": passed,
+            "reasoning": f"feed_res: {feed_res}, err: {feed_err}",
+        })
+
+    # Calculate overall metrics
+    total_cases = len(results)
+    passed_cases = sum(1 for r in results if r["passed"])
+    failed_cases = total_cases - passed_cases
+    accuracy_rate = (passed_cases / total_cases * 100.0) if total_cases > 0 else 0.0
+
+    pos_missed = pos_total - pos_detected
+    neg_false_positives = neg_total - neg_safe
+
+    summary = {
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "manifest_version": manifest.get("version", "1.0.0"),
+        "total_cases": total_cases,
+        "passed_cases": passed_cases,
+        "failed_cases": failed_cases,
+        "accuracy_rate": round(accuracy_rate, 2),
+        "metrics": {
+            "positive_total": pos_total,
+            "positive_detected": pos_detected,
+            "positive_missed": pos_missed,
+            "negative_total": neg_total,
+            "negative_safe": neg_safe,
+            "negative_false_positives": neg_false_positives,
+            "unverified_count": unverified_count,
+        },
+        "headline": f"陽性 {pos_total}件中 {pos_detected}件検出（見逃し {pos_missed}）／陰性 {neg_total}件中 誤検知 {neg_false_positives}／要確認 {unverified_count}件",
+        "results": results,
+    }
+
+    # Save to triage-output/benchmark_results.json
+    out_p = output_file or (Path("triage-output") / "benchmark_results.json")
+    out_p.parent.mkdir(parents=True, exist_ok=True)
+    out_p.write_text(json.dumps(summary, indent=2, ensure_ascii=False), encoding="utf-8")
+
+    return summary
+
+
+def main():
+    """CLI entrypoint for python -m triage_agent.benchmark."""
+    try:
+        summary = run_benchmark_suite()
+        m = summary["metrics"]
+        print("=" * 70)
+        print("triage-agent Verifier & Feed Benchmark Suite (ADR-019 / Pillar 4)")
+        print("=" * 70)
+        print(summary["headline"])
+        print(f"総合正解率: {summary['accuracy_rate']}% ({summary['passed_cases']}/{summary['total_cases']} ケース合格)")
+        print(f"詳細結果保存先: triage-output/benchmark_results.json")
+        print("=" * 70)
+
+        if summary["failed_cases"] > 0:
+            print("\n❌ 失敗したテストケース:")
+            for r in summary["results"]:
+                if not r["passed"]:
+                    print(f"  - [{r['id']}] {r['name']} (期待: {r['expected']}, 実際: {r['actual_status']})")
+            sys.exit(1)
+        else:
+            print("✅ 全ベンチマークケース合格（リグレッションなし）")
+            sys.exit(0)
+    except Exception as e:
+        print(f"❌ ベンチマーク実行エラー: {e}", file=sys.stderr)
+        sys.exit(1)
+
+
+if __name__ == "__main__":
+    main()

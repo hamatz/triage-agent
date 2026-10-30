@@ -300,10 +300,10 @@ def fetch_advisory_feed(
                 continue
 
             # Must have explicit security release / advisory intent (prevent conference, RC release, EOL, prize blog false positives)
+            # Note: "security update(s)" is intentionally omitted as it frequently co-occurs with EOL / "support ends" notices.
             security_release_indicators = [
                 "security release", "security releases", "security advisory", "security advisories",
-                "security update", "security updates", "security patch", "security patches",
-                "pre-announcement", "forthcoming security"
+                "security patch", "security patches", "pre-announcement", "forthcoming security"
             ]
             if not any(ind in combined_text for ind in security_release_indicators):
                 continue

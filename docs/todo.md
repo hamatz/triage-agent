@@ -139,10 +139,14 @@
 
 ### 柱 4: 品質担保のための正解付きミニ評価セット（Benchmark Suite / ADR-019）
 - [x] **実事例ミニリポジトリの作成 (`benchmark/`）（v0.3対応完了）**
-  - 直近の実事例（Node/jsonwebtoken, Tomcat/AJP Ghostcat, PHP/session upload progress, Nginx/HTTP2Shell Rapid Reset）を正解ラベル（期待判定: YES/NO/外部設定要確認）付きの最小再現ファイルおよびグランドトゥルースマニフェスト（`benchmark/manifest.json`）として整備。
+  - 直近の実事例（Node/jsonwebtoken, Tomcat/AJP Ghostcat, PHP/session upload progress, Nginx/HTTP2Shell Rapid Reset）を標準化された正解ラベル（`expected: "YES" | "NOT_YES" | "UNVERIFIED"`）付きの最小再現ファイルおよびグランドトゥルースマニフェスト（`benchmark/manifest.json`）として整備。
   - コメントアウトや明示的無効化設定を含むネガティブケース（`benchmark/cases_negative/`）も完備。
+  - 柱2・柱1で見逃しを防いだ難関エッジケース（`benchmark/cases_hard/`: Case A conf.d包含, Case C2 複数server.xml, Case G PHP上書き, Case D 質問誤爆防止, Case E 構文エラー安全退避）および事前予告フィード実例（`benchmark/feeds/`）を正式データセット化。
 - [x] **見逃し（False Negative）・誤検知（False Positive）の自動検知テスト（v0.3対応完了）**
   - Verifier の言語・設定追加時に、過去の正解判定が壊れていないかを自動判定するベンチマークスイート（`tests/test_benchmark_suite.py`）を実装。全ケース100%パスを検証。
+- [x] **「数字で語れる」ベンチマーク集計ランナーの実装（v0.3対応完了）**
+  - `python -m triage_agent.benchmark` および CLI `--benchmark` により、即座に2月報告用サマリ（例: `陽性 8件中 8件検出（見逃し 0）／陰性 9件中 誤検知 0／要確認 2件 (総合正解率: 100.0%)`）を出力。
+  - 判定の内訳および推移追跡用メトリクスを `triage-output/benchmark_results.json` に自動出力。
 
 ---
 

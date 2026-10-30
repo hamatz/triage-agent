@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<rss version="2.0">
+  <channel>
+    <title>Node.js Blog</title>
+    <item>
+      <title>Tuesday, November 10, 2026 Security Releases</title>
+      <link>https://nodejs.org/en/blog/vulnerability/november-2026-security-releases</link>
+      <description>The Node.js project will release new versions of the 20.x and 22.x releases on or shortly after Tuesday, November 10, 2026.</description>
+      <pubDate>Thu, 05 Nov 2026 15:00:00 GMT</pubDate>
+    </item>
+  </channel>
+</rss>

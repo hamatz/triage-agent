@@ -74,7 +74,7 @@ feed_url = "https://lists.apache.org/api/feed.lua?list=announce&domain=tomcat.ap
 type = "rss_feed"
 is_official = true
 cadence_hint = "Apache Tomcat のセキュリティリリース予定および脆弱性情報。"
-keywords = ["security advisory", "release candidate", "vulnerability"]
+keywords = ["security advisory", "vulnerability", "security release", "security releases"]
 default_preparations = [
     "当該日の輪番要員の手配・翌日代休の事前調整",
     "ベンダー作業枠の事前仮押さえ",
@@ -148,7 +148,7 @@ purl_patterns = ["pkg:pypi/django*", "pkg:pypi/Django*"]
 url = "https://groups.google.com/g/django-announce"
 type = "mailing_list_html"
 is_official = true
-cadence_hint = "セキュリティリリースは通常、公開の約1週間前に django-announce メーリングリストで事前予告（日付・概算時刻・深刻度）されます。"
+cadence_hint = "セキュリティリリースは通常、事前に django-announce メーリングリストで日付と深刻度付きで予告されます。"
 keywords = ["security release", "security releases", "pre-announcement"]
 default_preparations = [
     "当該日の輪番要員の手配・翌日代休の事前調整",
