@@ -136,14 +136,17 @@ def resolve_safe_load_path(path_str: str, allowed_extensions: tuple = (".json",)
 
 
 def load_ui_template() -> str:
-    """Load the index.html template from package resources."""
+    """Load the index.html template from package resources and inject app version."""
+    from triage_agent import __version__
+
     try:
         ref = resources.files("triage_agent.ui").joinpath("templates", "index.html")
-        return ref.read_text(encoding="utf-8")
+        raw_html = ref.read_text(encoding="utf-8")
     except Exception:
         # Fallback for direct local file execution
         fallback_path = Path(__file__).parent / "templates" / "index.html"
-        return fallback_path.read_text(encoding="utf-8")
+        raw_html = fallback_path.read_text(encoding="utf-8")
+    return raw_html.replace("{{APP_VERSION}}", __version__)
 
 
 def load_static_asset(filename: str) -> Optional[bytes]:

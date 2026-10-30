@@ -13,7 +13,7 @@ from typing import Any, Dict, List, Optional
 from unittest.mock import patch
 
 from triage_agent.schemas import CheckPointItem, TriageNotice, TriageReport
-from triage_agent.tools.advisory_catalog import fetch_advisory_feed
+from triage_agent.tools.advisory_catalog import fetch_advisory_feed, load_advisory_catalog
 from triage_agent.verifier.engine import verify_codebase
 
 
@@ -27,7 +27,11 @@ def find_benchmark_dir() -> Path:
     for c in candidates:
         if c.exists() and (c / "manifest.json").exists():
             return c
-    raise FileNotFoundError("Could not find 'benchmark/manifest.json' in repository tree.")
+    raise FileNotFoundError(
+        "評価セット 'benchmark/manifest.json' が見つかりませんでした。\n"
+        "※ 評価セット（benchmark/）は PyPI 配布パッケージには同梱されず、GitHub リポジトリに配置されています。\n"
+        "リポジトリを clone したルートディレクトリで実行してください。"
+    )
 
 
 def _build_checkpoint_for_case(case: Dict[str, Any]) -> CheckPointItem:
@@ -66,16 +70,6 @@ def _build_checkpoint_for_case(case: Dict[str, Any]) -> CheckPointItem:
         verification_method=cp_method,
         config_check=case.get("config_check"),
     )
-    """Locate benchmark directory across local development, scratch, and installed modes."""
-    candidates = [
-        Path(__file__).resolve().parent.parent.parent / "benchmark",
-        Path.cwd() / "benchmark",
-        Path(__file__).resolve().parent / "benchmark",
-    ]
-    for c in candidates:
-        if c.exists() and (c / "manifest.json").exists():
-            return c
-    raise FileNotFoundError("Could not find 'benchmark/manifest.json' in repository tree.")
 
 
 def run_benchmark_suite(benchmark_dir: Optional[Path] = None, output_file: Optional[Path] = None) -> Dict[str, Any]:
@@ -223,36 +217,25 @@ def run_benchmark_suite(benchmark_dir: Optional[Path] = None, output_file: Optio
             "reasoning": cp_res.reasoning,
         })
 
-    # 4. Feed Pre-announcement Cases
-    feed_sources_config = {
-        "nodejs-security": {
-            "id": "nodejs-security",
-            "name": "Node.js Security Releases",
-            "feed_url": "https://example.com/node.xml",
-            "keywords": ["security release", "vulnerabilities"],
-        },
-        "django-announce": {
-            "id": "django-announce",
-            "name": "Django Security Announcements",
-            "feed_url": "https://example.com/django.xml",
-            "keywords": ["security release", "security releases", "pre-announcement"],
-        },
-        "tomcat-announce": {
-            "id": "tomcat-announce",
-            "name": "Apache Tomcat Security Announcements",
-            "feed_url": "https://example.com/tomcat.xml",
-            "keywords": ["security advisory", "vulnerability", "security release", "security releases"],
-        },
-    }
+    # 4. Feed Pre-announcement Cases (Driven by live advisory catalog ADR-020)
+    catalog = load_advisory_catalog()
+    catalog_by_id = {s["id"]: s for s in catalog if "id" in s}
 
     for case in manifest.get("feed_cases", []):
         feed_path = b_dir / case["feed_file"]
         xml_content = feed_path.read_text(encoding="utf-8")
-        src = feed_sources_config.get(case["source_id"], {
-            "id": case["source_id"],
-            "name": "Advisory Feed",
-            "keywords": ["security release", "security releases", "pre-announcement"],
-        })
+        raw_src = catalog_by_id.get(case["source_id"])
+        if raw_src:
+            src = raw_src.copy()
+        else:
+            src = {
+                "id": case["source_id"],
+                "name": "Advisory Feed",
+                "keywords": ["security release", "security releases", "pre-announcement"],
+            }
+        # Ensure feed_url is present for fetch_advisory_feed dispatcher
+        if not src.get("feed_url"):
+            src["feed_url"] = src.get("url") or "https://example.com/feed.xml"
 
         with patch("urllib.request.urlopen") as mock_url:
             mock_url.return_value.__enter__.return_value.read.return_value = xml_content.encode("utf-8")

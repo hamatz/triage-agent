@@ -157,17 +157,21 @@ def generate_self_sbom(
     import re
 
     # Locate pyproject.toml
+    from triage_agent import __version__
+
     project_root = Path.cwd()
     pyproject_candidate = project_root / "pyproject.toml"
     if not pyproject_candidate.exists():
         pyproject_candidate = Path(__file__).resolve().parents[2] / "pyproject.toml"
 
     direct_pkgs: List[str] = []
-    agent_version = "0.3.0"
+    agent_version = __version__
     if pyproject_candidate.exists():
         try:
             with open(pyproject_candidate, "rb") as f:
                 pdata = tomllib.load(f)
+            if "version" in pdata.get("project", {}):
+                agent_version = pdata["project"]["version"]
             deps = pdata.get("project", {}).get("dependencies", [])
             for dep in deps:
                 clean = re.split(r"[><=~;\[(]", dep)[0].strip()

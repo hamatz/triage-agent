@@ -326,7 +326,12 @@ LLMによる文章生成は、実行ごとに言い回しが微妙に変わる�
 
 #### どんな時に作られるのか？
 `triage-agent` の実行時、第1フェーズ（Recon Planner）において自社の SBOM 内のコンポーネントがコミュニティ監視カタログ（`advisory_sources.toml`）と自動突合されます。
-Node.js や Tomcat などの公式フィード（RSS/Atom）を定点巡回して「未来のパッチ予告（Upcoming Security Releases）」を検知するか、Oracle CPU や Microsoft Patch Tuesday のような次回パッチ提供日（第3火曜日など）が計算されたタイミングで、**事前予告イベント** が生成されます（※OpenSSL、Go、Python 等は現在フィードではなく監視先チャンネルの案内のみ対応）。
+公式フィード（RSS/Atom）を定点巡回して「未来のパッチ予告（Upcoming Security Releases）」を検知するか、Oracle CPU や Microsoft Patch Tuesday のような次回パッチ提供日（第3火曜日など）が計算されたタイミングで、**事前予告イベント** が生成されます。
+
+> 📌 **公式事前予告ソースの対応状況（v0.3.0 現在）:**
+> - **自動巡回・予定日・深刻度抽出（RSS/Atom フィード）:** Node.js, Apache Tomcat
+> - **次回定例リリース日自動算出（公式スケジュール）:** Oracle Critical Patch Update, Microsoft Patch Tuesday, PostgreSQL
+> - **監視先チャンネル・案内リンク提供（一次情報源）:** OpenSSL, Go, Python, Django, Apache HTTP Server, Nginx（※これらは自動予定日抽出ではなく、一次監視窓口の提示となります）
 
 CLI 引数に `--calendar <path.ics>` を指定するか、Web GUI の「📅 予定表 (.ics)」ボタンをクリックすることで、RFC 5545 準拠の標準 iCalendar ファイルとして即座に出力されます。
 
@@ -391,6 +396,33 @@ default_preparations = [
 > 💡 **役割カテゴリ（category）の指定:**
 > - `category = "pre_announcement"`（既定）: 事前予告フィードや定期日程。カレンダー（.ics）生成や事前輪番確保の対象。
 > - `category = "primary_advisory"`: Nginx や Apache HTTP Server などの公開後公式アドバイザリ一覧。カレンダーを日付なし項目で汚染することなく、公式一次情報源の参照リンクとして保持。
+
+### 3.8 グランドトゥルース評価セット（Benchmark Suite / ADR-019 柱4）
+
+過去の実事例や難関エッジケース（複数設定ファイル上書き、Tomcat AJP保護状態判定、構文エラー耐性）および事前予告フィード実例に対する自動正解判定セットを実行し、判定精度とリグレッションの有無を数値で集計します：
+
+```bash
+# 評価セットの実行と集計（CLI オプションまたは直接実行）
+python -m triage_agent.benchmark
+# または
+python -m triage_agent.cli --benchmark
+```
+
+実行すると、以下のような実務評価サマリが出力され、詳細な推移追跡用メトリクスが `triage-output/benchmark_results.json` に保存されます：
+
+```text
+======================================================================
+triage-agent Verifier & Feed Benchmark Suite (ADR-019 / Pillar 4)
+======================================================================
+陽性 8件中 8件検出（見逃し 0）／陰性 9件中 誤検知 0／要確認 2件
+総合正解率: 100.0% (17/17 ケース合格)
+詳細結果保存先: triage-output/benchmark_results.json
+======================================================================
+✅ 全ベンチマークケース合格（リグレッションなし）
+```
+
+> 💡 **リポジトリ実行に関する注記:**  
+> 評価セット（`benchmark/` ディレクトリ）は PyPI 配布パッケージには同梱されず、GitHub リポジトリに配置されています。本機能はリポジトリを clone した開発環境のルートディレクトリで実行してください。
 
 ---
 
