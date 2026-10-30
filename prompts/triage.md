@@ -46,3 +46,10 @@ Researcherが収集した脆弱性情報・パッチ予告・コミット情報�
 
 #### 5. 出典（Source Links）
 - 情報源となったURLを明記する。
+
+#### 6. 「設定ファイル自動検証（config_check）」の構造化指定
+確認ポイントがミドルウェアやインフラの設定ファイルに直接依存する場合、verifier による誤検知のない自動検証を可能にするため、該当する `config_check` を指定してください：
+- `tomcat_ajp`: Apache Tomcat の `server.xml` における AJP コネクタ（port=8009）および `secret` / `secretRequired` 設定を問う場合。
+- `nginx_http2`: Nginx の `nginx.conf` や `conf.d/*.conf` における `http2` ディレクティブ（`http2 on;` や `listen ... http2`）を問う場合。
+- `php_upload_progress`: PHP の `php.ini` や `conf.d/*.ini` における `session.upload_progress.enabled` の有効無効を問う場合。
+- **上記3つに該当しない一般的なソースコード走査・API呼び出しの場合:** `config_check` は必ず `null`（省略）とすること。曖昧な文字列一致による誤判定を避けるため厳格に適用されます。

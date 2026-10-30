@@ -115,6 +115,77 @@ class TestConfigScannerPillar2(unittest.TestCase):
         res = scan_php_ini(self.code_path)
         self.assertIsNone(res, "Distribution templates must not be treated as active php.ini")
 
+    def test_case_g_php_conf_d_overrides_php_ini_to_on(self):
+        """Case G: php.ini sets Off, but conf.d/99-app.ini overrides to On.
+        
+        PHP evaluates conf.d/*.ini alphabetically after php.ini (last wins). Result must be YES.
+        """
+        php_ini = self.code_path / "php.ini"
+        php_ini.write_text("session.upload_progress.enabled = Off\n", encoding="utf-8")
+
+        conf_d = self.code_path / "conf.d"
+        conf_d.mkdir()
+        override_ini = conf_d / "99-app.ini"
+        override_ini.write_text("session.upload_progress.enabled = On\n", encoding="utf-8")
+
+        res = scan_php_ini(self.code_path)
+        self.assertIsNotNone(res)
+        self.assertTrue(res.status.startswith("YES"))
+        self.assertIn("99-app.ini", res.evidence_file)
+        self.assertEqual(res.line_number, 1)
+
+    def test_php_ini_off_with_fpm_pool_config_triggers_unverified(self):
+        """If php.ini sets Off, but an unverified PHP-FPM pool config exists, must return 外部設定要確認."""
+        php_ini = self.code_path / "php.ini"
+        php_ini.write_text("session.upload_progress.enabled = Off\n", encoding="utf-8")
+
+        fpm_dir = self.code_path / "php-fpm.d"
+        fpm_dir.mkdir()
+        www_conf = fpm_dir / "www.conf"
+        www_conf.write_text("; Pool configuration with custom php_value\n[www]\nlisten = 9000\n", encoding="utf-8")
+
+        res = scan_php_ini(self.code_path)
+        self.assertIsNotNone(res)
+        self.assertTrue(res.status.startswith("外部設定要確認"))
+        self.assertIn("上書き可能性", res.status)
+
+    def test_multiline_ajp_connector_line_number(self):
+        """Multiline <Connector ... > block must accurately report the opening tag line number."""
+        server_xml = self.code_path / "server.xml"
+        server_xml.write_text(
+            '<Server>\n'
+            '  <Service>\n'
+            '    <Connector\n'
+            '       port="8009"\n'
+            '       protocol="AJP/1.3"\n'
+            '       secretRequired="false" />\n'
+            '  </Service>\n'
+            '</Server>',
+            encoding="utf-8"
+        )
+
+        res = scan_tomcat_server_xml(self.code_path)
+        self.assertIsNotNone(res)
+        self.assertTrue(res.status.startswith("YES"))
+        self.assertEqual(res.line_number, 3, "Opening <Connector line should be reported")
+
+    def test_inference_annotation_when_config_check_omitted(self):
+        """When config_check is omitted, heuristic inference must annotate detail with 【推測振り分け】."""
+        server_xml = self.code_path / "server.xml"
+        server_xml.write_text(
+            '<Server><Service><Connector protocol="AJP/1.3" port="8009" secretRequired="false" />'
+            '</Service></Server>',
+            encoding="utf-8"
+        )
+        res = inspect_configuration(
+            code_dir=self.code_path,
+            verification_method="server.xml で AJP コネクタの secretRequired を確認",
+            check_point_yes_no="AJP コネクタを有効にしているか",
+            config_check=None
+        )
+        self.assertIsNotNone(res)
+        self.assertIn("【推測振り分け: tomcat_ajp】", res.detail)
+
     def test_case_d_tomcat_http2_not_intercepted_by_ajp_checker(self):
         """Case D: Check point asks about Tomcat HTTP/2 (Http2Protocol).
         

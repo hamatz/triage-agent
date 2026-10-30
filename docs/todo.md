@@ -104,10 +104,12 @@
 - [x] **設定ファイル検証エンジン（XML / INI / Conf / Properties）の導入（v0.3対応完了）**
   - Tomcat `server.xml`（AJPコネクタの有無・secretRequired/secret/requiredSecret保護状態）、PHP `php.ini`（`session.upload_progress.enabled`）、Nginx設定ファイル（`http2 on` / `http2 off`）のセマンティック自動検証（`src/triage_agent/verifier/config_scanner.py`）。
   - **複数設定ファイルの全走査と集約:** 最初に見つかった1ファイルで早まった判定を下さず、`conf.d/*.conf` や環境ごとの複数設定ファイルを網羅。1つでも脆弱な設定があれば YES、すべて明示的に無効化されている場合のみ NO、未記載または解析不能なら外部設定要確認。
+  - **PHP conf.d 階層上書き評価（後勝ち）:** `php.ini` に続いて `conf.d/*.ini` をアルファベット順に評価し、後のファイルによる設定上書きを正確に反映。PHP-FPMプール設定（`www.conf`）や `.user.ini`、`.htaccess` の存在も検知して未解析時は安全側に「外部設定要確認」へ倒す。
   - **「分からないものを安全と言わない」の徹底:** Nginx で http2 設定が未記載の場合、include や外部LB/CDN終端の可能性があるため安易に NO とせず「外部設定要確認」に倒す。PHP配布用テンプレート（`php.ini-production` 等）は実設定の証拠とせずスキップ。
-  - **構造化された検証マッピング（`config_check`）:** 単なる文字列の部分一致（server.xml や http2 の単語だけ）での誤爆を防ぎ、確認ポイントに `config_check`（`tomcat_ajp`, `nginx_http2`, `php_upload_progress`）の明示フィールドを導入。該当検査がない場合は安全側にコード検索や要確認へフォールバック。
+  - **構造化された検証マッピング（`config_check`）:** 単なる文字列の部分一致（server.xml や http2 の単語だけ）での誤爆を防ぎ、確認ポイントに `Literal["tomcat_ajp", "nginx_http2", "php_upload_progress"]` の厳格な型付き明示フィールドを導入。プロンプトにも付与基準を明記し、推測でディスパッチされた場合は根拠欄に明記。
   - **構文解析エラーの明示:** XMLのパース失敗（`&nbsp;` 等）を黙って握りつぶさず、「構文解析エラーのため要確認」として出力。
   - **コメント除去の堅牢化:** XMLコメント（1行内の複数 `<!-- ... -->` および複数行）、INIコメント（`;`）、Confコメント（`#`）を完全除去し、コメントアウトされた設定による誤検知を根絶。
+  - **Tomcat AJP 行番号精緻化:** 複数行にまたがる `<Connector ... protocol="AJP/1.3"` タグブロックの開始行を正確に特定。
 - [x] **主要3言語（JavaScript/TypeScript, Java, PHP）の構文走査強化（v0.3対応完了）**
   - Cスタイル言語（JS/TS, Java, Go, PHP等）における `/* ... */` ブロックコメント、`//` 行コメントの完全除外。
   - 設定ファイル名（`server.xml`, `php.ini`, `nginx.conf` 等）自体の言及によるコード検索誤マッチを除外するトークンフィルタを導入。

@@ -1,6 +1,6 @@
 import hashlib
 import re
-from typing import Dict, List, Optional
+from typing import Dict, List, Literal, Optional
 from pydantic import BaseModel, Field
 
 
@@ -131,9 +131,9 @@ class CheckPointItem(BaseModel):
     verification_method: str = Field(
         description="Concrete inspection method: exact config files, XML tags, ini directives, grep/ldd commands, code search terms"
     )
-    config_check: Optional[str] = Field(
+    config_check: Optional[Literal["tomcat_ajp", "nginx_http2", "php_upload_progress"]] = Field(
         default=None,
-        description="Explicit configuration check module if applicable: 'tomcat_ajp', 'nginx_http2', 'php_upload_progress', etc."
+        description="Explicit configuration check type if applicable: 'tomcat_ajp' (Tomcat server.xml AJP), 'nginx_http2' (Nginx http2 directive), 'php_upload_progress' (PHP session.upload_progress.enabled). Omit or set null for standard code search."
     )
 
 

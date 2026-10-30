@@ -7,10 +7,22 @@ from triage_agent.verifier.engine import verify_codebase
 from triage_agent.verifier.models import CodebaseAuditReport, CheckVerificationResult
 from triage_agent.schemas import TriageReport, TriageNotice, CheckPointItem
 
-BENCHMARK_DIR = Path(__file__).resolve().parent.parent.parent.parent / "benchmark"
-if not BENCHMARK_DIR.exists():
-    # Fallback to local workspace if run inside workspace
-    BENCHMARK_DIR = Path("/Users/hamatsumakoto/Documents/develop/triage-agent/benchmark")
+def _find_benchmark_dir() -> Path:
+    # 1. Standard tests directory inside repository: tests/ -> root / benchmark
+    p1 = Path(__file__).resolve().parent.parent / "benchmark"
+    if p1.exists():
+        return p1
+    # 2. Inside scratch directory: scratch/ -> conversation / brain / ... / benchmark
+    p2 = Path(__file__).resolve().parent.parent.parent.parent / "benchmark"
+    if p2.exists():
+        return p2
+    # 3. Current working directory fallback
+    cwd_benchmark = Path.cwd() / "benchmark"
+    if cwd_benchmark.exists():
+        return cwd_benchmark
+    raise FileNotFoundError("Could not find 'benchmark' directory in repository tree.")
+
+BENCHMARK_DIR = _find_benchmark_dir()
 
 
 class TestBenchmarkSuite(unittest.TestCase):
