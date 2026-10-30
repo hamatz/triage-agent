@@ -91,12 +91,17 @@ class TestSelfTriageFeature(unittest.TestCase):
 
     def test_cli_fail_on_unscanned_guardrail(self):
         """Verify that --fail-on unscanned exits with non-zero (exit 2) when uninvestigated items exist."""
+        # Use sample_sbom.json with --max-targets 2:
+        # - In online CI: components with known OSV hits (e.g. axios, log4j-core) exceed max-targets and are tracked as unscanned.
+        # - In offline sandbox: OSV network connection error triggers unscanned warning.
+        # Both conditions deterministically trigger --fail-on unscanned and exit with code 2.
         res = subprocess.run(
             [
                 sys.executable,
                 "-m",
                 "triage_agent.cli",
-                "--self-triage",
+                "--sbom",
+                "sample_sbom.json",
                 "--dry-run",
                 "--max-targets",
                 "2",
@@ -107,8 +112,6 @@ class TestSelfTriageFeature(unittest.TestCase):
             text=True,
         )
 
-        # In offline/dry-run, OSV/network lookup fails or max-targets triggers unscanned warning,
-        # so --fail-on unscanned MUST exit with code 2 to prevent silent success in CI.
         self.assertEqual(res.returncode, 2, f"Expected returncode 2, got {res.returncode}\nOUTPUT:\n{res.stdout}")
         self.assertIn("CI/CD ガードレール違反: --fail-on 条件発火", res.stdout)
         self.assertIn("調査不能・未調査コンポーネント", res.stdout)
