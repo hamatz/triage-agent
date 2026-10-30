@@ -2,11 +2,10 @@
 
 Facilitates bidirectional communication between cybersecurity teams, IT ops, and external software vendors.
 Protects against formula injection, ensures strict answer validation, prevents attestation loss,
-and tracks quantifiable PoC metrics per distribution ID.
+preserves internal YES findings against vendor downgrades, and tracks quantifiable PoC metrics per distribution ID.
 """
 
 import csv
-import hashlib
 import io
 import json
 import os
@@ -83,10 +82,13 @@ def export_checklist_csv(
         prod_name = notice.product_name or notice.component_name or "Unknown"
         comp_name = notice.component_name or ""
 
-        # Filter by product or component if requested
-        if target_prod_lower and target_prod_lower not in prod_name.lower():
-            continue
-        if target_comp_lower and target_comp_lower not in comp_name.lower():
+        # Exact matching for scoping to prevent leaking other vendors' components (e.g. 'node' shouldn't match 'node-forge')
+        if target_prod_lower:
+            prod_clean = prod_name.lower().strip()
+            prod_words = [w.strip() for w in prod_clean.split()]
+            if target_prod_lower != prod_clean and target_prod_lower not in prod_words:
+                continue
+        if target_comp_lower and target_comp_lower != comp_name.lower().strip():
             continue
 
         for cp in notice.check_points:
@@ -147,7 +149,8 @@ def import_vendor_checklist(
     - Only exact matches in ALLOWED_NO_ANSWERS count as NO, and ONLY IF both reviewer and evidence are present.
     - Ambiguous phrases ('Not sure', 'No idea', 'NOT CHECKED YET', '安全かどうか未確認') become '要確認'.
     - Existing attestations are never silently deleted on parse failure (fails fast to protect data).
-    - Internal YES cannot be silently overwritten by vendor NO without flagging conflict.
+    - Internal YES cannot be silently overwritten by vendor NO (flags conflict) or downgraded by '要確認' (preserves YES).
+    - Maintains a full audit history trail across round-trips.
     """
     p = Path(csv_path).resolve()
     if not p.exists():
@@ -158,6 +161,7 @@ def import_vendor_checklist(
 
     new_attestations: List[AuditAttestation] = []
     distribution_ids: Set[str] = set()
+    warnings: List[str] = []
     no_held_count = 0  # Count of NO answers demoted to '要確認' due to missing reviewer/evidence
 
     import_timestamp = datetime.now(timezone.utc).isoformat()
@@ -203,13 +207,22 @@ def import_vendor_checklist(
             reviewer=reviewer or "未記入",
             date=date_val or import_timestamp[:10],
             evidence=evidence or "未記入",
+            history=[],
         )
         new_attestations.append(att)
 
     target_audit_path = Path(audit_file_path).resolve() if audit_file_path else Path("audit_signoff.json").resolve()
 
+    if len(distribution_ids) > 1:
+        warnings.append(f"単一CSV内に複数の配布IDが混在しています: {', '.join(sorted(distribution_ids))}")
+
     if not new_attestations:
-        return 0, target_audit_path, {"imported_count": 0, "no_held_count": 0, "conflict_count": 0}
+        return 0, target_audit_path, {
+            "imported_count": 0,
+            "no_held_count": 0,
+            "conflict_count": 0,
+            "warnings": warnings,
+        }
 
     # Load existing audit file safely. Fail-fast if file exists but is corrupted.
     existing_attestations: List[AuditAttestation] = []
@@ -231,7 +244,7 @@ def import_vendor_checklist(
                     f"既存データの消失・破壊を防ぐため、取り込み処理を中止します。"
                 ) from e
 
-    # Merge while guarding against conflict (e.g. internal YES overwritten by vendor NO)
+    # Merge while guarding against conflict and preserving internal findings
     conflict_count = 0
     merged: Dict[str, AuditAttestation] = {}
     for att in existing_attestations:
@@ -246,19 +259,31 @@ def import_vendor_checklist(
             existing_status = existing_item.status.upper()
             new_status = att.status.upper()
 
-            # Guard: If internal audit already identified YES, vendor NO must not silently overwrite it!
+            # Record prior attestation snapshot in history
+            hist = list(existing_item.history or [])
+            hist.append({
+                "recorded_at": import_timestamp,
+                "status": existing_item.status,
+                "reviewer": existing_item.reviewer,
+                "date": existing_item.date,
+                "evidence": existing_item.evidence,
+            })
+            att.history = hist
+
+            # Guard 1: If internal audit already identified YES, vendor NO must not silently overwrite it!
             if "YES" in existing_status and "NO" in new_status:
                 conflict_count += 1
-                att = AuditAttestation(
-                    check_point_id=att.check_point_id,
-                    cve_id=att.cve_id,
-                    status="要再確認 (社内YESとベンダーNOの競合⚠️)",
-                    reviewer=att.reviewer,
-                    date=att.date,
-                    evidence=(
-                        f"【競合検知】社内判断（{existing_item.status}: {existing_item.evidence}）に対し、"
-                        f"ベンダーより非該当回答（{att.evidence}）を受領しました。人手による精査が必要です。"
-                    ),
+                att.status = "要再確認 (社内YESとベンダーNOの競合⚠️)"
+                att.evidence = (
+                    f"【競合検知】社内判断（{existing_item.status}: {existing_item.evidence}）に対し、"
+                    f"ベンダーより非該当回答（{att.evidence}）を受領しました。人手による精査が必要です。"
+                )
+            # Guard 2: If internal audit already identified YES, vendor '要確認' (unknown/not checked) must NOT downgrade YES!
+            elif "YES" in existing_status and "YES" not in new_status:
+                att.status = existing_item.status
+                att.evidence = (
+                    f"{existing_item.evidence} "
+                    f"（※ベンダー回答: {att.status} / {att.reviewer}: {att.evidence} - 社内該当確認済のためYES維持）"
                 )
 
         merged[key] = att
@@ -270,7 +295,7 @@ def import_vendor_checklist(
         encoding="utf-8"
     )
 
-    primary_dist_id = list(distribution_ids)[0] if distribution_ids else None
+    primary_dist_id = sorted(distribution_ids)[0] if distribution_ids else None
 
     # Record workflow round-trip metric
     record_workflow_event("vendor_checklist_imported", {
@@ -279,6 +304,7 @@ def import_vendor_checklist(
         "imported_count": len(new_attestations),
         "no_held_count": no_held_count,
         "conflict_count": conflict_count,
+        "warnings": warnings,
         "total_attestations": len(merged),
     })
 
@@ -287,6 +313,7 @@ def import_vendor_checklist(
         "no_held_count": no_held_count,
         "conflict_count": conflict_count,
         "distribution_id": primary_dist_id,
+        "warnings": warnings,
     }
 
     return len(new_attestations), target_audit_path, summary_info

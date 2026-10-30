@@ -345,7 +345,7 @@ class TriageDashboardHandler(BaseHTTPRequestHandler):
                 # Restrict paths strictly within authorized workspace
                 safe_sbom = str(resolve_safe_path(sbom_path)) if mode != "demo" else sbom_path
                 safe_code = str(resolve_safe_path(code_dir)) if code_dir else None
-                safe_audit = str(resolve_safe_path(audit_file)) if audit_file else None
+                safe_audit = str(resolve_safe_load_path(audit_file, allowed_extensions=(".json",))) if audit_file else None
 
                 if is_stream:
                     self.send_response(200)
@@ -421,11 +421,12 @@ class TriageDashboardHandler(BaseHTTPRequestHandler):
             attestation_data = req_data.get("attestation", {})
 
             try:
-                safe_audit_path = resolve_safe_load_path(audit_file_path, allowed_extensions=(".json",))
+                # Load existing attestations prioritizing triage-output/ if present
+                safe_load_path = resolve_safe_load_path(audit_file_path, allowed_extensions=(".json",))
                 existing_attestations = []
-                if safe_audit_path.exists():
+                if safe_load_path.exists():
                     try:
-                        raw = json.loads(safe_audit_path.read_text(encoding="utf-8"))
+                        raw = json.loads(safe_load_path.read_text(encoding="utf-8"))
                         if isinstance(raw, dict) and "attestations" in raw:
                             existing_attestations = raw["attestations"]
                         elif isinstance(raw, list):
@@ -444,8 +445,9 @@ class TriageDashboardHandler(BaseHTTPRequestHandler):
                 if not updated:
                     existing_attestations.append(attestation_data)
 
-                # Write back safely to the authorized audit file
-                safe_audit_path.write_text(
+                # Save to authorized output destination in triage-output/ (ADR-013)
+                safe_save_path = resolve_safe_output_path(audit_file_path, allowed_extensions=(".json",))
+                safe_save_path.write_text(
                     json.dumps({"attestations": existing_attestations}, indent=2, ensure_ascii=False),
                     encoding="utf-8",
                 )
@@ -540,7 +542,6 @@ class TriageDashboardHandler(BaseHTTPRequestHandler):
                     from triage_agent.verifier import verify_codebase
                     safe_code = str(resolve_safe_path(code_dir)) if code_dir else None
                     safe_audit = str(resolve_safe_load_path(audit_file, allowed_extensions=(".json",))) if audit_file else None
-                    safe_audit = str(resolve_safe_path(audit_file)) if audit_file else None
                     audit_report = verify_codebase(
                         report_obj,
                         code_dir_path=safe_code,
@@ -623,7 +624,6 @@ class TriageDashboardHandler(BaseHTTPRequestHandler):
                 # Strictly protect destination audit path against traversal and non-JSON corruption
                 safe_audit_path = resolve_safe_output_path(
                     audit_file_str,
-                    default_dir="triage-output",
                     allowed_extensions=(".json",)
                 )
 

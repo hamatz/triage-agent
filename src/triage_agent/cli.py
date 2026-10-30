@@ -450,6 +450,11 @@ def main():
     # Optional vendor checklist CSV export (ADR-019)
     if args.export_checklist_path:
         from triage_agent.tools.vendor_workflow import export_checklist_csv
+        if not args.export_checklist_target:
+            console.print(
+                "[yellow]ℹ️ 絞り込み対象（--export-checklist-target）が未指定のため、全コンポーネントの確認ポイントを出力します"
+                "（社外委託先配布時の共有範囲・攻撃地図化にご注意ください）。[/yellow]"
+            )
         _, csv_path, dist_id = export_checklist_csv(
             triage_report,
             output_path=args.export_checklist_path,

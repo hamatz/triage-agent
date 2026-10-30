@@ -1,6 +1,6 @@
 """Data models for codebase verification and audit attestations."""
 
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional
 from pydantic import BaseModel, Field
 
 from triage_agent.schemas import CheckPointItem, TriageNotice
@@ -47,6 +47,10 @@ class AuditAttestation(BaseModel):
     reviewer: str = Field(description="Name/ID of the security reviewer or engineer")
     date: str = Field(description="Date of attestation (e.g. '2026-10-25')")
     evidence: str = Field(description="Audit justification, config proof, or architecture rationale")
+    history: List[Dict[str, Any]] = Field(
+        default_factory=list,
+        description="Audit trail of previous attestations and vendor replies"
+    )
 
 
 class AttestationFile(BaseModel):

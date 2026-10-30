@@ -297,6 +297,76 @@ class TestWebUiApiRun(unittest.TestCase):
         res_data = json.loads(h.wfile.getvalue().decode("utf-8"))
         self.assertNotIn("csrf_token", res_data, "CSRF token must not be leaked via /api/status")
 
+    def test_api_import_checklist_integration(self):
+        class MockServer:
+            server_port = 8080
+
+        class DummyHandler(TriageDashboardHandler):
+            def __init__(self, path, body, headers=None):
+                self.path = path
+                self.rfile = BytesIO(body)
+                self.wfile = BytesIO()
+                self.headers = dict(headers or {})
+                self.headers["Content-Length"] = str(len(body))
+                self.server = MockServer()
+                self._headers_sent = []
+                self.status_code = None
+
+            def send_response(self, code, message=None):
+                self.status_code = code
+
+            def send_header(self, keyword, value):
+                self._headers_sent.append((keyword, value))
+
+            def end_headers(self):
+                pass
+
+        from triage_agent.ui.server import resolve_safe_output_path
+
+        audit_filename = "test_e2e_import_signoff.json"
+        dest_audit_path = resolve_safe_output_path(audit_filename, allowed_extensions=(".json",))
+        if dest_audit_path.exists():
+            dest_audit_path.unlink()
+
+        csv_content = (
+            "\ufeffDistributionID,No,CheckPointID,対象製品/ライブラリ,CVE/対象識別子,深刻度/CVSS,確認ポイント (Yes/No),確認方法 (設定・コード・コマンド),ベンダー回答 (YES/NO/要確認),確認根拠/設定箇所,確認者 (会社名・氏名),確認日 (YYYY-MM-DD)\n"
+            "DIST-20261025-ABCD,1,cp-tomcat-01,Apache Tomcat,CVE-2020-1938,9.8 Critical,AJP コネクタ無効化,server.xml,NO,無効化確認済み,SRE山田,2026-10-25\n"
+            "DIST-20261025-ABCD,2,cp-php-02,PHP Runtime,CVE-2026-0002,7.5 High,セッション設定,php.ini,NO,,,2026-10-25\n"
+        )
+
+        headers = {
+            "Content-Type": "application/json",
+            "Origin": "http://127.0.0.1:8080",
+            "Host": "127.0.0.1:8080",
+            "X-CSRF-Token": SERVER_CSRF_TOKEN,
+        }
+
+        payload = json.dumps({
+            "csv_content": csv_content,
+            "audit_file": audit_filename,
+        }).encode("utf-8")
+
+        handler = DummyHandler("/api/import-checklist", payload, headers=headers)
+        handler.do_POST()
+
+        self.assertEqual(handler.status_code, 200)
+        res_data = json.loads(handler.wfile.getvalue().decode("utf-8"))
+        self.assertTrue(res_data["success"])
+        self.assertEqual(res_data["imported_count"], 2)
+        # cp-php-02 had NO without reviewer/evidence, so no_held_count must be 1
+        self.assertEqual(res_data["no_held_count"], 1)
+        self.assertEqual(res_data["distribution_id"], "DIST-20261025-ABCD")
+
+        # Verify output file was created and contains valid JSON
+        self.assertTrue(dest_audit_path.exists())
+        saved_audit = json.loads(dest_audit_path.read_text(encoding="utf-8"))
+        self.assertIn("attestations", saved_audit)
+        self.assertEqual(len(saved_audit["attestations"]), 2)
+
+        # Cleanup
+        if dest_audit_path.exists():
+            dest_audit_path.unlink()
+
     def test_resolve_safe_output_path_supports_subdirectories(self):
         from triage_agent.ui.server import resolve_safe_output_path, DEFAULT_OUTPUT_DIR
         import shutil
