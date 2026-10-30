@@ -73,20 +73,32 @@ def verify_codebase(
         has_yes = False
         has_unverified = False
 
-        # 0. Early exit for notices concluding no vulnerability with 0 check points
-        # DETERMINISTIC SAFETY: Never parse LLM free-text (e.g. "対応不要とは言えません") or CVSS N/A.
-        # Only trust verified pipeline truth: no_known_vulnerability=True AND len(check_points) == 0.
-        if getattr(notice, "no_known_vulnerability", False) and not notice.check_points:
-            total_safe += 1
-            clean_basis_str = getattr(notice, "clean_basis", None) or "調査日時点"
-            notice_results.append(
-                NoticeVerificationResult(
-                    notice=notice,
-                    overall_status=f"NO (既知の脆弱性なし・{clean_basis_str})",
-                    action_deadline_advice="現在導入されているバージョンにおいて該当するセキュリティ脆弱性は報告されていません。対応不要です。",
-                    results=[],
+        # 0. Notices with 0 check points
+        # DETERMINISTIC SAFETY: "分からないものを安全と言わない"
+        # - Proven clean by pipeline data (no_known_vulnerability=True) -> NO (既知の脆弱性なし)
+        # - Failed / unscanned / lack of proof (no_known_vulnerability=False) -> 要確認 (安全の根拠なし⚠️)
+        if not notice.check_points:
+            if getattr(notice, "no_known_vulnerability", False):
+                total_safe += 1
+                clean_basis_str = getattr(notice, "clean_basis", None) or "調査日時点"
+                notice_results.append(
+                    NoticeVerificationResult(
+                        notice=notice,
+                        overall_status=f"NO (既知の脆弱性なし・{clean_basis_str})",
+                        action_deadline_advice="現在導入されているバージョンにおいて該当するセキュリティ脆弱性は報告されていません。対応不要です。",
+                        results=[],
+                    )
                 )
-            )
+            else:
+                total_unverified += 1
+                notice_results.append(
+                    NoticeVerificationResult(
+                        notice=notice,
+                        overall_status="要確認 (確認ポイントなし・安全の根拠なし⚠️)",
+                        action_deadline_advice="【要確認】調査エラーまたは未スキャンのため安全の根拠が確認できませんでした。「分からないものを安全と言わない」原則に基づき要確認とします。",
+                        results=[],
+                    )
+                )
             continue
 
         # Count occurrences of CVEs in this notice to detect ambiguity

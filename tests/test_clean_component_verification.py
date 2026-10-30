@@ -317,6 +317,40 @@ class TestCleanComponentVerification(unittest.TestCase):
         self.assertEqual(dist_entry["announced_at"], "2026-10-28")
         self.assertNotEqual(dist_entry["announced_at"], "2026-10-21")
 
+    def test_uninvestigated_component_with_no_checkpoints_must_not_become_safe(self):
+        """Case D (Opus latest review): An unverified / failed notice with empty check_points
+
+        Must NEVER become safe (NO). It must be flagged as 要確認 (安全の根拠なし⚠️)!
+        """
+        report = TriageReport(
+            report_title="Case D: Failed Investigation Test",
+            scan_target="test-repo",
+            total_dependencies=1,
+            notices=[
+                TriageNotice(
+                    product_name="failed-pkg（利用バージョン: 1.0.0）",
+                    component_name="failed-pkg",
+                    announcement_date="2026-10-31",
+                    conclusion="調査エージェントが API 429 エラーで失敗したため、詳細を調査できませんでした。",
+                    fixed_versions="未確認",
+                    severity_note="要確認",
+                    no_known_vulnerability=False,  # NOT confirmed clean!
+                    check_points=[],  # LLM didn't create fake check points
+                )
+            ],
+        )
+
+        res = verify_codebase(report, code_dir_path=str(self.code_dir))
+        # Must NOT be safe!
+        self.assertNotEqual(res.overall_status, "NO (安全・確認済み)")
+        self.assertIn("要確認", res.overall_status)
+        self.assertEqual(res.summary_counts["safe_count"], 0)
+        self.assertEqual(res.summary_counts["unverified_count"], 1)
+
+        nr = res.notice_results[0]
+        self.assertIn("要確認", nr.overall_status)
+        self.assertIn("安全の根拠なし", nr.overall_status)
+
 
 if __name__ == "__main__":
     unittest.main()
