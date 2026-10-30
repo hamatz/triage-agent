@@ -201,6 +201,7 @@ def query_osv_batch(
                                 "score": score,
                                 "fixed_versions": fixed_versions,
                                 "references": [ref.get("url") for ref in v.get("references", []) if ref.get("url")],
+                                "published": v.get("published"),
                                 "modified": v.get("modified"),
                                 "is_detail_truncated": is_truncated,
                             })

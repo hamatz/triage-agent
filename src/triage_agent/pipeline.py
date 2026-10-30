@@ -28,6 +28,7 @@ def execute_triage_pipeline(
     max_targets: int = 10,
     code_dir: Optional[str] = None,
     audit_file_path: Optional[str] = None,
+    target_environment: Optional[str] = None,
     progress_callback: Optional[Callable[[str], None]] = None,
 ) -> Tuple[TriageReport, Optional[CodebaseAuditReport]]:
     """Execute the full 3-phase triage pipeline and optional verification.
@@ -38,6 +39,7 @@ def execute_triage_pipeline(
         max_targets: Maximum top priority targets to investigate.
         code_dir: Optional path to local codebase for automatic code inspection.
         audit_file_path: Optional path to audit attestation JSON file.
+        target_environment: Optional environment string (e.g. 'Production') to scope sign-offs.
         progress_callback: Optional callback for status progress messages.
 
     Returns:
@@ -65,6 +67,7 @@ def execute_triage_pipeline(
                 triage_report,
                 code_dir_path=code_dir,
                 audit_file_path=audit_file_path,
+                target_environment=target_environment,
             )
         log("すべての処理が完了しました。", percent=100, phase="Complete")
         return triage_report, audit_report
@@ -315,6 +318,7 @@ def execute_triage_pipeline(
             triage_report,
             code_dir_path=code_dir,
             audit_file_path=audit_file_path,
+            target_environment=target_environment,
         )
 
     log("すべての処理が完了しました。", percent=100, phase="Complete", step=3, total_steps=3)

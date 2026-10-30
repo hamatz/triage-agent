@@ -227,6 +227,31 @@ def main():
         help="Import filled vendor checklist CSV into audit_signoff.json (ADR-019)",
     )
     parser.add_argument(
+        "--environment",
+        type=str,
+        default=None,
+        help="Target environment (e.g. 'Production', 'Staging', 'Development') to scope sign-offs (v0.3.1 / ADR-019)",
+    )
+    parser.add_argument(
+        "--record-remediation",
+        type=str,
+        default=None,
+        metavar="DISTRIBUTION_ID",
+        help="Record T4 remediation / patch deployment completion for a distribution ID (v0.3.1 / ADR-019)",
+    )
+    parser.add_argument(
+        "--remediated-at",
+        type=str,
+        default=None,
+        help="Optional ISO timestamp for remediation completion (defaults to current UTC time)",
+    )
+    parser.add_argument(
+        "--remediation-note",
+        type=str,
+        default=None,
+        help="Optional operational note or deploy commit hash for the remediation record",
+    )
+    parser.add_argument(
         "--gui",
         action="store_true",
         help="Launch the interactive Web GUI dashboard in your browser",
@@ -261,6 +286,32 @@ def main():
         if args.verify_code is None and not args.self_triage and args.sbom == "sample_sbom.json" and not args.output:
             # Standalone import completed
             return
+
+    # Standalone record remediation completion (v0.3.1 / ADR-019)
+    if args.record_remediation:
+        from triage_agent.tools.vendor_workflow import record_remediation_completed
+        try:
+            res = record_remediation_completed(
+                distribution_id=args.record_remediation,
+                remediated_at=args.remediated_at,
+                note=args.remediation_note,
+            )
+            saved_str = f" (短縮時間: {res.get('lead_time_saved_hours')} 時間)" if res.get("lead_time_saved_hours") is not None else ""
+            console.print(
+                Panel.fit(
+                    f"[bold green]✓ T4 対応完了（Remediation Completed）を記録しました[/bold green]\n"
+                    f"配布ID: [bold]{res['distribution_id']}[/bold]\n"
+                    f"完了時刻 (T4): [cyan]{res['remediated_at']}[/cyan]\n"
+                    f"総リードタイム: [yellow]{res.get('total_lead_time_hours')} 時間[/yellow]{saved_str}\n"
+                    f"ステータス: [bold green]{res.get('status')}[/bold green]\n"
+                    f"備考: {res.get('remediation_note') or 'なし'}",
+                    border_style="green",
+                )
+            )
+        except Exception as e:
+            console.print(f"[bold red]❌ T4 記録エラー:[/bold red] {e}")
+            sys.exit(1)
+        return
 
     mode = "demo" if args.demo else ("dry-run" if args.dry_run else "live")
 
@@ -329,6 +380,7 @@ def main():
             max_targets=max_targets,
             code_dir=verify_code,
             audit_file_path=args.audit_file,
+            target_environment=args.environment,
             progress_callback=lambda msg: console.print(f"[dim]{msg}[/dim]"),
         )
     except Exception as e:

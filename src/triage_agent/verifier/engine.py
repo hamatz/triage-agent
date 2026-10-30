@@ -31,49 +31,6 @@ from triage_agent.verifier.scanner import (
 console = Console()
 
 
-def is_notice_non_vulnerable(notice) -> bool:
-    """Determine if a notice explicitly concludes that no vulnerability exists or no action is required."""
-    conclusion = (getattr(notice, "conclusion", "") or "").lower()
-    severity = (getattr(notice, "severity_note", "") or "").lower()
-    fixed = (getattr(notice, "fixed_versions", "") or "").lower()
-
-    # Clear indicators of clean / non-vulnerable status
-    clean_phrases = [
-        "脆弱性は報告されていません",
-        "脆弱性は存在しません",
-        "該当するセキュリティ脆弱性は報告されていません",
-        "該当する脆弱性は報告されていません",
-        "対応不要",
-        "該当脆弱性なし",
-        "no vulnerability",
-        "no known vulnerabilities",
-        "not vulnerable",
-    ]
-    for phrase in clean_phrases:
-        if phrase in conclusion or phrase in fixed:
-            return True
-
-    # Severity indicates none / negligible
-    if any(s == severity.strip() for s in ("なし", "none", "n/a", "該当なし", "0", "0.0")):
-        if any(w in conclusion for w in ("脆弱性", "報告", "不要", "安全", "対応")):
-            return True
-        if not getattr(notice, "check_points", []):
-            return True
-
-    return False
-
-
-def is_checkpoint_non_vulnerable(cp) -> bool:
-    """Check if a checkpoint represents a non-vulnerable / no-CVE informational item."""
-    target = (getattr(cp, "target_or_cve", "") or "").strip().lower()
-    if target in ("n/a", "none", "該当なし", "なし", "no-cve", "該当脆弱性なし", "n/a (該当脆弱性なし)"):
-        return True
-    cvss = (getattr(cp, "cvss", "") or "").strip().lower()
-    if cvss in ("なし", "none", "n/a", "0", "0.0", "該当なし"):
-        return True
-    return False
-
-
 def verify_codebase(
     report: TriageReport,
     code_dir_path: Optional[str] = None,
@@ -95,6 +52,15 @@ def verify_codebase(
 
     attestations = load_audit_attestations(audit_file_path)
 
+    # Warn if attestations have environment constraints but user didn't specify --environment
+    if target_environment is None:
+        has_env_scoped = any(bool(att.environment) for att in attestations)
+        if has_env_scoped:
+            console.print(
+                "[yellow]⚠ 警告: 環境が未指定（--environment なし）のため、環境固有のサインオフが全環境共通として適用されています。"
+                "本番検証時は --environment を指定してください。[/yellow]"
+            )
+
     notice_results: List[NoticeVerificationResult] = []
     total_yes = 0
     total_unverified = 0
@@ -107,15 +73,16 @@ def verify_codebase(
         has_yes = False
         has_unverified = False
 
-        notice_is_clean = is_notice_non_vulnerable(notice)
-
         # 0. Early exit for notices concluding no vulnerability with 0 check points
-        if notice_is_clean and not notice.check_points:
+        # DETERMINISTIC SAFETY: Never parse LLM free-text (e.g. "対応不要とは言えません") or CVSS N/A.
+        # Only trust verified pipeline truth: no_known_vulnerability=True AND len(check_points) == 0.
+        if getattr(notice, "no_known_vulnerability", False) and not notice.check_points:
             total_safe += 1
+            clean_basis_str = getattr(notice, "clean_basis", None) or "調査日時点"
             notice_results.append(
                 NoticeVerificationResult(
                     notice=notice,
-                    overall_status="NO (該当脆弱性なし・安全)",
+                    overall_status=f"NO (既知の脆弱性なし・{clean_basis_str})",
                     action_deadline_advice="現在導入されているバージョンにおいて該当するセキュリティ脆弱性は報告されていません。対応不要です。",
                     results=[],
                 )
@@ -302,20 +269,11 @@ def verify_codebase(
                         reason = f"【要確認（サインオフ記録）】{matched_attestation.reviewer}（{matched_attestation.date}）: {matched_attestation.evidence}"
             else:
                 if code_dir is None:
-                    if notice_is_clean or is_checkpoint_non_vulnerable(cp):
-                        status = "NO (該当脆弱性なし・安全)"
-                        total_safe += 1
-                        reason = (
-                            f"【該当脆弱性なし・安全】トリアージ判定により該当バージョンにおいて脆弱性は報告されておらず対応不要です"
-                            f"（結論: {notice.conclusion}）。ベンダーへの確認も不要です。"
-                        )
-                        advice = None
-                    else:
-                        status = "要手動確認 (ベンダー照会要)"
-                        has_unverified = True
-                        total_unverified += 1
-                        reason = "自社コードベース対象外（外注・ベンダー委託）。ベンダーへの照会および手動確認・回答記録が必要です。"
-                        advice = cp.verification_method
+                    status = "要手動確認 (ベンダー照会要)"
+                    has_unverified = True
+                    total_unverified += 1
+                    reason = "自社コードベース対象外（外注・ベンダー委託）。ベンダーへの照会および手動確認・回答記録が必要です。"
+                    advice = cp.verification_method
                     matches = []
                 else:
                     # 2. Check for specialized configuration files first (server.xml, php.ini, nginx.conf, etc.)
@@ -354,20 +312,11 @@ def verify_codebase(
                             advice = cp.verification_method
                             matches = []
                     elif not scan_patterns:
-                        if notice_is_clean or is_checkpoint_non_vulnerable(cp):
-                            status = "NO (該当脆弱性なし・安全)"
-                            total_safe += 1
-                            reason = (
-                                f"【該当脆弱性なし・安全】トリアージ判定により該当バージョンにおいて脆弱性は報告されておらず対応不要です"
-                                f"（結論: {notice.conclusion}）。"
-                            )
-                            advice = None
-                        else:
-                            status = "要手動確認 (キーワード抽出不能)"
-                            has_unverified = True
-                            total_unverified += 1
-                            reason = "確認方法が自然言語またはインフラ依存のため、自動検索キーワードを抽出できませんでした。手動での確認が必要です。"
-                            advice = cp.verification_method
+                        status = "要手動確認 (キーワード抽出不能)"
+                        has_unverified = True
+                        total_unverified += 1
+                        reason = "確認方法が自然言語またはインフラ依存のため、自動検索キーワードを抽出できませんでした。手動での確認が必要です。"
+                        advice = cp.verification_method
                         matches = []
                     else:
                         matches = code_matches
@@ -399,24 +348,15 @@ def verify_codebase(
                                 )
                                 advice = f"テストコード検出箇所（{test_matches[0].file_path}:{test_matches[0].line_number} 等）を確認し、本番影響がなければサインオフを登録してください。"
                         else:
-                            if notice_is_clean or is_checkpoint_non_vulnerable(cp):
-                                status = "NO (該当脆弱性なし・安全)"
-                                total_safe += 1
-                                reason = (
-                                    f"【該当脆弱性なし・安全】トリアージ判定により該当バージョンにおいて脆弱性は報告されておらず対応不要です"
-                                    f"（結論: {notice.conclusion}）。自社コード走査においても問題となる呼び出しは検出されませんでした。"
-                                )
-                                advice = None
-                            else:
-                                status = "コード内未検出 (外部設定・既定値の要確認)"
-                                has_unverified = True
-                                total_unverified += 1
-                                reason = (
-                                    f"リポジトリ内のコードでは '{', '.join(scan_patterns)}' は未検出でした。"
-                                    "ただし、ミドルウェアの既定値（デフォルト有効）や外部設定"
-                                    "（php.ini, server.xml, 環境変数, コンテナマニフェスト等）で有効化されている可能性があります。"
-                                )
-                                advice = f"外部設定（{cp.verification_method[:80]}...）の有無を確認してください。"
+                            status = "コード内未検出 (外部設定・既定値の要確認)"
+                            has_unverified = True
+                            total_unverified += 1
+                            reason = (
+                                f"リポジトリ内のコードでは '{', '.join(scan_patterns)}' は未検出でした。"
+                                "ただし、ミドルウェアの既定値（デフォルト有効）や外部設定"
+                                "（php.ini, server.xml, 環境変数, コンテナマニフェスト等）で有効化されている可能性があります。"
+                            )
+                            advice = f"外部設定（{cp.verification_method[:80]}...）の有無を確認してください。"
 
             check_results.append(
                 CheckVerificationResult(
@@ -444,12 +384,8 @@ def verify_codebase(
                 "または既定値で有効になっている可能性があります。外部設定の確認または監査サインオフが完了するまでは『要対応』として扱ってください。"
             )
         else:
-            if notice_is_clean:
-                overall_status = "NO (該当脆弱性なし・安全)"
-                deadline_advice = "現在導入されているバージョンにおいて該当するセキュリティ脆弱性は報告されていません。対応不要です。"
-            else:
-                overall_status = "NO (安全・確認済み)"
-                deadline_advice = f"【通常リリース可】自社環境において非該当・確認済みであることが検証されました。{TRIAGE_RULES['NORMAL_DEADLINE']}での更新対応で問題ありません。"
+            overall_status = "NO (安全・確認済み)"
+            deadline_advice = f"【通常リリース可】自社環境において非該当・確認済みであることが検証されました。{TRIAGE_RULES['NORMAL_DEADLINE']}での更新対応で問題ありません。"
 
         notice_results.append(
             NoticeVerificationResult(

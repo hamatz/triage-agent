@@ -248,10 +248,22 @@ def run_triage_agent(
                         )
                     )
 
+            # Determine announcement date: prefer earliest published_date from findings for lifecycle metrics T(-1)
+            earliest_pub = None
+            for f in r.findings:
+                if getattr(f, "published_date", None):
+                    raw_d = str(f.published_date).strip()
+                    d_sub = raw_d[:10]
+                    if len(d_sub) == 10 and d_sub[4] == "-" and d_sub[7] == "-":
+                        if earliest_pub is None or d_sub < earliest_pub:
+                            earliest_pub = d_sub
+
+            ann_date_str = earliest_pub or "直近公開（GitHub / OSV最新シグナル）"
+
             notice = TriageNotice(
                 product_name=f"{target.name}（利用バージョン: {target.version}）",
                 notice_hash=compute_notice_hash(check_points),
-                announcement_date="直近公開（GitHub / OSV最新シグナル）",
+                announcement_date=ann_date_str,
                 conclusion=(
                     "【DRY-RUN シミュレーション】下の確認ポイントに1つでも Yes、または不明なら該当ありとして要確認。"
                     "外部公開システムで Critical なら48時間以内、Highなら7日以内に更新または回避策。確定判断はライブエージェントで実行してください。"
@@ -343,8 +355,12 @@ def run_triage_agent(
 
         # Build map of target names from research results for stable ID canonicalization
         target_name_map = {r.target.name.lower(): r.target.name for r in research_results}
+        results_by_name = {r.target.name.lower(): r for r in research_results}
+        unscanned_lower = {u.lower() for u in unscanned}
+        from datetime import date
+        today_iso = date.today().isoformat()
 
-        # Deterministically enforce canonical component_name, check_point_id and notice_hash
+        # Deterministically enforce canonical component_name, clean status, check_point_id and notice_hash
         for notice in report.notices:
             canonical_name = notice.component_name
             if not canonical_name:
@@ -356,6 +372,24 @@ def run_triage_agent(
                 canonical_name = notice.product_name
 
             notice.component_name = canonical_name
+
+            # Machine-determined ground truth: OSV=0, findings=0, errors=0, and not in unscanned list
+            res = results_by_name.get(canonical_name.lower())
+            is_clean_by_data = (
+                res is not None
+                and not res.findings
+                and not res.errors
+                and canonical_name.lower() not in unscanned_lower
+            )
+
+            if is_clean_by_data:
+                notice.no_known_vulnerability = True
+                notice.clean_basis = f"OSV 0件・Researcher 所見0件・調査エラーなし（{today_iso}時点）"
+                # Strictly suppress fabricated check_points from LLM on non-vulnerable components
+                notice.check_points = []
+            else:
+                notice.no_known_vulnerability = False
+                notice.clean_basis = None
 
             for cp in notice.check_points:
                 m = re.search(r"\b(CVE-\d{4}-\d{4,7}|GHSA-[a-z0-9\-]+)\b", cp.target_or_cve, re.I)

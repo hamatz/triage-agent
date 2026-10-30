@@ -91,6 +91,10 @@ class ResearchFinding(BaseModel):
     summary: str = Field(description="Detailed summary of the vulnerability, threat model, or upcoming patch notice")
     source_urls: List[str] = Field(default_factory=list, description="Evidence URLs (GitHub, official blog, advisory)")
     commit_shas: List[str] = Field(default_factory=list, description="Relevant patch or POC commit SHAs if found")
+    published_date: Optional[str] = Field(
+        default=None,
+        description="Public advisory release date / announcement date (ISO format or YYYY-MM-DD) for lifecycle metrics (T-1)",
+    )
     trigger_hint: Optional[str] = Field(
         default=None,
         description="Initial clue about configuration, feature flag, or specific API usage required to exploit"
@@ -164,6 +168,14 @@ class TriageNotice(BaseModel):
     workaround: Optional[str] = Field(
         default=None,
         description="Workaround details, side effects, and operational tips (e.g. 'session.upload_progress.enabled を 0 にする。進捗表示を使っていなければ副作用はほぼありません。')"
+    )
+    no_known_vulnerability: bool = Field(
+        default=False,
+        description="Machine-determined ground truth set strictly by pipeline (not by LLM): true if OSV=0, Researcher findings=0, and no scan failures.",
+    )
+    clean_basis: Optional[str] = Field(
+        default=None,
+        description="Ground-truth basis for clean status (e.g. 'OSV 0件・Researcher 所見0件・調査エラーなし（2026-10-31時点）')",
     )
     unconfirmed_points: List[str] = Field(
         default_factory=list,

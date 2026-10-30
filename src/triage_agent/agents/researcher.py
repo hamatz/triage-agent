@@ -171,6 +171,7 @@ Summarize your findings with source URLs. If no upcoming announcements or active
                     summary=vuln.get("details") or vuln.get("summary") or "Vulnerability reported via OSV.dev",
                     source_urls=vuln.get("references", []),
                     commit_shas=[],
+                    published_date=vuln.get("published"),
                     trigger_hint="[OSV.dev / DRY-RUN: 発火条件の詳細検証は静的コード解析およびライブエージェントで実施]",
                 )
             )
@@ -195,6 +196,7 @@ Summarize your findings with source URLs. If no upcoming announcements or active
                     summary=adv.get("summary") or "Advisory retrieved from GitHub Security Advisories",
                     source_urls=[adv.get("html_url")] if adv.get("html_url") else [],
                     commit_shas=[],
+                    published_date=adv.get("published_at"),
                     trigger_hint="[DRY-RUN: 詳細な発火設定の精読はライブエージェントで実行]",
                 )
             )
