@@ -170,22 +170,72 @@ Engineering Enablement（専門家依存の解消と組織的な即応）を実�
 - [ ] **全社資産管理・脆弱性基盤（Dependency-Track 等）との役割分担・連携**
   - 全社何百システム・数万コンポーネントの機械的網羅スキャンは Dependency-Track などの基盤に委ね、triage-agent は「緊急度・優先度の高い脆弱性の深層調査・指示書化・現場トリアージ」を担う専門レイヤーとして接続。
 
-### ② サインオフのコンテキスト紐付け ＆ OS/カーネル・インフラ層への拡張（Contextual Attestation & Infrastructure Triaging）
-- [ ] **環境・バージョン・有効期限（TTL）付きサインオフ**
-  - 手動/ベンダーサインオフに対し、以下のコンテキスト情報を付与可能にする：
-    - **対象環境:** `Production` / `Staging` / `Development`
-    - **構成バージョン:** リリースバージョン番号、コンテナタグ、または Git コミットSHA
-    - **有効期限（TTL）:** 「次回メジャーリリースまで」「2026-12-31まで」等を設定し、期限切れ時に自動で再確認を喚起。
-- [ ] **Linuxカーネル・OS/コンテナ層の攻撃連鎖（Exploit Chain）トリアージ統合**
-  - **背景・課題:** Web層RCE（PHP2Shell等）とカーネルLPE（Fragnesia / CVE-2026-46300 等のローカル権限昇格・コンテナ脱出）の連鎖による root 制圧リスクへの即応。
-  - **Researcher の強化（緩和策・発火条件の構造化抽出）:**
-    - 年間数千件に及ぶカーネルCVEスパムを排除し、「非特権ユーザーからのLPE（root昇格）」および「コンテナエスケープ」に絞り込み。
-    - 公式ディストリビューション（Red Hat RHSA, Ubuntu USN, Debian Tracker）のアドバイザリから、パッチ適用・再起動前の**「緩和策（Mitigation: sysctl パラメータ、modprobe ブラックリスト設定、要求ケーパビリティ）」**を自動抽出。
-  - **Verifier の強化（OS設定 ＆ IaC/マニフェスト走査）:**
-    - リポジトリや構成管理資産から以下を自動走査し、緩和策が適用済みか（客観的3状態: YES/外部設定要確認/NO）を即答：
-      1. **OS設定ファイル:** `/etc/sysctl.conf`, `/etc/sysctl.d/*.conf`, `/etc/modprobe.d/*.conf`（該当モジュールの無効化確認）
-      2. **コンテナマニフェスト (Kubernetes / Docker Compose):** `securityContext`（`allowPrivilegeEscalation: false`, `readOnlyRootFilesystem: true`, `capabilities.drop: ["ALL"]`, `privileged: false` 等）
-      3. **Dockerfile / ホスト構成コード:** 非特権実行（`USER` ディレクティブ）、Ansible/Terraform のセキュリティパラメータ設定。
+### ② サインオフのコンテキスト紐付け ＆ OS/カーネル層の攻撃連鎖トリアージ（Contextual Attestation & Exploit Chain Triaging）
+
+> **背景（実事例）:** PHP2Shell（CVE-2026-109618 / 109619、2026-10-21 修正）で侵入し、5か月前に PoC 付きで公表済みだった Fragnesia（CVE-2026-46300、カーネル LPE）で root を奪取する連鎖により、境界ファイアウォール等 25 台が侵害された（Dream 報告、2026-10-26）。
+> 「ローカル限定だから低優先」と後回しにされた LPE が、新しい RCE の出現で一気に致命傷になる。
+> 本項の目的は、カーネル CVE の網羅ではなく、**アプリ層と OS 層の優先度の隙間を埋めること**にある。
+
+#### ②-1 土台：環境・バージョン・有効期限（TTL）付きサインオフ（②-2 以降の前提）
+- [ ] **サインオフにコンテキスト属性を付与:**
+  - **対象環境:** `Production` / `Staging` / `Development`（ホスト群・クラスタ単位）
+  - **構成バージョン:** リリース番号、コンテナタグ、Git コミット SHA、カーネルバージョン
+  - **有効期限（TTL）:** 「次回メジャーリリースまで」「2026-12-31 まで」等。期限切れで自動的に再確認対象へ
+- [ ] **根拠の種類を区別して記録:**
+  - `構成コード上`（IaC/マニフェスト、コミット SHA 時点）／`実機観測`（収集スクリプト、取得日時）／`ベンダー回答`（配布 ID）
+  - 構成コード上の NO は「意図」であり実機の証拠ではない。実機観測がない場合は表示上も区別する
+
+#### ②-2 中核：未解消のローカル権限昇格（LPE）台帳 ＆ 連鎖評価
+- [ ] **LPE 台帳（Exploit Chain Ledger）:**
+  - 環境ごとに「未パッチかつ緩和策未確認の LPE／コンテナ脱出」を保持
+  - **対象の絞り込み:** 非特権ユーザーからの root 昇格、コンテナ脱出のみ（年間数千件のカーネル CVE は対象外）
+  - **優先度の材料:** PoC 公開の有無、CISA KEV 掲載の有無
+- [ ] **連鎖評価（新規 RCE 発生時の突合）:**
+  - 新しい RCE の予告・公表時に、その RCE が到達しうる環境の LPE 台帳を自動突合
+  - **単純ルールで判定（点数化・複雑化しない）:** 「外部から到達可能な RCE」＋「PoC 公開済み／KEV 掲載の未解消 LPE」が同一環境 → **最優先（Critical 扱い）**
+  - **逆方向の即時洗い出し:** 新しい LPE が台帳に入ったら、既知の外部到達可能 RCE がある環境を即座に洗い出す
+- [ ] **SLA への反映（運用ルール）:**
+  - 外部公開の入口を持つホストでは、PoC 公開済み LPE を「ローカル限定」を理由に低優先としない
+
+#### ②-3 情報収集：カーネル／OS 層の公表を即座に台帳へ
+- [ ] カーネルは公開の事前予告文化がほぼない（linux-distros は非公開）ため、柱1の「予定化」ではなく「公表即台帳化」として扱う
+- [ ] **監視ソース（advisory_sources.toml に `category = "primary_advisory"` として追加）:**
+  - ディストリビューション: Ubuntu CVE Tracker / USN、Debian Security Tracker、Red Hat RHSA
+  - 公表の場: oss-security メーリングリスト公開アーカイブ
+  - 悪用実績: CISA KEV
+- [ ] **バックポート考慮:** バージョン照合はディストリビューションのアドバイザリ／OSV のディストリ別データで行う（バックポートがあるため `uname -r` と上流の影響範囲の単純比較では判定しない）
+
+#### ②-4 Researcher：緩和策の構造化抽出（出典必須）
+- [ ] **アドバイザリから構造化抽出:**
+  - **発火条件:** 必要な権限・ケーパビリティ、必要なカーネルモジュール/機能
+  - **緩和策:** sysctl、modprobe（`install <mod> /bin/false`）、seccomp 等
+  - **緩和策の副作用:** 例）Fragnesia の esp4/esp6/rxrpc 無効化 → IPsec VPN・AFS が停止
+- [ ] **架空パラメータ混入防止（Grounding Guardrail）:**
+  - 抽出結果には原文引用と URL を必須とし、sysctl 名・モジュール名は既知リストと突合して検証（LLM による架空パラメータ混入を防ぐ）
+- [ ] **確認ポイントの生成:**
+  - 「緩和策を取れるか」まで含めて生成（例:「このホストで IPsec を使っているか」→ Yes なら緩和不可・パッチ必須）
+
+#### ②-5 Verifier：OS 設定・マニフェスト走査（柱2の教訓を最初から適用）
+- [ ] **sysctl:** `/etc/sysctl.d/`, `/run/sysctl.d/`, `/usr/lib/sysctl.d/`, `/etc/sysctl.conf` を全件読み、ファイル名順の後勝ちで評価
+- [ ] **modprobe:** `install <mod> /bin/false` のみを無効化と認める。`blacklist` は自動読込の抑止のみで不十分（要確認扱い）。カーネル組み込み（`=y`）の可能性がありカーネル設定不明なら要確認
+- [ ] **Kubernetes / Compose:** Pod・コンテナ両レベルの `securityContext` 継承、名前空間の Pod Security Admission（`restricted`）を考慮
+  - 未記載は安全扱いしない（`allowPrivilegeEscalation` 既定 true、seccomp は kubelet 既定次第）
+  - Helm / Kustomize は展開済み出力（`helm template` / `kustomize build`）を入力として推奨。テンプレート直読みは要確認寄り
+- [ ] **Dockerfile / IaC:** `USER` ディレクティブ、Ansible/Terraform のセキュリティパラメータ
+- [ ] **実機観測の入力:** 製品非依存の収集スクリプト（`uname -r`, `/etc/os-release`, `sysctl -a` の該当値, `lsmod`, カーネル設定）の JSON を受け付ける。Tanium 等はこの JSON を生成すれば連携可能
+
+#### ②-6 アプライアンス（SBOM なし・カーネルはベンダー管理）
+- [ ] ファイアウォール等のアプライアンスは走査対象外とし、柱3のベンダー往復で照会
+  - 質問例: 「ファームウェアのカーネルに CVE-2026-46300 の修正は含まれるか。含まれるならどの版からか」
+  - 回答は配布 ID ごとに計測し、未回答は台帳上「未解消」として扱う
+
+#### ②-7 評価セット（実装前に先行整備）
+- [ ] `benchmark/cases_hard/` に以下を追加:
+  - sysctl.d の後勝ちで緩和策が打ち消されるケース
+  - `blacklist` のみ（要確認）／`install /bin/false`（NO）の区別
+  - `securityContext` 未記載（安全扱いしない）
+  - Fragnesia 型の連鎖シナリオ（外部公開 RCE ＋ PoC 公開 LPE → 最優先判定）
+  - IPsec 利用ホスト（緩和不可 → パッチ必須の判定）
 
 ### ③ ベンダー・現場回答の「組織知（System Architectural Profile）」化
 - [ ] **システム構成プロファイル（System Profile）機能**
