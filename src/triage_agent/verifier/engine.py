@@ -193,9 +193,14 @@ def verify_codebase(
                     matches = []
                 else:
                     # 2. Check for specialized configuration files first (server.xml, php.ini, nginx.conf, etc.)
+                    cp_config_check = getattr(cp, "config_check", None)
                     config_res = inspect_configuration(
-                        code_dir, cp.verification_method, cp.check_point_yes_no, cp_cve
-                    ) if is_config_inspection(cp.verification_method, cp.check_point_yes_no) else None
+                        code_dir=code_dir,
+                        verification_method=cp.verification_method,
+                        check_point_yes_no=cp.check_point_yes_no,
+                        target_cve=cp_cve,
+                        config_check=cp_config_check
+                    ) if is_config_inspection(cp.verification_method, cp.check_point_yes_no, cp_config_check) else None
 
                     if config_res:
                         status = config_res.status

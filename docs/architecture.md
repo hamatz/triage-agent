@@ -21,25 +21,34 @@
 
 ```mermaid
 flowchart TD
-    SBOM["入力: SBOM (Syft CycloneDX JSON)"] --> RP
+    SBOM["入力①: SBOM (CycloneDX / SPDX JSON)"] --> RP
+    CAT["入力②: 事前予告カタログ\n(advisory_sources.toml)"] --> RP
 
-    subgraph Phase1["Phase 1: Recon Planner（戦略立案）"]
+    subgraph Phase1["Phase 1: Recon Planner（戦略立案 ＆ 事前予告抽出）"]
         RP["Recon Planner"]
         T_SBOM["load_sbom_summary"]
-        T_OSV["query_osv_batch (OSV一括照会)"]
+        T_OSV["query_osv_batch (OSV一括照会・Tokenless)"]
+        T_CAT["advisory_catalog\n(フィード巡回 & 定例パッチ日算出)"]
         RP <--> T_SBOM
         RP <--> T_OSV
+        RP <--> T_CAT
     end
+
+    RP -->|"確定した事前予告シグナル"| CalGen["カレンダー生成エンジン"]
+    CalGen --> OutICS["【出力①】事前予告カレンダー\n(upcoming_patches.ics / RFC 5545)"]
 
     RP -->|"ReconPlan (JSON)"| Dispatcher["ディスパッチャ"]
 
     subgraph Phase2["Phase 2: Researcher（動的調査ワーカー）"]
         Dispatcher --> R1["Researcher Worker #1"]
         Dispatcher --> R2["Researcher Worker #2"]
-        T_WEB["fetch_webpage_text / google_search"]
+        T_OSV2["OSV.dev (CVE/CVSS/修正バージョン詳細)"]
+        T_WEB["fetch_webpage_text / google_search\n(未確認の予兆探索)"]
         T_GH["search_github_security_signals"]
+        R1 <--> T_OSV2
         R1 <--> T_WEB
         R1 <--> T_GH
+        R2 <--> T_OSV2
         R2 <--> T_WEB
         R2 <--> T_GH
     end
@@ -49,17 +58,24 @@ flowchart TD
 
     subgraph Phase3["Phase 3: Triage Agent（トリアージ＆指示書生成）"]
         TR["Triage Agent"]
-        T_DIFF["get_github_commit_or_advisory_detail"]
+        T_DIFF["get_github_commit_or_advisory_detail / OSV Refs"]
         TR <--> T_DIFF
     end
 
-    TR --> OutMD["triage_report.md (現場指示書)"]
-    TR --> OutJSON["triage_report.json (構造化データ)"]
+    TR --> OutMD["【出力②】triage_report.md (現場指示書)"]
+    TR --> OutJSON["【出力③】triage_report.json (構造化データ)"]
 
-    subgraph Phase4["Phase 4: Codebase Verifier（自社検証補助CLI）"]
-        OutJSON --> VER["triage-verifier (verifier.py)"]
-        SRC["自社ソースコード\n(demo_app/ など)"] --> VER
-        VER --> AuditReport["verification_audit_report.md\n(自社検証結果レポート)"]
+    subgraph Phase4["Phase 4: Verifier & Vendor Workflow（内製検証 ＆ 外注連携）"]
+        OutJSON --> VER["triage-verifier (内製コード・設定自動検証)"]
+        SRC["自社コード & 設定ファイル\n(server.xml, php.ini, nginx.conf等)"] --> VER
+        SIGNOFF["手動/ベンダー監査サインオフ\n(audit_signoff.json)"] --> VER
+        VER --> AuditReport["【出力④】verification_audit_report.md\n(自社検証結果レポート)"]
+
+        OutJSON --> V_EXP["ベンダー早見表エクスポート"]
+        V_EXP --> CSV["【出力⑤】vendor_checklist.csv\n(ベンダー早見表 / UTF-8 BOM)"]
+        CSV -.->|"ベンダー回答記入"| V_IMP["回答インポート & 自動サインオフ"]
+        V_IMP --> SIGNOFF
+        V_IMP --> METRICS["workflow_metrics.json\n(試行メトリクスログ)"]
     end
 ```
 
@@ -69,10 +85,11 @@ flowchart TD
 
 | エージェント | 責務 | 入力 | 出力スキーマ | 主なツール / 実行方式 |
 | :--- | :--- | :--- | :--- | :--- |
-| **Recon Planner** | SBOMを全件走査し、OSV一括照会結果と外部露出度から調査優先度（CRITICAL/HIGH）と検索クエリリストを策定 | SBOM JSON, 自社特性（任意） | `ReconPlan` | `load_sbom_summary`<br>`query_osv_batch` (CLI側で1回取得して注入) |
+| **Recon Planner** | SBOMを全件走査し、OSV一括照会結果と外部露出度から調査優先度を策定。同時に `advisory_sources.toml` を参照して公式フィード（RSS/Atom）や定例リリース日（Oracle CPU / Patch Tuesday等）から**事前予告イベントを決定論的に抽出**しカレンダー（`.ics`）を生成 | SBOM JSON,<br>`advisory_sources.toml` | `ReconPlan`,<br>事前予告イベントリスト | `load_sbom_summary`<br>`query_osv_batch`<br>`advisory_catalog` (フィード巡回 & 定例日計算)<br>`calendar` (RFC 5545 iCalendar生成) |
 | **Researcher** | 特定されたターゲットごとに、Google検索で事前予告・ブログを探索し、OSV.dev / OSV-Scannerの脆弱性シグナルと直近リリース情報を取得した上で2段階推論 | `ReconTarget` | `TargetResearchResult`<br>（`ResearchFinding` リスト） | **2段階実行:**<br>1. `google_search` + OSV.dev<br>2. `response_schema` による構造化合成 |
 | **Triage Agent** | 収集したシグナルとパッチ差分（Diff）を精読し、発火する具体的設定値・API利用条件を特定。現場指示書を生成 | `List[TargetResearchResult]` | `TriageReport`<br>（`TriageNotice` リスト） | **2段階実行:**<br>1. Commit Diff & 詳細アドバイザリ取得<br>2. `response_schema` による構造化指示書合成 |
-| **Verifier (補助CLI)** | 指示書の確認ポイントに基づき、自社コードベース内を走査してYes/Noの自社判定レポートを自動生成。手動監査サインオフ突合に対応 | `TriageReport (JSON)`<br>自社コードディレクトリ<br>`AuditAttestation` (任意) | `CodebaseAuditReport` | `extract_keywords_from_method`<br>`scan_directory_for_patterns`<br>厳格サインオフ突合（ID・版・NO検証） |
+| **Verifier (内製検証)** | 指示書の確認ポイントに基づき、自社リポジトリ内のコード（AST構文木解析・テスト分離）および設定ファイル（Tomcat `server.xml`、PHP `php.ini`、Nginx `nginx.conf` 等）を自動走査。手動監査サインオフと突合 | `TriageReport (JSON)`<br>自社コード & 設定ファイル<br>`AuditAttestation` (任意) | `CodebaseAuditReport` | `config_scanner` (XML/INI/Conf セマンティック解析)<br>`scanner` (AST/コメント完全除去)<br>厳格サインオフ突合（ID・版・NO検証・ドリフト検知） |
+| **Vendor Workflow (外注連携)** | 指示書の確認ポイントから Excel / CSV 早見表をワンクリック出力し、ベンダー回答を一括取り込みしてサインオフ確定。ターンアラウンド時間・往復回数を自動集計 | `TriageReport (JSON)`<br>記入済み早見表 CSV | `vendor_checklist.csv`<br>`workflow_metrics.json` | `export_vendor_checklist_csv` (UTF-8 BOM)<br>`import_vendor_checklist_csv`<br>`log_workflow_event` |
 
 ---
 

@@ -102,9 +102,12 @@
 
 ### 柱 2: Verifier の実戦的拡張（設定ファイル ＋ 主要3言語 / ADR-019）
 - [x] **設定ファイル検証エンジン（XML / INI / Conf / Properties）の導入（v0.3対応完了）**
-  - Tomcat `server.xml`（AJPコネクタの有無・secretRequired/secret保護状態）、PHP `php.ini`（`session.upload_progress.enabled`）、Nginx設定ファイル（`http2 on` / `http2 off`）のセマンティック自動検証（`src/triage_agent/verifier/config_scanner.py`）。
-  - XMLコメント（`<!-- ... -->`）、INIコメント（`;`）、Confコメント（`#`）を完全除去し、コメントアウトされた設定による誤検知を根絶。
-  - 発火条件がコードではなくミドルウェア設定に依存するケースを自動走査し、Yes/Noを即答可能に。
+  - Tomcat `server.xml`（AJPコネクタの有無・secretRequired/secret/requiredSecret保護状態）、PHP `php.ini`（`session.upload_progress.enabled`）、Nginx設定ファイル（`http2 on` / `http2 off`）のセマンティック自動検証（`src/triage_agent/verifier/config_scanner.py`）。
+  - **複数設定ファイルの全走査と集約:** 最初に見つかった1ファイルで早まった判定を下さず、`conf.d/*.conf` や環境ごとの複数設定ファイルを網羅。1つでも脆弱な設定があれば YES、すべて明示的に無効化されている場合のみ NO、未記載または解析不能なら外部設定要確認。
+  - **「分からないものを安全と言わない」の徹底:** Nginx で http2 設定が未記載の場合、include や外部LB/CDN終端の可能性があるため安易に NO とせず「外部設定要確認」に倒す。PHP配布用テンプレート（`php.ini-production` 等）は実設定の証拠とせずスキップ。
+  - **構造化された検証マッピング（`config_check`）:** 単なる文字列の部分一致（server.xml や http2 の単語だけ）での誤爆を防ぎ、確認ポイントに `config_check`（`tomcat_ajp`, `nginx_http2`, `php_upload_progress`）の明示フィールドを導入。該当検査がない場合は安全側にコード検索や要確認へフォールバック。
+  - **構文解析エラーの明示:** XMLのパース失敗（`&nbsp;` 等）を黙って握りつぶさず、「構文解析エラーのため要確認」として出力。
+  - **コメント除去の堅牢化:** XMLコメント（1行内の複数 `<!-- ... -->` および複数行）、INIコメント（`;`）、Confコメント（`#`）を完全除去し、コメントアウトされた設定による誤検知を根絶。
 - [x] **主要3言語（JavaScript/TypeScript, Java, PHP）の構文走査強化（v0.3対応完了）**
   - Cスタイル言語（JS/TS, Java, Go, PHP等）における `/* ... */` ブロックコメント、`//` 行コメントの完全除外。
   - 設定ファイル名（`server.xml`, `php.ini`, `nginx.conf` 等）自体の言及によるコード検索誤マッチを除外するトークンフィルタを導入。
@@ -129,7 +132,7 @@
   - 直近の実事例（Node/jsonwebtoken, Tomcat/AJP Ghostcat, PHP/session upload progress, Nginx/HTTP2Shell Rapid Reset）を正解ラベル（期待判定: YES/NO/外部設定要確認）付きの最小再現ファイルおよびグランドトゥルースマニフェスト（`benchmark/manifest.json`）として整備。
   - コメントアウトや明示的無効化設定を含むネガティブケース（`benchmark/cases_negative/`）も完備。
 - [x] **見逃し（False Negative）・誤検知（False Positive）の自動検知テスト（v0.3対応完了）**
-  - Verifier の言語・設定追加時に、過去の正解判定が壊れていないかを自動判定するベンチマークスイート（`scratch/test_benchmark_suite.py`）を実装。全ケース100%パスを検証。
+  - Verifier の言語・設定追加時に、過去の正解判定が壊れていないかを自動判定するベンチマークスイート（`tests/test_benchmark_suite.py`）を実装。全ケース100%パスを検証。
 
 ---
 

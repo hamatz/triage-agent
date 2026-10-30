@@ -109,6 +109,36 @@ def remove_c_style_comments_from_line(raw_line: str) -> Tuple[str, bool]:
     return clean_line, False
 
 
+def remove_xml_comments_from_line(raw_line: str, in_comment: bool) -> Tuple[str, bool]:
+    """Remove XML comments (<!-- ... -->) across single or multiple lines.
+    
+    Handles multiple comments per line and correctly tracks multiline state.
+    Replaces commented sections with equal-length whitespace to preserve column offsets.
+    """
+    clean_line = raw_line
+    if in_comment:
+        end = clean_line.find("-->")
+        if end != -1:
+            clean_line = " " * (end + 3) + clean_line[end + 3:]
+            in_comment = False
+        else:
+            return "", True
+
+    while True:
+        start = clean_line.find("<!--")
+        if start == -1:
+            break
+        end = clean_line.find("-->", start + 4)
+        if end != -1:
+            clean_line = clean_line[:start] + " " * (end + 3 - start) + clean_line[end + 3:]
+        else:
+            clean_line = clean_line[:start]
+            in_comment = True
+            break
+
+    return clean_line, in_comment
+
+
 def extract_python_docstring_and_code_lines(code_str: str) -> Tuple[Set[int], Set[int]]:
     """Parse Python AST to distinguish docstrings from executable code/constants.
     
@@ -192,22 +222,9 @@ def scan_directory_for_patterns(code_dir: Path, patterns: List[str], max_matches
                                 effective_line, in_block_comment = remove_c_style_comments_from_line(raw_line)
                         # 1.1 XML-Style comment handling (<!-- ... -->)
                         elif is_xml_style:
-                            if in_block_comment:
-                                if "-->" in raw_line:
-                                    in_block_comment = False
-                                    end_idx = raw_line.find("-->")
-                                    effective_line = raw_line[end_idx + 3:]
-                                else:
-                                    continue
-                            else:
-                                if "<!--" in raw_line:
-                                    start_idx = raw_line.find("<!--")
-                                    end_idx = raw_line.find("-->", start_idx + 4)
-                                    if end_idx != -1:
-                                        effective_line = raw_line[:start_idx] + " " * (end_idx + 3 - start_idx) + raw_line[end_idx + 3:]
-                                    else:
-                                        effective_line = raw_line[:start_idx]
-                                        in_block_comment = True
+                            effective_line, in_block_comment = remove_xml_comments_from_line(raw_line, in_block_comment)
+                            if not effective_line.strip() and in_block_comment:
+                                continue
 
                         effective_str = effective_line.strip()
 

@@ -29,24 +29,30 @@ Tanium、Nexus IQ、Snyk、Trivy などの既存製品は「CVEが発行され�
 
 ```mermaid
 flowchart TD
-    SBOM["入力: SBOM (Syft CycloneDX / SPDX JSON)"] --> RP
+    SBOM["入力①: SBOM (CycloneDX / SPDX JSON)"] --> RP
+    CAT["入力②: 事前予告カタログ\n(advisory_sources.toml)"] --> RP
 
-    subgraph Phase1["1. Recon Planner (戦略立案)"]
+    subgraph Phase1["1. Recon Planner (戦略立案 ＆ 事前予告抽出)"]
         RP["Recon Planner"]
         T_SBOM["Tool: load_sbom_summary"]
-        T_OSV1["Tool: query_osv_batch (OSV.dev一括・Tokenless)"]
+        T_OSV1["Tool: query_osv_batch (OSV一括・Tokenless)"]
+        T_CAT["Tool: advisory_catalog\n(フィード巡回 & 定例パッチ日算出)"]
         RP <--> T_SBOM
         RP <--> T_OSV1
+        RP <--> T_CAT
     end
 
-    RP -->|"ReconPlan (JSON)"| Dispatcher["並列ディスパッチャ"]
+    RP -->|"確定した事前予告シグナル"| CalGen["カレンダー生成エンジン"]
+    CalGen --> OutICS["【出力①】事前予告カレンダー\n(upcoming_patches.ics / RFC 5545)"]
+
+    RP -->|"ReconPlan (深掘りターゲット一覧)"| Dispatcher["並列ディスパッチャ"]
 
     subgraph Phase2["2. Researcher (動的調査 × N並列)"]
         Dispatcher --> R1["Researcher Worker #1"]
         Dispatcher --> R2["Researcher Worker #2"]
         T_OSV2["Tool: OSV.dev (CVE/CVSS/修正バージョン詳細)"]
-        T_WEB["Tool: google_search / fetch_webpage_text"]
-        T_GH["Tool: search_github_security_signals (補足シグナル)"]
+        T_WEB["Tool: google_search / fetch_webpage_text\n(未確認の予兆探索)"]
+        T_GH["Tool: search_github_security_signals"]
         R1 <--> T_OSV2
         R1 <--> T_WEB
         R1 <--> T_GH
@@ -64,21 +70,30 @@ flowchart TD
         TR <--> T_DIFF
     end
 
-    TR --> OutMD["出力①: 現場指示書 (triage_report.md)"]
-    TR --> OutJSON["出力②: 構造化指示書 (triage_report.json)"]
+    TR --> OutMD["【出力②】現場指示書 (triage_report.md)"]
+    TR --> OutJSON["【出力③】構造化指示書 (triage_report.json)"]
 
-    subgraph Phase4["4. Verifier (自社コード検証補助CLI)"]
-        OutJSON --> VER["triage-verifier (verifier.py)"]
-        SRC["自社ソースコード\n(/path/to/my-repo)"] --> VER
-        VER --> AuditReport["出力③: 自社検証レポート\n(verification_audit_report.md)"]
+    subgraph Phase4["4. Verifier & Vendor Workflow (内製検証 & 外注連携)"]
+        OutJSON --> VER["triage-verifier (内製コード・設定自動検証)"]
+        SRC["自社コード & 設定ファイル\n(server.xml, php.ini, nginx.conf等)"] --> VER
+        SIGNOFF["手動/ベンダー監査サインオフ\n(audit_signoff.json)"] --> VER
+        VER --> AuditReport["【出力④】自社検証レポート\n(verification_audit_report.md)"]
+
+        OutJSON --> V_EXP["ベンダー早見表エクスポート"]
+        V_EXP --> CSV["【出力⑤】ベンダー早見表\n(vendor_checklist.csv / UTF-8 BOM)"]
+        CSV -.->|"ベンダー回答記入"| V_IMP["回答インポート & 自動サインオフ"]
+        V_IMP --> SIGNOFF
+        V_IMP --> METRICS["試行メトリクスログ\n(workflow_metrics.json)"]
     end
 ```
 
 ### コンポーネント・エージェントの役割
-1. **Recon Planner（戦略立案）:** SBOMから推移的依存を解析し、認証不要・高速な `OSV.dev` 一括照会結果を組み合わせ、攻撃対象領域とRCE傾向から「今すぐ深層調査すべきTop Nコンポーネント」と検索戦略（Pre-announcement事前予告探索を含む）を決定。
-2. **Researcher（動的調査）:** OSV.dev による確定CVE・CVSS・影響/修正バージョンの高精度取得に加え、Gemini Google Search GroundingやGitHub公開シグナルを駆使し、公式パッチ予告や直近シグナルを能動的に調査。
-3. **Triage Agent（発火条件特定・指示書作成）:** パッチのコミット差分（Diff）やAdvisory本文を精読し、「どの設定値（`config.xxx = true` 等）が有効な時に発火するか」を特定。CVSSスコア付きの現場即応指示書を出力。
-4. **Verifier（補助CLI: 自社コードベース自動検証）:** 指示書内の「確認ポイント（Yes/No）」に基づき、自社リポジトリを自動走査して「自社で本当に発火条件を踏んでいるか」をAST構文解析およびテストコード分離により自動判定し、該当行付きの自社検証結果レポートを出力。
+1. **Recon Planner（戦略立案 ＆ 事前予告抽出）:** SBOMから推移的依存を解析し、認証不要・高速な `OSV.dev` 一括照会結果を組み合わせ、攻撃対象領域とRCE傾向から「今すぐ深層調査すべきTop Nコンポーネント」を決定。同時に、コミュニティ監視カタログ（`advisory_sources.toml`）と突合して公式フィード（RSS/Atom）や次回定例リリース日（Oracle CPU / Patch Tuesday等）から**事前予告イベントを決定論的に抽出**し、パッチ公開前の先回りアクション用カレンダー（`upcoming_patches.ics`）を出力。
+2. **Researcher（動的調査）:** OSV.dev による確定CVE・CVSS・影響/修正バージョンの高精度取得に加え、Gemini Google Search GroundingやGitHub公開シグナルを駆使し、公式パッチ予告やWeb上の未確認シグナルを能動的に調査。
+3. **Triage Agent（発火条件特定・指示書作成）:** パッチのコミット差分（Diff）やAdvisory本文を精読し、「どの設定値（`config.xxx = true` 等）が有効な時に発火するか」を特定。CVSSスコア付きの現場即応指示書（Markdown / JSON）を出力。
+4. **Verifier & Vendor Workflow（自社検証 ＆ 外注連携）:** 
+   - **内製システム:** 指示書内の「確認ポイント（Yes/No）」に基づき、自社リポジトリのソースコード（AST構文木走査・テストコード分離）およびミドルウェア設定ファイル（Tomcat `server.xml`、PHP `php.ini`、Nginx `nginx.conf` 等）を自動走査し、客観的3状態（YES / 外部設定要確認 / NO）で自社検証レポートを出力。
+   - **外注委託システム:** 指示書からワンクリックで Excel / CSV 帳票（`vendor_checklist.csv`）を出力。ベンダー回答を取り込んでタイムスタンプ付きサインオフ（`audit_signoff.json`）を自動確定し、試行成果測定用メトリクス（`workflow_metrics.json`）を記録。
 
 ---
 
@@ -311,7 +326,7 @@ LLMによる文章生成は、実行ごとに言い回しが微妙に変わる�
 
 #### どんな時に作られるのか？
 `triage-agent` の実行時、第1フェーズ（Recon Planner）において自社の SBOM 内のコンポーネントがコミュニティ監視カタログ（`advisory_sources.toml`）と自動突合されます。
-Node.js 公式ブログ、OpenSSL、Go、Tomcat などの公式フィード（RSS/Atom）を定点巡回して「未来のパッチ予告（Upcoming Security Releases）」を検知するか、Oracle CPU や Microsoft Patch Tuesday のような次回パッチ提供日（第3火曜日など）が計算されたタイミングで、**事前予告イベント** が生成されます。
+Node.js や Tomcat などの公式フィード（RSS/Atom）を定点巡回して「未来のパッチ予告（Upcoming Security Releases）」を検知するか、Oracle CPU や Microsoft Patch Tuesday のような次回パッチ提供日（第3火曜日など）が計算されたタイミングで、**事前予告イベント** が生成されます（※OpenSSL、Go、Python 等は現在フィードではなく監視先チャンネルの案内のみ対応）。
 
 CLI 引数に `--calendar <path.ics>` を指定するか、Web GUI の「📅 予定表 (.ics)」ボタンをクリックすることで、RFC 5545 準拠の標準 iCalendar ファイルとして即座に出力されます。
 
@@ -323,7 +338,7 @@ python -m triage_agent.cli --sbom my_sbom.json --output triage_report.md --calen
 #### 実務におけるメリット：パッチ公開前に何ができるか？
 従来の脆弱性管理は「CVEが公開された直後」から始まります。しかし、金曜夕方や連休前夜に Critical CVE が公表されると、担当者の確保や変更管理申請が間に合わずパニックに陥ります。
 
-事前予告カレンダーを自社の Google カレンダー、Outlook、またはチーム共有カレンダーにインポート（購読）することで、**CVE が発行される前に以下の先回りアクションを完了** できます：
+事前予告カレンダー（`.ics`）を自社の Google カレンダーや Outlook、またはチーム共有カレンダーに取り込む（インポートする）ことで、**CVE が発行される前に以下の先回りアクションを完了** できます：
 
 1. **オンコール・当番エンジニアの事前確保:**
    「来週火曜日に Node.js の High 深刻度セキュリティリリースがある」ことが分かっていれば、リリースの数日前に夜間・翌朝の対応担当者をあらかじめアサインしておけます。
@@ -341,10 +356,12 @@ python -m triage_agent.cli --sbom my_sbom.json --output triage_report.md --calen
 ```
 
 #### 機密保護・社内情報の漏洩防止設計（ADR-013）
-生成される `.ics` ファイルは共有カレンダーや外部SaaS（Google Calendar / Outlook）に登録されることを想定しています。そのため、カレンダーのタイトルや本文には **自社の内部パッケージ名、独自サービス名、および具体的なインベントリ情報は一切記載されません**：
-- **予定タイトル:** `【セキュリティ事前予告】Node.js Official Blog (対象 2 件)`
+生成される `.ics` ファイルは共有カレンダーや外部SaaS（Google Calendar / Outlook）に取り込まれることを想定しています。そのため、カレンダーのタイトルや本文には **自社の内部パッケージ名、独自サービス名、および具体的なインベントリ情報は載せず、対象件数のみを記載** します：
+- **予定タイトル:** `【事前予告 [High]】Node.js Security Releases (対象 2 件)`
 - **予定説明:** 内部パッケージ名は伏せられ、`【該当コンポーネント】2 件 (詳細は社内トリアージレポートを参照)` と記載。
-外部カレンダーの同期や共有設定ミスによって社内のシステム構成（攻撃対象領域）が外部に漏洩することを根本から防ぎます。
+
+> ⚠️ **共有範囲に関する注意:**
+> 個別のパッケージ名は載りませんが、情報源名（例: Oracle CPU、Tomcat、Node.js）と件数から利用している技術スタックの大枠は推測できます。全社公開カレンダー等へ登録する際は共有範囲にご留意ください。
 
 #### 監視対象プロジェクトの追加方法（`advisory_sources.toml`）
 事前予告を拾うロジックはコードではなく宣言的な TOML データ（[advisory_sources.toml](src/triage_agent/data/advisory_sources.toml)）として分離されています。社内で利用しているOSSや独自ベンダーがある場合、このファイルに項目を追加するだけでカレンダー連携の対象を自由に拡張できます：
@@ -352,11 +369,20 @@ python -m triage_agent.cli --sbom my_sbom.json --output triage_report.md --calen
 ```toml
 [[sources]]
 id = "my-framework"
-name = "My Framework Security Feed"
-type = "feed"
-url = "https://example.com/security/feed.xml"
-purl_patterns = ["pkg:generic/my-framework", "my-framework"]
-check_point_hint = "My Framework のセキュリティ設定を確認しているか"
+name = "My Framework Security Releases"
+ecosystem = "npm"
+package_patterns = ["my-framework"]
+purl_patterns = ["pkg:npm/my-framework*"]
+url = "https://example.com/security/blog/"
+feed_url = "https://example.com/security/feed.xml"
+type = "rss_feed"
+is_official = true
+cadence_hint = "事前予告は通常、リリースの数日前に公開されます。"
+keywords = ["security release", "vulnerabilities", "upcoming"]
+default_preparations = [
+    "当該日の輪番要員の手配",
+    "ベンダー作業枠の事前仮押さえ"
+]
 ```
 
 ---
@@ -396,15 +422,15 @@ triage-agent/
             ├── report.py     # Markdownレポート生成
             └── cli.py        # triage-verifier CLIエントリポイント
         ├── tools/
-            ├── sbom.py       # Syft CycloneDX / JSON パーサー
-            ├── osv.py        # OSV.dev 一括照会 API
-            ├── github.py     # GitHub Advisories / Commits / Diff 取得
-            ├── web.py        # Webページ本文スクレイパー
-            ├── advisory_catalog.py # 事前予告カタログ照合＆フィード巡回
-            ├── calendar.py   # RFC 5545 iCalendar (.ics) 生成
-            └── vendor_workflow.py # ベンダー往復用 Excel/CSV 入出力＆メトリクス集計
+        │   ├── sbom.py       # Syft CycloneDX / JSON パーサー
+        │   ├── osv.py        # OSV.dev 一括照会 API
+        │   ├── github.py     # GitHub Advisories / Commits / Diff 取得
+        │   ├── web.py        # Webページ本文スクレイパー
+        │   ├── advisory_catalog.py # 事前予告カタログ照合＆フィード巡回
+        │   ├── calendar.py   # RFC 5545 iCalendar (.ics) 生成
+        │   └── vendor_workflow.py # ベンダー往復用 Excel/CSV 入出力＆メトリクス集計
         ├── data/
-            └── advisory_sources.toml # 事前予告監視先カタログ定義
+        │   └── advisory_sources.toml # 事前予告監視先カタログ定義
         └── agents/
             ├── planner.py    # Recon Planner エージェント
             ├── researcher.py # Researcher エージェント

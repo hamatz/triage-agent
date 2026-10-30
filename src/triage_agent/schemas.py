@@ -131,6 +131,10 @@ class CheckPointItem(BaseModel):
     verification_method: str = Field(
         description="Concrete inspection method: exact config files, XML tags, ini directives, grep/ldd commands, code search terms"
     )
+    config_check: Optional[str] = Field(
+        default=None,
+        description="Explicit configuration check module if applicable: 'tomcat_ajp', 'nginx_http2', 'php_upload_progress', etc."
+    )
 
 
 class TriageNotice(BaseModel):
