@@ -78,6 +78,8 @@ def export_checklist_csv(
     target_prod_lower = target_product.strip().lower() if target_product else None
     target_comp_lower = target_component.strip().lower() if target_component else None
 
+    matched_notices: List[Any] = []
+
     for notice in report.notices:
         prod_name = notice.product_name or notice.component_name or "Unknown"
         comp_name = notice.component_name or ""
@@ -90,6 +92,8 @@ def export_checklist_csv(
                 continue
         if target_comp_lower and target_comp_lower != comp_name.lower().strip():
             continue
+
+        matched_notices.append(notice)
 
         for cp in notice.check_points:
             cp_id = cp.check_point_id or f"{notice.component_name or 'target'}-{idx}"
@@ -127,12 +131,18 @@ def export_checklist_csv(
     target_path.parent.mkdir(parents=True, exist_ok=True)
     target_path.write_text(csv_text, encoding="utf-8")
 
-    # Record distribution metric
+    # Record distribution metric: select earliest announcement/published date specifically from matched notices
     ann_date = None
-    for n in report.notices:
+    target_notices = matched_notices if matched_notices else report.notices
+    for n in target_notices:
         if n.announcement_date:
-            ann_date = n.announcement_date
-            break
+            raw_d = str(n.announcement_date).strip()
+            d_sub = raw_d[:10]
+            if len(d_sub) == 10 and d_sub[4] == "-" and d_sub[7] == "-":
+                if ann_date is None or d_sub < ann_date:
+                    ann_date = d_sub
+            elif ann_date is None:
+                ann_date = raw_d
 
     record_workflow_event("vendor_checklist_exported", {
         "distribution_id": distribution_id,

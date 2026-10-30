@@ -171,6 +171,152 @@ class TestCleanComponentVerification(unittest.TestCase):
         self.assertEqual(saved_entry["remediation_note"], "Deploy commit abcdef1")
         self.assertIsNotNone(saved_entry.get("total_lead_time_hours"))
 
+    def test_osv_hit_with_llm_findings_omission_must_not_become_safe(self):
+        """Opus issue 1 reproduction: OSV has hit, but LLM omitted findings.
+
+        Must NOT set no_known_vulnerability=True, and MUST NOT erase check_points!
+        """
+        from triage_agent.agents.triage import run_triage_agent
+        from triage_agent.schemas import ReconTarget, TargetResearchResult
+
+        # Simulate axios: OSV has CVE-2026-50001, but findings is empty (LLM omitted it)
+        research_result = TargetResearchResult(
+            target=ReconTarget(
+                name="axios",
+                version="1.7.2",
+                ecosystem="npm",
+                priority="HIGH",
+                rationale="Test",
+            ),
+            findings=[],  # LLM omitted findings
+            osv_vuln_ids=["CVE-2026-50001"],  # Ground-truth raw OSV hit
+            recon_notes="Clean notes",
+            errors=[],
+        )
+
+        # In dry_run mode
+        report = run_triage_agent(
+            research_results=[research_result],
+            dry_run=True,
+        )
+
+        self.assertEqual(len(report.notices), 1)
+        notice = report.notices[0]
+        # Flag must NOT be True!
+        self.assertFalse(notice.no_known_vulnerability)
+        # Checkpoint must NOT be deleted!
+        self.assertGreater(len(notice.check_points), 0)
+        self.assertIn("CVE-2026-50001", notice.check_points[0].target_or_cve)
+
+        # Verifier must report 要確認, NEVER NO
+        audit_res = verify_codebase(report, code_dir_path=str(self.code_dir))
+        self.assertNotEqual(audit_res.overall_status, "NO (安全・確認済み)")
+        self.assertIn("要確認", audit_res.overall_status)
+
+    def test_unscanned_prefix_matching(self):
+        """Opus issue 2 reproduction: unscanned component list with descriptive message.
+
+        e.g. 'axios: 上位10件のみ詳細取得' must prevent axios from becoming no_known_vulnerability=True!
+        """
+        from triage_agent.agents.triage import run_triage_agent
+        from triage_agent.schemas import ReconTarget, TargetResearchResult
+
+        # Clean findings and clean osv_vuln_ids, BUT listed in unscanned items
+        research_result = TargetResearchResult(
+            target=ReconTarget(
+                name="axios",
+                version="1.7.2",
+                ecosystem="npm",
+                priority="HIGH",
+                rationale="Test",
+            ),
+            findings=[],
+            osv_vuln_ids=[],
+            recon_notes="Partial scan",
+            errors=[],
+        )
+
+        report = run_triage_agent(
+            research_results=[research_result],
+            unscanned_components=["axios: 上位10件のみ詳細取得（残り未取得）"],
+            dry_run=True,
+        )
+
+        notice = report.notices[0] if report.notices else None
+        if notice:
+            self.assertFalse(notice.no_known_vulnerability)
+
+    def test_export_checklist_scoped_announcement_date(self):
+        """Opus issue 3 reproduction: export checklist scoped to target must use target's announcement date.
+
+        When report contains nodejs (announced 2026-10-21) and axios (announced 2026-10-28),
+        exporting with target_product='axios' must record announced_at='2026-10-28', NOT 2026-10-21!
+        """
+        from triage_agent.tools.vendor_workflow import export_checklist_csv
+
+        metrics_file = self.code_dir / "workflow_metrics_scoped.json"
+        report = TriageReport(
+            report_title="Scoped Export Test",
+            scan_target="test-repo",
+            total_dependencies=2,
+            notices=[
+                TriageNotice(
+                    product_name="nodejs",
+                    component_name="nodejs",
+                    announcement_date="2026-10-21",
+                    conclusion="Node.js critical RCE",
+                    fixed_versions="20.18.1",
+                    severity_note="Critical",
+                    check_points=[
+                        CheckPointItem(
+                            check_point_id="node-cp1",
+                            target_or_cve="CVE-2026-111497",
+                            cvss="9.8",
+                            content_summary="Brotli",
+                            affected_versions="< 20.18.1",
+                            check_point_yes_no="brotli API を使用しているか",
+                            verification_method="brotliDecompress を検索",
+                        )
+                    ],
+                ),
+                TriageNotice(
+                    product_name="axios",
+                    component_name="axios",
+                    announcement_date="2026-10-28",
+                    conclusion="Axios issue",
+                    fixed_versions="1.7.3",
+                    severity_note="Medium",
+                    check_points=[
+                        CheckPointItem(
+                            check_point_id="axios-cp1",
+                            target_or_cve="CVE-2026-50001",
+                            cvss="5.3",
+                            content_summary="Axios SSRF",
+                            affected_versions="< 1.7.3",
+                            check_point_yes_no="proxy 設定を使用しているか",
+                            verification_method="proxy を検索",
+                        )
+                    ],
+                ),
+            ],
+        )
+
+        csv_file = self.code_dir / "axios_checklist.csv"
+        _, _, dist_id = export_checklist_csv(
+            report,
+            output_path=str(csv_file),
+            target_product="axios",
+        )
+
+        # Inspect generated workflow metric
+        from triage_agent.tools.vendor_workflow import get_workflow_metrics
+        # Metrics file is triage-output/workflow_metrics.json by default in export_checklist_csv
+        metrics = get_workflow_metrics()
+        dist_entry = metrics.get("distributions", {}).get(dist_id)
+        self.assertIsNotNone(dist_entry)
+        self.assertEqual(dist_entry["announced_at"], "2026-10-28")
+        self.assertNotEqual(dist_entry["announced_at"], "2026-10-21")
+
 
 if __name__ == "__main__":
     unittest.main()

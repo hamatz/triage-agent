@@ -104,6 +104,10 @@ class ResearchFinding(BaseModel):
 class TargetResearchResult(BaseModel):
     target: ReconTarget
     findings: List[ResearchFinding] = Field(default_factory=list)
+    osv_vuln_ids: List[str] = Field(
+        default_factory=list,
+        description="Raw vulnerability IDs returned directly by OSV.dev API (bypassing LLM interpretation)",
+    )
     recon_notes: str = Field(description="Observations from web and GitHub searches, including non-findings if clean")
     errors: List[str] = Field(
         default_factory=list,

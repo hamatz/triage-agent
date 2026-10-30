@@ -222,10 +222,12 @@ Summarize your findings with source URLs. If no upcoming announcements or active
                     )
                 )
 
+        raw_osv_ids = [v["id"] for v in osv_vulns if v.get("id")]
         error_notes = f" | Errors: {'; '.join(errors)}" if errors else ""
         return TargetResearchResult(
             target=target,
             findings=findings,
+            osv_vuln_ids=raw_osv_ids,
             recon_notes=f"[DRY-RUN] OSV.dev and repository scan found {len(findings)} signal(s){error_notes}.",
             errors=errors,
         )
@@ -290,6 +292,8 @@ Summarize your findings with source URLs. If no upcoming announcements or active
 
     if response.text:
         result = TargetResearchResult.model_validate_json(response.text)
+        # Directly attach raw OSV vulnerability IDs from code (bypassing LLM interpretation)
+        result.osv_vuln_ids = [v["id"] for v in osv_vulns if v.get("id")]
         all_raw_errors = result.errors + errors
         # Keep all genuine errors (including OSV, LLM, or fatal errors).
         # Only discard secondary GitHub API advisory/release/commit notices if LLM repeated them into errors.

@@ -166,6 +166,8 @@ def execute_triage_pipeline(
     # Components that have OSV hits but were omitted due to max_targets pose a risk and are recorded.
     # When OSV batch failed: omitted components were NEVER verified and must be explicitly recorded.
     target_names = {t.name for t in recon_plan.targets}
+    unchecked: List[str] = []
+    omitted_osv_hits: List[str] = []
     if actual_osv_failures:
         unchecked = [c.name for c in components if c.name not in target_names]
         if unchecked:
@@ -201,6 +203,10 @@ def execute_triage_pipeline(
         )
         try:
             res = run_researcher(target, dry_run=is_dry_run)
+            # Guarantee raw OSV hits from pipeline batch lookup are also preserved
+            batch_osv_ids = [v["id"] for v in osv_hits.get(target.name, []) if v.get("id")]
+            if batch_osv_ids:
+                res.osv_vuln_ids = list(dict.fromkeys(res.osv_vuln_ids + batch_osv_ids))
             research_results.append(res)
             if res.errors:
                 failed_targets.add(target.name)
@@ -213,6 +219,13 @@ def execute_triage_pipeline(
     if is_github_auth_failed():
         unscanned_items.append("GitHub API 認証エラー: 設定された GITHUB_TOKEN が無効または期限切れです（HTTP 401 Bad credentials）")
 
+    # Maintain canonical set of failed/unscanned component names (ADR-019 / v0.3.1)
+    failed_component_names: Set[str] = set(failed_targets)
+    if unchecked:
+        failed_component_names.update(unchecked)
+    if omitted_osv_hits:
+        failed_component_names.update(omitted_osv_hits)
+
     # -------------------------------------------------------------
     # Phase 3: Triage & Action Generation
     # -------------------------------------------------------------
@@ -220,6 +233,7 @@ def execute_triage_pipeline(
     triage_report = run_triage_agent(
         research_results=research_results,
         unscanned_components=unscanned_items,
+        failed_component_names=failed_component_names,
         dry_run=is_dry_run,
     )
     triage_report.osv_unsupported_components = osv_unsupported

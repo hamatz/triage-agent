@@ -1,7 +1,7 @@
 import json
 import re
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Set
 from google import genai
 from google.genai import types
 
@@ -23,6 +23,7 @@ PROMPT_PATH = Path(__file__).resolve().parent.parent.parent.parent / "prompts" /
 def run_triage_agent(
     research_results: List[TargetResearchResult],
     unscanned_components: Optional[List[str]] = None,
+    failed_component_names: Optional[Set[str]] = None,
     client: Optional[genai.Client] = None,
     dry_run: bool = False,
 ) -> TriageReport:
@@ -37,6 +38,21 @@ def run_triage_agent(
         - Generates the standard TriageNotice report.
     """
     unscanned = list(unscanned_components or [])
+    from datetime import date
+    today_iso = date.today().isoformat()
+
+    # Collect set of failed / unscanned / overflow component names
+    failed_names: Set[str] = set()
+    if failed_component_names:
+        failed_names.update(f.lower().strip() for f in failed_component_names)
+
+    for u in unscanned:
+        u_clean = u.strip()
+        if ":" in u_clean:
+            cand = u_clean.split(":", 1)[0].strip()
+            cand_name = cand.split()[0].split("(")[0].strip().lower()
+            if cand_name and not cand_name.startswith("osv") and not cand_name.startswith("github"):
+                failed_names.add(cand_name)
 
     # -------------------------------------------------------------
     # Stage 1: Retrieve actual patch diffs & advisory details
@@ -82,7 +98,57 @@ def run_triage_agent(
 
         for r in research_results:
             target = r.target
+            raw_osv_hits = getattr(r, "osv_vuln_ids", [])
+            is_clean_by_data = (
+                len(raw_osv_hits) == 0
+                and len(r.findings) == 0
+                and len(r.errors) == 0
+                and target.name.lower() not in failed_names
+            )
+            if is_clean_by_data:
+                notice = TriageNotice(
+                    product_name=f"{target.name}（利用バージョン: {target.version}）",
+                    component_name=target.name,
+                    announcement_date=today_iso,
+                    conclusion=f"現在導入されているバージョン {target.version} において該当するセキュリティ脆弱性は報告されていません。対応不要です。",
+                    fixed_versions="N/A (該当脆弱性なし)",
+                    severity_note="なし",
+                    no_known_vulnerability=True,
+                    clean_basis=f"OSV 0件・Researcher 所見0件・調査エラーなし（{today_iso}時点）",
+                    check_points=[],
+                )
+                notices.append(notice)
+                continue
+
             if not r.findings:
+                if raw_osv_hits:
+                    # OSV hits exist but no findings generated: create check point directly from raw OSV IDs
+                    cp_items: List[CheckPointItem] = []
+                    for vid in raw_osv_hits:
+                        q_text = f"{target.name} において {vid} に関連する機能・APIを直接呼び出しているか"
+                        cp_items.append(
+                            CheckPointItem(
+                                check_point_id=compute_check_point_id(target.name, vid, q_text),
+                                target_or_cve=vid,
+                                cvss="未公表",
+                                content_summary=f"OSV hit {vid}",
+                                affected_versions=f"約 {target.version}",
+                                check_point_yes_no=q_text,
+                                verification_method=f"コードベースを検索。呼び出しや該当設定が一切存在しなければ NO（非該当）。",
+                            )
+                        )
+                    notice = TriageNotice(
+                        product_name=f"{target.name}（利用バージョン: {target.version}）",
+                        component_name=target.name,
+                        notice_hash=compute_notice_hash(cp_items),
+                        announcement_date="直近公開（OSV最新シグナル）",
+                        conclusion=f"【DRY-RUN】OSV.dev で検出された脆弱性（{', '.join(raw_osv_hits)}）の確認が必要です。",
+                        fixed_versions="最新パッチを確認",
+                        severity_note="要確認",
+                        no_known_vulnerability=False,
+                        check_points=cp_items,
+                    )
+                    notices.append(notice)
                 continue
 
             check_points: List[CheckPointItem] = []
@@ -373,20 +439,41 @@ def run_triage_agent(
 
             notice.component_name = canonical_name
 
-            # Machine-determined ground truth: OSV=0, findings=0, errors=0, and not in unscanned list
             res = results_by_name.get(canonical_name.lower())
+
+            # 1. Update announcement_date from earliest finding's published_date if available for lifecycle metrics T(-1)
+            if res and res.findings:
+                earliest_pub = None
+                for f in res.findings:
+                    if getattr(f, "published_date", None):
+                        raw_d = str(f.published_date).strip()
+                        d_sub = raw_d[:10]
+                        if len(d_sub) == 10 and d_sub[4] == "-" and d_sub[7] == "-":
+                            if earliest_pub is None or d_sub < earliest_pub:
+                                earliest_pub = d_sub
+                if earliest_pub:
+                    notice.announcement_date = earliest_pub
+
+            # 2. Machine-determined ground truth:
+            # - Raw OSV hits must be 0 (from osv_vuln_ids directly, NOT LLM output!)
+            # - Researcher findings must be 0
+            # - Researcher errors must be 0
+            # - Component must not be in failed / unscanned / overflow set
+            raw_osv_hits = getattr(res, "osv_vuln_ids", []) if res else []
             is_clean_by_data = (
                 res is not None
-                and not res.findings
-                and not res.errors
-                and canonical_name.lower() not in unscanned_lower
+                and len(raw_osv_hits) == 0
+                and len(res.findings) == 0
+                and len(res.errors) == 0
+                and canonical_name.lower() not in failed_names
             )
 
             if is_clean_by_data:
                 notice.no_known_vulnerability = True
                 notice.clean_basis = f"OSV 0件・Researcher 所見0件・調査エラーなし（{today_iso}時点）"
-                # Strictly suppress fabricated check_points from LLM on non-vulnerable components
-                notice.check_points = []
+                # DO NOT clear notice.check_points!
+                # If LLM generated check_points despite 0 findings, it signals a conflict or caution.
+                # Verifier will only judge safe if notice.no_known_vulnerability is True AND len(notice.check_points) == 0.
             else:
                 notice.no_known_vulnerability = False
                 notice.clean_basis = None
