@@ -204,6 +204,32 @@ def compare_rpm_versions(v1: str, v2: str) -> int:
     return 0
 
 
+def compare_kernel_versions(
+    distro: Optional[str],
+    v1: str,
+    v2: str,
+) -> Optional[int]:
+    """Compare two kernel package versions according to the distribution rules.
+
+    Returns:
+        < 0 if v1 < v2
+        0 if v1 == v2
+        > 0 if v1 > v2
+        None if indeterminate / unsupported
+    """
+    if not v1 or not v2:
+        return None
+    d_clean = (distro or "").strip().lower()
+    try:
+        if d_clean in ("ubuntu", "debian"):
+            return compare_debian_versions(v1, v2)
+        elif d_clean in ("rhel", "almalinux", "rocky", "centos", "fedora"):
+            return compare_rpm_versions(v1, v2)
+        return None
+    except Exception:
+        return None
+
+
 def is_kernel_package_vulnerable(
     distro: Optional[str],
     installed_version: Optional[str],

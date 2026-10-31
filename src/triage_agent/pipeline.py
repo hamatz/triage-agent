@@ -30,6 +30,7 @@ def execute_triage_pipeline(
     audit_file_path: Optional[str] = None,
     target_environment: Optional[str] = None,
     progress_callback: Optional[Callable[[str], None]] = None,
+    exclude_patterns: Optional[List[str]] = None,
 ) -> Tuple[TriageReport, Optional[CodebaseAuditReport]]:
     """Execute the full 3-phase triage pipeline and optional verification.
 
@@ -41,6 +42,7 @@ def execute_triage_pipeline(
         audit_file_path: Optional path to audit attestation JSON file.
         target_environment: Optional environment string (e.g. 'Production') to scope sign-offs.
         progress_callback: Optional callback for status progress messages.
+        exclude_patterns: Optional glob patterns (e.g. ['@company/*', 'internal-*']) to omit internal packages.
 
     Returns:
         Tuple of (TriageReport, Optional[CodebaseAuditReport])
@@ -100,7 +102,7 @@ def execute_triage_pipeline(
     # Phase 1: Recon Planner
     # -------------------------------------------------------------
     log("[1/3] Recon Planner: SBOM解析および巡回戦略策定中...", percent=5, phase="Recon Planner", step=1, total_steps=3)
-    components = load_sbom_summary(sbom_path)
+    components = load_sbom_summary(sbom_path, exclude_patterns=exclude_patterns)
     osv_hits, osv_errors, osv_unsupported = query_osv_batch(components)
     catalog_pre_announcements, catalog_feed_errors = scan_catalog_pre_announcements(components)
     if catalog_feed_errors:
@@ -158,7 +160,7 @@ def execute_triage_pipeline(
             targets=targets[:max_targets],
         )
     else:
-        recon_plan = run_recon_planner(sbom_path, osv_results=osv_hits)
+        recon_plan = run_recon_planner(sbom_path, osv_results=osv_hits, exclude_patterns=exclude_patterns)
         recon_plan.targets = recon_plan.targets[:max_targets]
 
     # Explicitly track omitted components that had actual vulnerabilities or unverified status

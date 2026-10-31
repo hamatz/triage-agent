@@ -60,7 +60,11 @@ def get_genai_client() -> genai.Client:
     """
     if is_vertex_ai_mode():
         project = os.getenv("GOOGLE_CLOUD_PROJECT") or os.getenv("VERTEX_PROJECT")
-        location = os.getenv("GOOGLE_CLOUD_REGION") or os.getenv("VERTEX_LOCATION", "us-central1")
+        location = (
+            os.getenv("GOOGLE_CLOUD_LOCATION")
+            or os.getenv("GOOGLE_CLOUD_REGION")
+            or os.getenv("VERTEX_LOCATION", "us-central1")
+        )
         if not project:
             raise ValueError(
                 "Vertex AI mode requested but GOOGLE_CLOUD_PROJECT (or VERTEX_PROJECT) is not set."

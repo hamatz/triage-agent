@@ -49,6 +49,9 @@ python -m triage_agent.cli --sbom my_sbom.json --workers 4
 
 # オフライン（シミュレーション）実行
 python -m triage_agent.cli --sbom my_sbom.json --dry-run
+
+# 社内内製パッケージを外部照会・推論から除外
+python -m triage_agent.cli --sbom my_sbom.json --exclude "@mycompany/*,internal-*"
 ```
 
 ### ベンダー往復・エクスポート/インポート

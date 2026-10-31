@@ -1,6 +1,7 @@
+import fnmatch
 import json
 from pathlib import Path
-from typing import List
+from typing import List, Optional
 from triage_agent.schemas import ComponentInfo
 
 
@@ -23,7 +24,25 @@ def _extract_ecosystem_from_purl(purl: str) -> str:
     return mapping.get(ptype, ptype.capitalize())
 
 
-def load_sbom_summary(sbom_path: str) -> List[ComponentInfo]:
+def _is_excluded(name: str, purl: Optional[str], patterns: Optional[List[str]]) -> bool:
+    """Check if component name or purl matches any of the glob exclusion patterns."""
+    if not patterns:
+        return False
+    name_l = (name or "").lower()
+    purl_l = (purl or "").lower()
+    for pat in patterns:
+        pat_l = pat.strip().lower()
+        if not pat_l:
+            continue
+        if fnmatch.fnmatch(name_l, pat_l) or (purl_l and fnmatch.fnmatch(purl_l, pat_l)):
+            return True
+    return False
+
+
+def load_sbom_summary(
+    sbom_path: str,
+    exclude_patterns: Optional[List[str]] = None,
+) -> List[ComponentInfo]:
     """Parse CycloneDX JSON, SPDX JSON (ISO/IEC 5962), or Syft native JSON files.
     
     Supports:
@@ -33,6 +52,7 @@ def load_sbom_summary(sbom_path: str) -> List[ComponentInfo]:
     
     Args:
         sbom_path: Path to the SBOM file (JSON)
+        exclude_patterns: Optional glob patterns (e.g. ['@company/*', 'internal-*']) to omit internal packages.
         
     Returns:
         List of ComponentInfo objects
@@ -60,7 +80,7 @@ def load_sbom_summary(sbom_path: str) -> List[ComponentInfo]:
             if ecosystem == "Unknown" and group and "." in group:
                 ecosystem = "Maven"
 
-            if name:
+            if name and not _is_excluded(name, purl, exclude_patterns):
                 components.append(
                     ComponentInfo(
                         name=name,
@@ -96,7 +116,7 @@ def load_sbom_summary(sbom_path: str) -> List[ComponentInfo]:
                 elif pkg_file.endswith(".jar") or pkg_file.endswith(".pom"):
                     ecosystem = "Maven"
 
-            if name:
+            if name and not _is_excluded(name, purl, exclude_patterns):
                 components.append(
                     ComponentInfo(
                         name=name,
@@ -116,7 +136,7 @@ def load_sbom_summary(sbom_path: str) -> List[ComponentInfo]:
             pkg_type = a.get("type", "")
             ecosystem = _extract_ecosystem_from_purl(purl) if purl else pkg_type
             
-            if name:
+            if name and not _is_excluded(name, purl, exclude_patterns):
                 components.append(
                     ComponentInfo(
                         name=name,

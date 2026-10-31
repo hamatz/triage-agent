@@ -351,7 +351,17 @@ class ThreatFeedClient:
 
             # Process OSV (CVSS vector, CWEs, summary)
             try:
-                osv_rec = self.fetch_osv_vulnerability(cid)
+                osv_rec = None
+                cache_file = self.cache_dir / f"osv_{cid.lower()}.json"
+                if cache_file.exists():
+                    try:
+                        with open(cache_file, "r", encoding="utf-8") as f:
+                            osv_rec = json.load(f)
+                    except Exception:
+                        pass
+                elif not offline:
+                    osv_rec = self.fetch_osv_vulnerability(cid)
+
                 if osv_rec:
                     res.summary = osv_rec.get("summary") or osv_rec.get("details")
                     # Extract severity (CVSS vector)

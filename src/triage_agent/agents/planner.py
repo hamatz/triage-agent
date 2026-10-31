@@ -17,6 +17,7 @@ def run_recon_planner(
     osv_results: Optional[Dict[str, List[Dict[str, Any]]]] = None,
     custom_system_context: Optional[str] = None,
     client: Optional[genai.Client] = None,
+    exclude_patterns: Optional[List[str]] = None,
 ) -> ReconPlan:
     """Execute the Recon Planner agent.
     
@@ -25,7 +26,7 @@ def run_recon_planner(
     3. Prompts the LLM (Recon Planner) to analyze the attack surface and output a structured ReconPlan.
     """
     # 1. Load SBOM components
-    components: List[ComponentInfo] = load_sbom_summary(sbom_path)
+    components: List[ComponentInfo] = load_sbom_summary(sbom_path, exclude_patterns=exclude_patterns)
     if not components:
         return ReconPlan(
             summary="No components found in SBOM.",

@@ -517,6 +517,12 @@ def main():
         default=0.15,
         help="EPSS sudden jump delta threshold (default: 0.15)",
     )
+    parser.add_argument(
+        "--exclude",
+        type=str,
+        default=None,
+        help="カンマ区切りの除外 glob パターン（例: '@company/*,internal-*'）。指定されたパッケージは脆弱性照会やAI推論から除外されます。",
+    )
 
     args = parser.parse_args()
 
@@ -649,6 +655,8 @@ def main():
 
     from triage_agent.pipeline import execute_triage_pipeline
 
+    exclude_patterns = [p.strip() for p in args.exclude.split(",") if p.strip()] if getattr(args, "exclude", None) else None
+
     try:
         triage_report, audit_report = execute_triage_pipeline(
             sbom_path=sbom_path,
@@ -658,6 +666,7 @@ def main():
             audit_file_path=args.audit_file,
             target_environment=args.environment,
             progress_callback=lambda msg: console.print(f"[dim]{msg}[/dim]"),
+            exclude_patterns=exclude_patterns,
         )
     except Exception as e:
         console.print(f"[bold red]❌ パイプライン実行エラー:[/bold red] {e}")

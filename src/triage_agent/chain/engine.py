@@ -464,6 +464,95 @@ def load_environment_definition(path_or_str: str) -> EnvironmentDefinition:
     )
 
 
+def _aggregate_pool_telemetries(nodes: List[NodeTelemetry]) -> NodeTelemetry:
+    """Aggregate multiple node telemetries belonging to the same pool under fail-safe rules.
+    
+    Rules (ADR-019 / v0.4.0):
+    1. Mitigations: All nodes must be mitigated for the pool to be mitigated.
+       - loaded_modules: UNION of all nodes (if loaded on any node, it is loaded in pool)
+       - builtin_modules: UNION of all nodes (if builtin on any node, cannot disable)
+       - modprobe_disabled_modules: INTERSECTION across all nodes (only disabled if disabled on ALL nodes)
+       - active_services: UNION of all nodes (if IPsec active on any node, side effect blocks mitigation)
+       - xfrm_active: True if True on ANY node
+       - livepatch_modules: INTERSECTION across all nodes
+    2. Kernel package version:
+       - Select the oldest (minimum) version across nodes using compare_kernel_versions.
+    3. Distribution / Flavor:
+       - If all nodes share identical distro / flavor, use it; otherwise treat as mixed/indeterminate.
+    """
+    if not nodes:
+        raise ValueError("Nodes list cannot be empty for pool aggregation")
+    if len(nodes) == 1:
+        return nodes[0]
+
+    primary = nodes[0]
+    pool_id = primary.pool_id
+
+    # 1. Distro, Release, Flavor, Package consistency
+    distros = list(set(n.os_distribution for n in nodes if n.os_distribution))
+    eff_distro = distros[0] if len(distros) == 1 else "unknown"
+
+    releases = list(set(n.os_release for n in nodes if n.os_release))
+    eff_release = releases[0] if len(releases) == 1 else None
+
+    pkgs = list(set(n.kernel_package_name for n in nodes if n.kernel_package_name))
+    eff_pkg = pkgs[0] if len(pkgs) == 1 else "unknown"
+
+    flavors = list(set(n.kernel_flavor for n in nodes if n.kernel_flavor))
+    eff_flavor = flavors[0] if len(flavors) == 1 else "unknown"
+
+    # 2. Kernel Version: Oldest across all nodes in the pool
+    all_versions = [n.kernel_package_version for n in nodes if n.kernel_package_version]
+    oldest_version = None
+    if all_versions:
+        from functools import cmp_to_key
+        from triage_agent.chain.version_parser import compare_kernel_versions
+        def _cmp(a: str, b: str) -> int:
+            res = compare_kernel_versions(eff_distro, a, b)
+            if res is not None:
+                return res
+            return 1 if a > b else (-1 if a < b else 0)
+        sorted_vers = sorted(all_versions, key=cmp_to_key(_cmp))
+        oldest_version = sorted_vers[0]
+
+    # 3. Mitigations
+    # Loaded modules: UNION (any node loading esp4 means pool is unmitigated)
+    all_loaded = list(set(m for n in nodes for m in (n.loaded_modules or [])))
+    
+    # Builtin modules: UNION
+    all_builtin = list(set(m for n in nodes for m in (n.builtin_modules or [])))
+
+    # Modprobe disabled: INTERSECTION (only disabled if all nodes disabled)
+    disabled_sets = [set(m.lower() for m in (n.modprobe_disabled_modules or [])) for n in nodes]
+    common_disabled = list(set.intersection(*disabled_sets)) if disabled_sets else []
+
+    # Active services: UNION
+    all_services = list(set(s for n in nodes for s in (n.active_services or [])))
+
+    # Xfrm active: ANY
+    any_xfrm = any(n.xfrm_active for n in nodes)
+
+    # Livepatch modules: INTERSECTION
+    livepatch_sets = [set(n.livepatch_modules or []) for n in nodes]
+    common_livepatch = list(set.intersection(*livepatch_sets)) if livepatch_sets else []
+
+    return NodeTelemetry(
+        pool_id=pool_id,
+        os_distribution=eff_distro,
+        os_release=eff_release,
+        kernel_package_name=eff_pkg,
+        kernel_flavor=eff_flavor,
+        kernel_package_version=oldest_version,
+        kernel_release=primary.kernel_release,
+        loaded_modules=all_loaded,
+        builtin_modules=all_builtin,
+        modprobe_disabled_modules=common_disabled,
+        active_services=all_services,
+        xfrm_active=any_xfrm,
+        livepatch_modules=common_livepatch,
+    )
+
+
 def load_node_telemetries(path_or_str: str) -> Dict[str, NodeTelemetry]:
     """Load NodeTelemetry objects from a JSON file or a directory of JSON files."""
     import json
@@ -473,7 +562,7 @@ def load_node_telemetries(path_or_str: str) -> Dict[str, NodeTelemetry]:
     if not p.exists():
         return {}
 
-    telemetries: Dict[str, NodeTelemetry] = {}
+    nodes_by_pool: Dict[str, List[NodeTelemetry]] = {}
 
     def _parse_telemetry_file(fpath: Path) -> Optional[NodeTelemetry]:
         try:
@@ -510,12 +599,16 @@ def load_node_telemetries(path_or_str: str) -> Dict[str, NodeTelemetry]:
     if p.is_file():
         t = _parse_telemetry_file(p)
         if t:
-            telemetries[t.pool_id] = t
+            nodes_by_pool.setdefault(t.pool_id, []).append(t)
     elif p.is_dir():
-        for json_file in p.glob("*.json"):
+        for json_file in sorted(p.glob("*.json")):
             t = _parse_telemetry_file(json_file)
             if t:
-                telemetries[t.pool_id] = t
+                nodes_by_pool.setdefault(t.pool_id, []).append(t)
+
+    telemetries: Dict[str, NodeTelemetry] = {}
+    for pool_id, nodes in nodes_by_pool.items():
+        telemetries[pool_id] = _aggregate_pool_telemetries(nodes)
 
     return telemetries
 
