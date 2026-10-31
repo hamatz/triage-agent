@@ -280,6 +280,81 @@ class TestExcludePatterns(unittest.TestCase):
         finally:
             Path(temp_path).unlink(missing_ok=True)
 
+    def test_telemetry_unknown_version_not_overwritten_by_environment_yaml(self):
+        """If telemetry has an unknown version, it must NOT fall back to environments.yaml fixed version."""
+        from triage_agent.chain.engine import audit_exploit_chains
+        from triage_agent.chain.models import (
+            ChainLevel,
+            DistroAffectedRange,
+            EnvironmentDefinition,
+            ExposureType,
+            KernelVulnerabilityEntry,
+            NodePoolDefinition,
+            WorkloadDefinition,
+        )
+
+        cve = KernelVulnerabilityEntry(
+            cve_id="CVE-2026-46300",
+            name="Fragnesia",
+            source_url="https://example.com",
+            retrieved_at="2026-10-31",
+            epss_score=0.42,
+            cisa_kev=True,
+            poc_available=True,
+            poc_evidence="Public PoC",
+            distro_affected_ranges={
+                "ubuntu": DistroAffectedRange(
+                    package="linux",
+                    fixed_version="6.8.0-47.47",
+                )
+            },
+        )
+
+        # environments.yaml specifies patched kernel (6.8.0-50.50)
+        env = EnvironmentDefinition(
+            environment_name="prod",
+            node_pools=[
+                NodePoolDefinition(
+                    pool_id="pool-1",
+                    os_distribution="ubuntu",
+                    os_release="24.04",
+                    kernel_package_name="linux",
+                    kernel_package_version="6.8.0-50.50",
+                )
+            ],
+            workloads=[
+                WorkloadDefinition(
+                    name="web-svc",
+                    node_pool="pool-1",
+                    exposure=ExposureType.INTERNET_FACING,
+                )
+            ],
+        )
+
+        # Telemetry has unknown version (e.g. from aggregated node with missing version)
+        telemetry = NodeTelemetry(
+            node_id="agg-pool-1",
+            pool_id="pool-1",
+            os_distribution="ubuntu",
+            os_release="24.04",
+            kernel_package_name="linux",
+            kernel_package_version=None,  # Unknown on actual node!
+        )
+
+        results = audit_exploit_chains(
+            environment=env,
+            kernel_vulnerabilities=[cve],
+            app_findings_by_workload={"web-svc": []},
+            telemetry_by_pool={"pool-1": telemetry},
+            evaluation_date="2026-10-31",
+        )
+
+        self.assertEqual(len(results), 1)
+        r = results[0]
+        # Must NOT be SAFE! It must be fail-safe to indeterminate / vulnerable
+        self.assertNotEqual(r.chain_level, ChainLevel.SAFE)
+        self.assertIn("要確認 (該当の可能性あり⚠️", r.kernel_status)
+
     def test_pipeline_reports_excluded_components(self):
         cyclonedx_sbom = {
             "bomFormat": "CycloneDX",
@@ -294,16 +369,28 @@ class TestExcludePatterns(unittest.TestCase):
             temp_path = f.name
 
         try:
-            with patch("triage_agent.tools.osv.query_osv_batch", return_value=({}, [], [])), \
-                 patch("triage_agent.agents.researcher.run_researcher") as mock_r:
-                mock_r.return_value = MagicMock(research_summary="Dry run")
+            with patch("triage_agent.pipeline.query_osv_batch", return_value=({}, [], [])), \
+                 patch("triage_agent.pipeline.scan_catalog_pre_announcements", return_value=([], [])), \
+                 patch("triage_agent.pipeline.run_researcher") as mock_r:
+                mock_target = MagicMock()
+                mock_target.name = "lodash"
+                mock_target.version = "4.17.20"
+                mock_r.return_value = MagicMock(
+                    research_summary="Dry run",
+                    errors=[],
+                    target=mock_target,
+                    osv_vuln_ids=[],
+                    findings=[],
+                )
                 triage_report, _ = execute_triage_pipeline(
                     sbom_path=temp_path,
                     mode="dry-run",
                     exclude_patterns=["@company/*"],
                 )
-                self.assertTrue(any("--exclude により 1 件を照会対象から除外（未調査" in item for item in triage_report.unscanned_or_failed_components))
-                self.assertIn("※除外設定: --exclude により 1 件を照会対象から除外（未調査）。", triage_report.recon_coverage_summary)
+                # Excluded packages are in excluded_components, NOT unscanned_or_failed_components
+                self.assertEqual(triage_report.excluded_components, ["@company/payment-core"])
+                self.assertEqual(len(triage_report.unscanned_or_failed_components), 0)
+                self.assertIn("※除外設定: --exclude により 1 件を照会対象から除外", triage_report.recon_coverage_summary)
         finally:
             Path(temp_path).unlink(missing_ok=True)
 

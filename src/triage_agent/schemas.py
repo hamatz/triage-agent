@@ -216,6 +216,10 @@ class TriageReport(BaseModel):
         default_factory=list,
         description="List of components or dependencies that could not be investigated due to network/API errors"
     )
+    excluded_components: List[str] = Field(
+        default_factory=list,
+        description="List of internal/proprietary components explicitly excluded via --exclude patterns"
+    )
     osv_unsupported_components: List[str] = Field(
         default_factory=list,
         description="List of components not queryable via OSV (e.g. generic runtime, OS/C shared libraries) requiring manual/web investigation"

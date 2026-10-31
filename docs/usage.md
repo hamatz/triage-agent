@@ -78,8 +78,12 @@ python -m triage_agent.cli --sbom my_sbom.json --verify-code /path/to/my-repo
 
 ### CI/CD ガードレール停止オプション
 ```bash
-# 調査不能コンポーネント、または脆弱性該当（YES）がある場合に非ゼロ終了 (exit 2)
+# 調査失敗コンポーネント（unscanned）、または脆弱性該当（yes）がある場合に非ゼロ終了 (exit 2)
+# ※ --exclude で意図的に除外した社内パッケージは unscanned には含まれません（CIが不当に停止しません）
 python -m triage_agent.cli --sbom my_sbom.json --fail-on unscanned,yes
+
+# 除外パッケージの存在自体を禁止したい場合は 'excluded' を明示指定
+python -m triage_agent.cli --sbom my_sbom.json --fail-on excluded,yes
 ```
 
 ---

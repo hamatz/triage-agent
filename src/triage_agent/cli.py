@@ -416,8 +416,8 @@ def main():
         type=str,
         default=None,
         help="Comma-separated conditions to exit with non-zero status code (e.g. 'unscanned,yes' or 'any'). "
-             "Supported: unscanned (uninvestigated components/errors), yes (vulnerable code confirmed), "
-             "unconfirmed (unverified external settings), any.",
+             "Supported: unscanned (investigation failed/error), excluded (packages omitted via --exclude), "
+             "yes (vulnerable code confirmed), unconfirmed (unverified external settings), critical_chain, any.",
     )
     parser.add_argument(
         "--calendar",
@@ -703,6 +703,17 @@ def main():
             )
         )
 
+    if getattr(triage_report, "excluded_components", None):
+        console.print(
+            Panel(
+                f"[bold cyan]🛡️ 【--exclude による除外コンポーネント（計 {len(triage_report.excluded_components)} 件）】[/bold cyan]\n"
+                + "\n".join([f"• {u}" for u in triage_report.excluded_components[:10]])
+                + (f"\n• ... ほか {len(triage_report.excluded_components) - 10} 件" if len(triage_report.excluded_components) > 10 else "")
+                + "\n\n[dim]プライバシー保護のため、外部API照会およびLLM推論から除外されました。[/dim]",
+                border_style="cyan",
+            )
+        )
+
     if triage_report.osv_unsupported_components:
         console.print(
             Panel(
@@ -827,6 +838,7 @@ def main():
         triggered_reasons = []
 
         has_unscanned = bool(triage_report.unscanned_or_failed_components)
+        has_excluded = bool(getattr(triage_report, "excluded_components", None))
         has_yes = False
         has_unconfirmed = False
         has_critical_chain = False
@@ -846,6 +858,11 @@ def main():
         if ("unscanned" in triggers or "any" in triggers) and has_unscanned:
             triggered_reasons.append(
                 f"調査不能・未調査コンポーネントが {len(triage_report.unscanned_or_failed_components)} 件存在します"
+            )
+
+        if "excluded" in triggers and has_excluded:
+            triggered_reasons.append(
+                f"--exclude により除外されたコンポーネントが {len(triage_report.excluded_components)} 件存在します"
             )
 
         if ("yes" in triggers or "any" in triggers) and has_yes:

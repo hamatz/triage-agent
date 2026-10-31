@@ -155,11 +155,22 @@ def audit_exploit_chains(
             pool_telemetry = telemetry_map.get(pool.pool_id)
             
             # Resolve OS and kernel flavor from telemetry or pool definition
-            eff_distro = (pool_telemetry.os_distribution if pool_telemetry and pool_telemetry.os_distribution else pool.os_distribution) or "ubuntu"
-            eff_release = pool_telemetry.os_release if pool_telemetry and pool_telemetry.os_release else pool.os_release
-            eff_pkg = (pool_telemetry.kernel_package_name if pool_telemetry and pool_telemetry.kernel_package_name else pool.kernel_package_name) or "linux"
-            eff_flavor = pool_telemetry.kernel_flavor if pool_telemetry and pool_telemetry.kernel_flavor else pool.kernel_flavor
-            eff_version = (pool_telemetry.kernel_package_version if pool_telemetry and pool_telemetry.kernel_package_version else pool.kernel_package_version)
+            # Fail-safe principle: If telemetry is provided for this pool, its telemetry is the ground truth.
+            # If telemetry resolved version or distro as unknown/None, NEVER fall back to hand-written environments.yaml!
+            if pool_telemetry:
+                eff_distro = pool_telemetry.os_distribution or "unknown"
+                eff_release = pool_telemetry.os_release
+                eff_pkg = pool_telemetry.kernel_package_name or "linux"
+                eff_flavor = pool_telemetry.kernel_flavor or "unknown"
+                eff_version = pool_telemetry.kernel_package_version
+                is_telemetry_grounded = True
+            else:
+                eff_distro = pool.os_distribution or "ubuntu"
+                eff_release = pool.os_release
+                eff_pkg = pool.kernel_package_name or "linux"
+                eff_flavor = pool.kernel_flavor
+                eff_version = pool.kernel_package_version
+                is_telemetry_grounded = False
 
             range_info, match_exp = _resolve_distro_range(
                 distro=eff_distro,
@@ -183,9 +194,11 @@ def audit_exploit_chains(
                 is_vuln = True
                 kernel_status = f"要確認 (該当の可能性あり⚠️: {match_exp} / 現行: {eff_version or '未確定'})"
             elif is_vuln is False:
-                kernel_status = f"NO (修正済み: {k_entry.cve_id}・パッケージ版 {eff_version}・{today_str}確認・{match_exp})"
+                grounding_note = "・実機テレメトリ確認済み" if is_telemetry_grounded else "・構成定義上（実機未確認）"
+                kernel_status = f"NO (修正済み: {k_entry.cve_id}・パッケージ版 {eff_version}・{today_str}確認・{match_exp}{grounding_note})"
             else:
-                kernel_status = f"YES (脆弱性該当: {k_entry.cve_id}・パッケージ版 {eff_version} < 修正版 {range_info.fixed_version}・{match_exp})"
+                grounding_note = "・実機テレメトリ確認済み" if is_telemetry_grounded else "・構成定義上（実機未確認）"
+                kernel_status = f"YES (脆弱性該当: {k_entry.cve_id}・パッケージ版 {eff_version} < 修正版 {range_info.fixed_version}・{match_exp}{grounding_note})"
 
             if not is_vuln:
                 # Kernel is definitively patched for this specific CVE
@@ -196,12 +209,16 @@ def audit_exploit_chains(
                         kernel_cve=k_entry.cve_id,
                         app_cve=detected_footholds[0]["cve"] if detected_footholds else None,
                         chain_level=ChainLevel.SAFE,
-                        action_deadline="対応不要（カーネルパッチ適用確認済み）",
+                        action_deadline="対応不要（カーネルパッチ適用確認済み）" if is_telemetry_grounded else "対応不要（構成定義上修正済み・実機確認推奨）",
                         foothold_detail=None,
                         kernel_status=kernel_status,
                         mitigation_status="緩和策不要（修正済み）",
                         blast_radius=blast_radius_desc,
-                        recommendations=["現行カーネルパッケージを維持し、次期定期更新で最新状態を継続してください。"],
+                        recommendations=[
+                            "現行カーネルパッケージを維持し、次期定期更新で最新状態を継続してください。"
+                            if is_telemetry_grounded
+                            else "構成定義上の修正版設定を確認しました。実機へのパッチ適用状態を担保するため実機テレメトリ（node-telemetry）の採取を推奨します。"
+                        ],
                     )
                 )
                 continue
