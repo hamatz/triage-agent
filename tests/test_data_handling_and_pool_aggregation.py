@@ -64,6 +64,70 @@ class TestNodePoolAggregation(unittest.TestCase):
         self.assertFalse(status2["is_mitigated"], "Pool must NOT be mitigated if any node has loaded module (order 2)")
         self.assertIn("esp4", status2["reasoning"])
 
+    def test_pool_aggregation_unknown_version_on_any_node_marks_pool_unknown(self):
+        """If any node in the pool has an unknown or missing kernel version, the pool version is None (indeterminate)."""
+        node_unknown = NodeTelemetry(
+            node_id="node-unknown",
+            pool_id="dmz-pool",
+            kernel_release="6.8.0-1015-aws",
+            os_distribution="ubuntu",
+            os_release="24.04",
+            kernel_package_name="linux-aws",
+            kernel_package_version=None,  # Version missing / could not be retrieved
+            loaded_modules=[],
+            builtin_modules=[],
+            modprobe_disabled_modules=[],
+            active_services=[],
+            xfrm_active=False,
+        )
+        node_patched = NodeTelemetry(
+            node_id="node-patched",
+            pool_id="dmz-pool",
+            kernel_release="6.8.0-1016-aws",
+            os_distribution="ubuntu",
+            os_release="24.04",
+            kernel_package_name="linux-aws",
+            kernel_package_version="6.8.0-1016.17",  # Patched version
+            loaded_modules=[],
+            builtin_modules=[],
+            modprobe_disabled_modules=[],
+            active_services=[],
+            xfrm_active=False,
+        )
+
+        agg = _aggregate_pool_telemetries([node_unknown, node_patched])
+        self.assertIsNone(agg.kernel_package_version, "Pool version must be None if any node has unknown version")
+
+        # Reverse order
+        agg_rev = _aggregate_pool_telemetries([node_patched, node_unknown])
+        self.assertIsNone(agg_rev.kernel_package_version, "Pool version must be None if any node has unknown version (reverse order)")
+
+    def test_pool_aggregation_mixed_or_unknown_distro_marks_pool_unknown(self):
+        """If any node has unknown distro or distros differ, effective distro must be 'unknown'."""
+        node_u = NodeTelemetry(
+            node_id="node-1",
+            pool_id="pool-1",
+            os_distribution="ubuntu",
+            kernel_package_version="6.8.0-1015.16",
+        )
+        node_missing_d = NodeTelemetry(
+            node_id="node-2",
+            pool_id="pool-1",
+            os_distribution=None,
+            kernel_package_version="6.8.0-1015.16",
+        )
+        agg = _aggregate_pool_telemetries([node_u, node_missing_d])
+        self.assertEqual(agg.os_distribution, "unknown")
+
+        node_rhel = NodeTelemetry(
+            node_id="node-3",
+            pool_id="pool-1",
+            os_distribution="rhel",
+            kernel_package_version="6.8.0-1015.16",
+        )
+        agg_mixed = _aggregate_pool_telemetries([node_u, node_rhel])
+        self.assertEqual(agg_mixed.os_distribution, "unknown")
+
     def test_pool_aggregation_all_nodes_mitigated(self):
         """If all nodes in the pool have unloaded and blacklisted modules, the pool is mitigated."""
         node1 = NodeTelemetry(
@@ -187,13 +251,17 @@ class TestExcludePatterns(unittest.TestCase):
         self.assertFalse(_is_excluded("lodash", "pkg:npm/lodash@4.17.21", patterns))
         self.assertFalse(_is_excluded("express", None, patterns))
 
+        # Test scoped package separated into group and name with %40 url-encoded purl
+        self.assertTrue(_is_excluded("payment-core", "pkg:npm/%40company/payment-core@1.0.0", ["@company/*"], group="@company"))
+        self.assertTrue(_is_excluded("payment-core", "pkg:npm/%40company/payment-core@1.0.0", ["@company/*"]))
+
     def test_load_sbom_summary_filters_excluded_packages(self):
         cyclonedx_sbom = {
             "bomFormat": "CycloneDX",
             "specVersion": "1.4",
             "components": [
                 {"name": "express", "version": "4.18.2", "purl": "pkg:npm/express@4.18.2"},
-                {"name": "@mycompany/billing", "version": "1.0.0", "purl": "pkg:npm/%40mycompany/billing@1.0.0"},
+                {"name": "payment-core", "group": "@company", "version": "1.0.0", "purl": "pkg:npm/%40company/payment-core@1.0.0"},
                 {"name": "internal-utils", "version": "2.1.0"},
             ],
         }
@@ -202,10 +270,40 @@ class TestExcludePatterns(unittest.TestCase):
             temp_path = f.name
 
         try:
-            components = load_sbom_summary(temp_path, exclude_patterns=["@mycompany/*", "internal-*"])
+            excluded = []
+            components = load_sbom_summary(temp_path, exclude_patterns=["@company/*", "internal-*"], excluded_names=excluded)
             comp_names = [c.name for c in components]
             self.assertEqual(comp_names, ["express"])
             self.assertEqual(len(components), 1)
+            self.assertIn("@company/payment-core", excluded)
+            self.assertIn("internal-utils", excluded)
+        finally:
+            Path(temp_path).unlink(missing_ok=True)
+
+    def test_pipeline_reports_excluded_components(self):
+        cyclonedx_sbom = {
+            "bomFormat": "CycloneDX",
+            "specVersion": "1.4",
+            "components": [
+                {"name": "lodash", "version": "4.17.20", "purl": "pkg:npm/lodash@4.17.20"},
+                {"name": "payment-core", "group": "@company", "version": "1.0.0", "purl": "pkg:npm/%40company/payment-core@1.0.0"},
+            ],
+        }
+        with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False) as f:
+            json.dump(cyclonedx_sbom, f)
+            temp_path = f.name
+
+        try:
+            with patch("triage_agent.tools.osv.query_osv_batch", return_value=({}, [], [])), \
+                 patch("triage_agent.agents.researcher.run_researcher") as mock_r:
+                mock_r.return_value = MagicMock(research_summary="Dry run")
+                triage_report, _ = execute_triage_pipeline(
+                    sbom_path=temp_path,
+                    mode="dry-run",
+                    exclude_patterns=["@company/*"],
+                )
+                self.assertTrue(any("--exclude により 1 件を照会対象から除外（未調査" in item for item in triage_report.unscanned_or_failed_components))
+                self.assertIn("※除外設定: --exclude により 1 件を照会対象から除外（未調査）。", triage_report.recon_coverage_summary)
         finally:
             Path(temp_path).unlink(missing_ok=True)
 

@@ -13,7 +13,7 @@
 | **OSV.dev API**<br>(`api.osv.dev`) | Google / Open Source Security Foundation (OpenSSF) | パッケージ名、バージョン番号（例: `lodash@4.17.20`） | 該当パッケージの既知脆弱性一覧、CVE ID、CVSS、修正バージョン | SBOM に含まれるコンポーネントの既知脆弱性を高速・一括検索 | `--exclude` で内製パッケージを除外<br>`--demo`（完全オフライン） |
 | **Google Gemini API / Vertex AI** | Google LLC / Google Cloud | コンポーネント名、バージョン番号、脆弱性の要約テキスト、プロンプト | LLM による推論結果（Yes/No確認ポイント、発火条件、推奨アクションの下書き） | パッチ差分やアドバイザリに基づく発火条件の自然言語分析 | `--dry-run`（LLM 呼び出しを完全停止し静的照会・ルールベース推論のみ実施）<br>または Vertex AI 経由（企業向け Google Cloud 契約）の利用 |
 | **事前予告フィード (RSS/Atom)** | 各 OSS プロジェクト（Node.js, Apache 等の公開 Web サーバー） | なし（HTTP GET 要求のみ） | 公開されているブログ記事やリリースページの本文・公開予定日 | パッチ公開前の事前予告カレンダー（`.ics`）や注意喚起の生成 | `--demo`（完全オフライン）<br>※フィード巡回は Recon 偵察フェーズで実行され、`--calendar` は .ics ファイルの書き出し先を指定します |
-| **GitHub API / Web 検索** | GitHub Inc. / Google Search | 調査対象の OSS リポジトリ名、CVE 番号（公開情報のみ） | 公開コミットログ、公開 Issue / PR、公式リリースノート | 脆弱性の修正コミット差分（Diff）や詳細な発火条件の補足 | Web 検索（Google Search）は `--dry-run` で停止。<br>GitHub API は `--demo` で停止（未認証時はレートリミット自動保護） |
+| **GitHub API / Web 検索** | GitHub Inc. / Google Search | 調査対象の OSS リポジトリ名、CVE 番号（公開情報のみ） | 公開コミットログ、公開 Issue / PR、公式リリースノート | 脆弱性の修正コミット差分（Diff）や詳細な発火条件の補足 | Web 検索（Google Search）は `--dry-run` で停止。<br>GitHub API は `--dry-run` でも通信します（停止は `--demo` のみ。未認証時はレートリミット自動保護） |
 | **CISA KEV / FIRST EPSS API** | 米国 CISA / FIRST.org | CVE 番号（例: `CVE-2026-109618`） | 実侵害悪用フラグ（True/False）、EPSS 悪用予測スコア | 連鎖エクスプロイト判定における侵入足場（RCE）の客観的評価 | オフライン/dry-run実行時はローカルキャッシュ（`triage-output/cache/`）のみ参照 |
 
 ---

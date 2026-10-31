@@ -489,31 +489,53 @@ def _aggregate_pool_telemetries(nodes: List[NodeTelemetry]) -> NodeTelemetry:
     pool_id = primary.pool_id
 
     # 1. Distro, Release, Flavor, Package consistency
-    distros = list(set(n.os_distribution for n in nodes if n.os_distribution))
-    eff_distro = distros[0] if len(distros) == 1 else "unknown"
+    # Fail-safe principle: If ANY node has an unknown/missing distribution or release, or if nodes have differing distributions/releases,
+    # the pool must be marked "unknown" / None so it never falsely inherits a patched status.
+    any_unknown_distro = any(not n.os_distribution or n.os_distribution.strip().lower() in ("unknown", "") for n in nodes)
+    unique_distros = list(set(n.os_distribution.strip().lower() for n in nodes if n.os_distribution and n.os_distribution.strip().lower() not in ("unknown", "")))
+    if any_unknown_distro or len(unique_distros) != 1:
+        eff_distro = "unknown"
+    else:
+        eff_distro = unique_distros[0]
 
-    releases = list(set(n.os_release for n in nodes if n.os_release))
-    eff_release = releases[0] if len(releases) == 1 else None
+    any_unknown_release = any(not n.os_release or n.os_release.strip().lower() in ("unknown", "") for n in nodes)
+    unique_releases = list(set(n.os_release.strip() for n in nodes if n.os_release and n.os_release.strip().lower() not in ("unknown", "")))
+    if any_unknown_release or len(unique_releases) != 1:
+        eff_release = None
+    else:
+        eff_release = unique_releases[0]
 
-    pkgs = list(set(n.kernel_package_name for n in nodes if n.kernel_package_name))
-    eff_pkg = pkgs[0] if len(pkgs) == 1 else "unknown"
+    any_unknown_pkg = any(not n.kernel_package_name or n.kernel_package_name.strip().lower() in ("unknown", "") for n in nodes)
+    unique_pkgs = list(set(n.kernel_package_name.strip() for n in nodes if n.kernel_package_name and n.kernel_package_name.strip().lower() not in ("unknown", "")))
+    if any_unknown_pkg or len(unique_pkgs) != 1:
+        eff_pkg = "unknown"
+    else:
+        eff_pkg = unique_pkgs[0]
 
-    flavors = list(set(n.kernel_flavor for n in nodes if n.kernel_flavor))
-    eff_flavor = flavors[0] if len(flavors) == 1 else "unknown"
+    any_unknown_flavor = any(not n.kernel_flavor or n.kernel_flavor.strip().lower() in ("unknown", "") for n in nodes)
+    unique_flavors = list(set(n.kernel_flavor.strip() for n in nodes if n.kernel_flavor and n.kernel_flavor.strip().lower() not in ("unknown", "")))
+    if any_unknown_flavor or len(unique_flavors) != 1:
+        eff_flavor = "unknown"
+    else:
+        eff_flavor = unique_flavors[0]
 
     # 2. Kernel Version: Oldest across all nodes in the pool
-    all_versions = [n.kernel_package_version for n in nodes if n.kernel_package_version]
+    # Fail-safe principle: If ANY node in the pool has an unknown or missing kernel package version,
+    # the pool version MUST be None ("unknown"), forcing the evaluation to fail-safe to "該当の可能性あり".
+    has_unknown_version = any(not n.kernel_package_version or n.kernel_package_version.strip().lower() in ("unknown", "") for n in nodes)
     oldest_version = None
-    if all_versions:
-        from functools import cmp_to_key
-        from triage_agent.chain.version_parser import compare_kernel_versions
-        def _cmp(a: str, b: str) -> int:
-            res = compare_kernel_versions(eff_distro, a, b)
-            if res is not None:
-                return res
-            return 1 if a > b else (-1 if a < b else 0)
-        sorted_vers = sorted(all_versions, key=cmp_to_key(_cmp))
-        oldest_version = sorted_vers[0]
+    if not has_unknown_version:
+        all_versions = [n.kernel_package_version.strip() for n in nodes if n.kernel_package_version]
+        if all_versions:
+            from functools import cmp_to_key
+            from triage_agent.chain.version_parser import compare_kernel_versions
+            def _cmp(a: str, b: str) -> int:
+                res = compare_kernel_versions(eff_distro, a, b)
+                if res is not None:
+                    return res
+                return 1 if a > b else (-1 if a < b else 0)
+            sorted_vers = sorted(all_versions, key=cmp_to_key(_cmp))
+            oldest_version = sorted_vers[0]
 
     # 3. Mitigations
     # Loaded modules: UNION (any node loading esp4 means pool is unmitigated)

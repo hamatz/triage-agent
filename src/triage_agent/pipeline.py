@@ -102,7 +102,12 @@ def execute_triage_pipeline(
     # Phase 1: Recon Planner
     # -------------------------------------------------------------
     log("[1/3] Recon Planner: SBOM解析および巡回戦略策定中...", percent=5, phase="Recon Planner", step=1, total_steps=3)
-    components = load_sbom_summary(sbom_path, exclude_patterns=exclude_patterns)
+    excluded_names: List[str] = []
+    components = load_sbom_summary(sbom_path, exclude_patterns=exclude_patterns, excluded_names=excluded_names)
+    if excluded_names:
+        unscanned_items.append(
+            f"--exclude により {len(excluded_names)} 件を照会対象から除外（未調査: {', '.join(excluded_names[:5])}{' ほか' if len(excluded_names) > 5 else ''}）"
+        )
     osv_hits, osv_errors, osv_unsupported = query_osv_batch(components)
     catalog_pre_announcements, catalog_feed_errors = scan_catalog_pre_announcements(components)
     if catalog_feed_errors:
@@ -321,6 +326,9 @@ def execute_triage_pipeline(
 
     if is_github_auth_failed():
         triage_report.recon_coverage_summary += " ※注意: GITHUB_TOKEN の認証に失敗しました（HTTP 401 Bad credentials: トークンが無効または期限切れ）。"
+
+    if excluded_names:
+        triage_report.recon_coverage_summary += f" ※除外設定: --exclude により {len(excluded_names)} 件を照会対象から除外（未調査）。"
 
     log("指示書生成完了。検証判定を実行中...", percent=90, phase="Triage Agent", step=3, total_steps=3)
 
