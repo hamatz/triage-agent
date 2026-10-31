@@ -417,7 +417,8 @@ def main():
         default=None,
         help="Comma-separated conditions to exit with non-zero status code (e.g. 'unscanned,yes' or 'any'). "
              "Supported: unscanned (investigation failed/error), excluded (packages omitted via --exclude), "
-             "yes (vulnerable code confirmed), unconfirmed (unverified external settings), critical_chain, any.",
+             "yes (vulnerable code confirmed), unconfirmed (unverified external settings), critical_chain, any. "
+             "(Note: 'any' matches unscanned, yes, unconfirmed, and critical_chain, but does not match 'excluded' unless explicitly specified).",
     )
     parser.add_argument(
         "--calendar",
@@ -704,12 +705,24 @@ def main():
         )
 
     if getattr(triage_report, "excluded_components", None):
+        is_ci = bool(os.getenv("CI") or os.getenv("GITHUB_ACTIONS"))
+        if is_ci:
+            content = (
+                f"プライバシーおよびCIログ漏洩防止のため、パッケージ名は非表示とし件数のみ開示します。\n"
+                f"（合計: {len(triage_report.excluded_components)} 件を外部API照会およびLLM推論から除外）"
+            )
+        else:
+            names_preview = "\n".join([f"• {u}" for u in triage_report.excluded_components[:10]])
+            if len(triage_report.excluded_components) > 10:
+                names_preview += f"\n• ... ほか {len(triage_report.excluded_components) - 10} 件"
+            content = (
+                f"{names_preview}\n\n"
+                f"[dim]プライバシー保護のため、外部API照会およびLLM推論から除外されました（CI環境では件数のみ開示されます）。[/dim]"
+            )
         console.print(
             Panel(
                 f"[bold cyan]🛡️ 【--exclude による除外コンポーネント（計 {len(triage_report.excluded_components)} 件）】[/bold cyan]\n"
-                + "\n".join([f"• {u}" for u in triage_report.excluded_components[:10]])
-                + (f"\n• ... ほか {len(triage_report.excluded_components) - 10} 件" if len(triage_report.excluded_components) > 10 else "")
-                + "\n\n[dim]プライバシー保護のため、外部API照会およびLLM推論から除外されました。[/dim]",
+                + content,
                 border_style="cyan",
             )
         )
