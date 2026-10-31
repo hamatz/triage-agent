@@ -4,12 +4,13 @@
 # modprobe configuration, livepatch status, and active networking services (IPsec/xfrm).
 #
 # Usage:
-#   sh collect_kernel_telemetry.sh [-o output.json] [-m "esp4 esp6 rxrpc"] [--include-hostname]
+#   sh collect_kernel_telemetry.sh [-o output.json] [-p pool_id] [-m "esp4 esp6 rxrpc"] [--include-hostname]
 #   If -o is omitted, outputs to stdout.
 
 set -eu
 
 OUTPUT_FILE=""
+POOL_ID=""
 TARGET_MODULES="esp4 esp6 rxrpc"
 INCLUDE_HOSTNAME="false"
 
@@ -17,6 +18,10 @@ while [ $# -gt 0 ]; do
   case "$1" in
     -o|--output)
       OUTPUT_FILE="$2"
+      shift 2
+      ;;
+    -p|--pool|--pool-id)
+      POOL_ID="$2"
       shift 2
       ;;
     -m|--modules)
@@ -28,7 +33,7 @@ while [ $# -gt 0 ]; do
       shift 1
       ;;
     -h|--help)
-      echo "Usage: $0 [-o output.json] [-m \"esp4 esp6 rxrpc\"] [--include-hostname]"
+      echo "Usage: $0 [-o output.json] [-p pool_id] [-m \"esp4 esp6 rxrpc\"] [--include-hostname]"
       exit 0
       ;;
     *)
@@ -203,6 +208,7 @@ to_json_array() {
 JSON_PAYLOAD=$(cat <<EOF
 {
   "node_id": "$(json_escape "${NODE_NAME}")",
+  "pool_id": $([ -n "${POOL_ID}" ] && printf '"%s"' "$(json_escape "${POOL_ID}")" || printf 'null'),
   "collected_at": "${COLLECTED_AT}",
   "os_distribution": "$(json_escape "${OS_DISTRO}")",
   "os_release": "$(json_escape "${OS_RELEASE}")",

@@ -291,3 +291,59 @@ flowchart TD
 4. **横展開・共有カーネル境界の死角排除（Dream 事例の教訓）:**
    - 外部公開されていない内部マイクロサービスであっても、共有カーネルノードプール上で動く以上、同居 Pod 侵害からのコンテナ脱出・node root 奪取により全ワークロードの Secret や kubelet 認証情報が漏洩します。内部ノードに対しても「2週間以内対応（定期メンテ先送り禁止）」の厳格な期限を課します。
 
+---
+
+## 9. プロジェクトディレクトリ構成
+
+```text
+triage-agent/
+├── pyproject.toml            # パッケージ定義・CLIエントリポイント
+├── .env.example              # 設定テンプレート
+├── sample_sbom.json          # 動作確認用 Syft CycloneDX SBOM
+├── docs/                     # 詳細設計・運用ドキュメント
+│   ├── architecture.md       # 全体アーキテクチャ・エージェントトポロジー
+│   ├── setup.md              # インストールと環境設定
+│   ├── usage.md              # CLI & Web GUI 利用ガイド
+│   ├── verifier.md           # 内製コード＆設定自動検証
+│   ├── signoff.md            # 監査サインオフと正本管理運用
+│   ├── early-warning-calendar.md # 事前予告カレンダーと監視先
+│   ├── exploit-chain.md      # 連鎖エクスプロイト＆カーネル露出監査
+│   ├── vendor-workflow.md    # ベンダー往復と対応時間計測
+│   ├── benchmark.md          # グラウンドトゥルース評価セット
+│   ├── self-triage.md        # 自己診断と「3つの鮮度」
+│   ├── decision.md           # アーキテクチャ決定記録 (ADR)
+│   └── todo.md               # 今後のロードマップ
+├── scripts/
+│   ├── collect_kernel_telemetry.sh # ホスト実機テレメトリ収集（POSIX sh）
+│   └── self_triage.sh              # 自己診断ワンライナー
+├── benchmark/                # グラウンドトゥルース評価データセット
+│   ├── manifest.json         # 評価ケース定義
+│   ├── cases/                # 陽性ケース
+│   ├── cases_negative/       # 陰性ケース
+│   ├── cases_hard/           # 難関設定上書きケース
+│   └── feeds/                # 事前予告フィード実例
+└── src/
+    └── triage_agent/
+        ├── cli.py            # メインCLIエントリポイント
+        ├── benchmark.py      # ベンチマークランナー
+        ├── pipeline.py       # 共有パイプライン実行コア
+        ├── web_ui.py         # Web GUI エントリポイント
+        ├── chain/            # 連鎖エクスプロイト監査エンジン (v0.4.0)
+        │   ├── engine.py     # 連鎖判定コア＆レポート生成
+        │   ├── foothold.py   # アプリ層侵入足場（RCE）多層判定
+        │   ├── mitigations.py# カーネル緩和策＆副作用判定
+        │   ├── feeds.py      # CISA KEV / FIRST EPSS / OSV クライアント
+        │   ├── models.py     # データモデル定義
+        │   └── version_parser.py # ディストリビューション版番号照合
+        ├── verifier/         # 自社コードベース自動検証エンジン
+        │   ├── engine.py     # 検証コア
+        │   ├── scanner.py    # AST構文解析・テストコード分離
+        │   ├── config_scanner.py # 設定ファイル走査
+        │   └── attestation.py# サインオフ突合＆ドリフト検知
+        ├── tools/            # エージェント用ツール群
+        ├── agents/           # LLMエージェント定義
+        ├── data/             # 定義データ（advisory_sources.toml等）
+        └── ui/               # Web GUI パッケージ（HTML/CSS/JS/Server）
+```
+
+
