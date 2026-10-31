@@ -146,14 +146,21 @@ class ThreatFeedClient:
                     with open(cache_file, "w", encoding="utf-8") as f:
                         json.dump(data, f, indent=2)
                     return data
+        except urllib.error.HTTPError as e:
+            if e.code == 404:
+                return None
+            logger.debug("OSV query for %s returned HTTP error: %s", cid, e)
+            raise RuntimeError(f"HTTP {e.code}") from e
         except Exception as e:
             logger.debug("OSV query for %s returned error: %s", cid, e)
-            return None
+            raise RuntimeError(str(e)) from e
+        return None
 
     def extract_osv_fixed_ranges(self, osv_data: Dict[str, Any]) -> Dict[str, Any]:
         """Extract distro-specific package fixed versions from OSV record.
         
         Returns dict of distro keys (e.g. 'ubuntu:24.04:linux', 'ubuntu:24.04:linux-aws') to fixed version strings.
+        Release-less keys (e.g. 'ubuntu') are intentionally excluded to prevent cross-release overwrites.
         """
         results: Dict[str, Any] = {}
         affected = osv_data.get("affected", [])
@@ -180,14 +187,11 @@ class ThreatFeedClient:
             distro_name = parts[0] if parts else eco
             release = parts[1] if len(parts) > 1 else ""
 
-            # Key variations:
+            # Key variations: only when release is known (prevent release-less key collisions)
             if release:
                 results[f"{distro_name}:{release}:{name}"] = {"package": name, "fixed_version": fixed_ver}
                 if name == "linux":
                     results[f"{distro_name}:{release}"] = {"package": name, "fixed_version": fixed_ver}
-            results[f"{distro_name}:{name}"] = {"package": name, "fixed_version": fixed_ver}
-            if name == "linux":
-                results[distro_name] = {"package": name, "fixed_version": fixed_ver}
 
         return results
 
@@ -346,20 +350,24 @@ class ThreatFeedClient:
                 res.error = f"{res.error}; {err_msg}" if res.error else err_msg
 
             # Process OSV (CVSS vector, CWEs, summary)
-            osv_rec = self.fetch_osv_vulnerability(cid)
-            if osv_rec:
-                res.summary = osv_rec.get("summary") or osv_rec.get("details")
-                # Extract severity (CVSS vector)
-                for sev in osv_rec.get("severity", []):
-                    score_str = sev.get("score")
-                    if score_str and ("CVSS:" in score_str or "AV:" in score_str):
-                        res.cvss_vector = score_str
-                        break
-                # Extract CWEs
-                db_spec = osv_rec.get("database_specific", {})
-                cwes = db_spec.get("cwe_ids") or []
-                if isinstance(cwes, list):
-                    res.cwe_list = [str(c) for c in cwes]
+            try:
+                osv_rec = self.fetch_osv_vulnerability(cid)
+                if osv_rec:
+                    res.summary = osv_rec.get("summary") or osv_rec.get("details")
+                    # Extract severity (CVSS vector)
+                    for sev in osv_rec.get("severity", []):
+                        score_str = sev.get("score")
+                        if score_str and ("CVSS:" in score_str or "AV:" in score_str):
+                            res.cvss_vector = score_str
+                            break
+                    # Extract CWEs
+                    db_spec = osv_rec.get("database_specific", {})
+                    cwes = db_spec.get("cwe_ids") or []
+                    if isinstance(cwes, list):
+                        res.cwe_list = [str(c) for c in cwes]
+            except Exception as e:
+                err_msg = f"OSV: 取得失敗 ({e})"
+                res.error = f"{res.error}; {err_msg}" if res.error else err_msg
 
             # Verified status
             if res.error is None:

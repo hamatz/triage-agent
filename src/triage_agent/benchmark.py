@@ -304,6 +304,45 @@ def run_benchmark_suite(benchmark_dir: Optional[Path] = None, output_file: Optio
         else:
             exp_type = ExposureType.INTERNAL_ONLY
 
+        sbom_path_val = case.get("sbom_path")
+        if sbom_path_val:
+            p_cand = b_dir / sbom_path_val
+            if p_cand.exists():
+                sbom_path_val = str(p_cand.resolve())
+
+        bench_triage_report = None
+        if "triage_notices" in case:
+            notices = []
+            for n_data in case["triage_notices"]:
+                cps = [
+                    CheckPointItem(
+                        target_or_cve=cp.get("target_or_cve", ""),
+                        cvss=str(cp.get("cvss", "")),
+                        content_summary=cp.get("content_summary", ""),
+                        affected_versions=cp.get("affected_versions", ""),
+                        check_point_yes_no=cp.get("check_point_yes_no", ""),
+                        verification_method=cp.get("verification_method", ""),
+                    )
+                    for cp in n_data.get("check_points", [])
+                ]
+                notices.append(
+                    TriageNotice(
+                        product_name=n_data.get("product_name", ""),
+                        component_name=n_data.get("component_name", ""),
+                        announcement_date=n_data.get("announcement_date", "2026-10-24"),
+                        conclusion=n_data.get("conclusion", ""),
+                        fixed_versions=n_data.get("fixed_versions", ""),
+                        severity_note=n_data.get("severity_note", ""),
+                        check_points=cps,
+                    )
+                )
+            bench_triage_report = TriageReport(
+                report_title="Benchmark Triage Report",
+                scan_target=sbom_path_val or "benchmark_sbom.json",
+                total_dependencies=len(notices),
+                notices=notices,
+            )
+
         env = EnvironmentDefinition(
             environment_name="benchmark_env",
             node_pools=[
@@ -321,8 +360,8 @@ def run_benchmark_suite(benchmark_dir: Optional[Path] = None, output_file: Optio
                     name="bench_workload",
                     exposure=exp_type,
                     node_pool="bench_pool",
-                    components=case["entry_cves"],
-                    sbom_path=case.get("sbom_path"),
+                    components=case.get("components", case["entry_cves"]),
+                    sbom_path=sbom_path_val,
                 )
             ],
         )
@@ -359,6 +398,7 @@ def run_benchmark_suite(benchmark_dir: Optional[Path] = None, output_file: Optio
             telemetries={"bench_pool": telemetry},
             evaluation_date="2026-10-31",
             feed_results=mock_feed_results,
+            triage_report=bench_triage_report,
         )
         item = chain_items[0]
         actual_level = item.chain_level.value

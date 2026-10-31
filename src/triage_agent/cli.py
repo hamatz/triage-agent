@@ -189,6 +189,7 @@ def run_chain_audit_flow(args, console: Console, triage_report: Optional[Any] = 
                 with open(cand, "r", encoding="utf-8") as f:
                     ledger_data = json.load(f)
                     items = ledger_data.get("vulnerabilities", []) if isinstance(ledger_data, dict) else (ledger_data if isinstance(ledger_data, list) else [])
+                    skipped_missing_provenance = 0
                     for item in items:
                         if not isinstance(item, dict):
                             continue
@@ -196,6 +197,12 @@ def run_chain_audit_flow(args, console: Console, triage_report: Optional[Any] = 
                         if cid == "CVE-0000-00000":
                             # Skip synthetic placeholder in example ledger
                             continue
+                        source_url = item.get("source_url")
+                        retrieved_at = item.get("retrieved_at")
+                        if not source_url or not retrieved_at:
+                            skipped_missing_provenance += 1
+                            continue
+
                         # Convert affected_packages or distro_affected_ranges
                         aff_ranges = {}
                         raw_ranges = item.get("distro_affected_ranges") or item.get("affected_packages") or {}
@@ -209,13 +216,18 @@ def run_chain_audit_flow(args, console: Console, triage_report: Optional[Any] = 
                             KernelVulnerabilityEntry(
                                 cve_id=cid,
                                 name=item.get("name") or item.get("summary") or cid,
-                                source_url=item.get("source_url") or "https://osv.dev",
-                                retrieved_at=item.get("retrieved_at") or "2026-10-31",
+                                source_url=source_url,
+                                retrieved_at=retrieved_at,
                                 epss_score=item.get("epss_score"),
                                 cisa_kev=item.get("cisa_kev", False),
                                 poc_available=item.get("poc_available", False),
                                 distro_affected_ranges=aff_ranges,
                             )
+                        )
+                    if skipped_missing_provenance > 0:
+                        console.print(
+                            f"[bold yellow]⚠️ カーネル台帳読み込み: 出典（source_url）または取得日（retrieved_at）が未記載の "
+                            f"{skipped_missing_provenance} 件を読み飛ばしました。（実測・出典付き台帳のみを採用する監査保護方針）[/bold yellow]"
                         )
                 loaded_ledger_path = cand
                 console.print(f"ℹ️ カーネル脆弱性台帳（{cand}）から {len(vulnerabilities)} 件を読み込みました")
@@ -249,12 +261,16 @@ def run_chain_audit_flow(args, console: Console, triage_report: Optional[Any] = 
         target_cves.extend(wl.components)
         target_cves.extend(wl.entry_cves)
 
-    # Extract CVEs from triage_report check points using regex
+    # Extract CVEs/GHSAs from triage_report notices and checkpoints using regex
     if triage_report and hasattr(triage_report, "notices"):
         for notice in triage_report.notices:
+            for text in [notice.product_name, notice.component_name, notice.conclusion]:
+                if text:
+                    target_cves.extend(re.findall(r"\b(CVE-\d{4}-\d{4,7}|GHSA-[\w-]+)\b", text, re.IGNORECASE))
             for cp in notice.check_points:
-                extracted = re.findall(r"CVE-\d{4}-\d+", cp.target_or_cve, re.IGNORECASE)
-                target_cves.extend(extracted)
+                for text in [cp.target_or_cve, cp.content_summary]:
+                    if text:
+                        target_cves.extend(re.findall(r"\b(CVE-\d{4}-\d{4,7}|GHSA-[\w-]+)\b", text, re.IGNORECASE))
 
     feed_results = {}
     try:

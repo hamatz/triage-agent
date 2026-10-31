@@ -126,25 +126,37 @@ def evaluate_application_foothold(
                 is_unclassifiable=False,
             )
 
-    # 6. Fallback: If no diagnostic data is available at all (fresh zero-day before NVD indexing)
-    has_diagnostic_data = bool(vec or summary or cwe_nums or (cvss_score is not None))
-    if not has_diagnostic_data:
+    # 6. Fallback: Missing attack vector when score or summary is provided
+    # Safe-by-default rule: If vector is missing, we cannot know if it is network-reachable.
+    # Therefore, treat as indeterminate (足場分類不能・要人手精査).
+    # We can ONLY declare "non-foothold" (足場なし) when the vector proves local/physical execution or low impact.
+    if not vec:
+        score_desc = f"（CVSS {cvss_score}）" if cvss_score is not None else ""
         return FootholdResult(
             is_foothold=False,
-            basis="脆弱性詳細データ未提供・公表直後（足場判定不能・安全側に倒し要確認）",
+            basis=f"攻撃元ベクトル（AV:N / AV:L）未確定{score_desc}（足場分類不能・安全側に倒し要人手精査）",
             is_unclassifiable=True,
         )
 
-    # 7. Fallback: If score is high (>= 8.0) or unrated with network reachability, do NOT declare non-foothold
-    if (cvss_score and cvss_score >= 8.0 and is_network_vector) or (cvss_score is None and is_network_vector):
+    # 7. Fallback: Attack vector is present
+    is_local_vector = ("AV:L" in vec) or ("AV:P" in vec) or ("LOCAL" in vec) or ("PHYSICAL" in vec)
+    if is_local_vector:
         return FootholdResult(
             is_foothold=False,
-            basis="高深刻度または未採点ネットワーク脆弱性（足場分類不能・要人手精査）",
+            basis=f"足場（RCE/侵入経路）としてのシグナル未検出（攻撃元局所/物理: {vec}）",
+            is_unclassifiable=False,
+        )
+
+    # If network/adjacent reachable but no high confidentiality/integrity
+    if (cvss_score and cvss_score >= 8.0) or (cvss_score is None):
+        return FootholdResult(
+            is_foothold=False,
+            basis=f"高深刻度または未採点ネットワーク脆弱性（{vec}）（足場分類不能・要人手精査）",
             is_unclassifiable=True,
         )
 
     return FootholdResult(
         is_foothold=False,
-        basis="足場（RCE/侵入経路）としてのシグナル未検出（局所/情報漏洩/DoS）",
+        basis=f"足場（RCE/侵入経路）としてのシグナル未検出（ネットワーク到達可能だが局所/低影響/DoS: {vec}）",
         is_unclassifiable=False,
     )

@@ -4,6 +4,8 @@ Evaluates systemic co-location risks between application-layer footholds (RCEs) 
 OS/Kernel-layer Privilege Escalation (LPE) vulnerabilities across shared-kernel node pools.
 """
 
+import json
+import re
 from datetime import date
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
@@ -518,6 +520,28 @@ def load_node_telemetries(path_or_str: str) -> Dict[str, NodeTelemetry]:
     return telemetries
 
 
+def _build_finding(
+    raw_id: str,
+    base: Optional[Dict[str, Any]] = None,
+    feed_results: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    """Normalize finding CVE/GHSA ID and enrich with threat feed results (CISA KEV, OSV vector/CWE/summary, EPSS)."""
+    base = dict(base) if base else {}
+    m = re.search(r"\b(CVE-\d{4}-\d{4,7}|GHSA-[\w-]+)\b", raw_id, re.IGNORECASE)
+    cid = m.group(1).upper() if m else raw_id.strip().upper()
+    f = {**base, "cve_id": cid}
+    fr = (feed_results or {}).get(cid)
+    if fr:
+        if getattr(fr, "in_cisa_kev", None) is not None:
+            f["cisa_kev"] = fr.in_cisa_kev
+        if getattr(fr, "epss_score", None) is not None:
+            f["epss_score"] = fr.epss_score
+        f["cvss_vector"] = f.get("cvss_vector") or getattr(fr, "cvss_vector", None)
+        f["cwe_list"] = f.get("cwe_list") or getattr(fr, "cwe_list", None)
+        f["summary"] = getattr(fr, "summary", None) or f.get("summary")
+    return f
+
+
 def run_exploit_chain_audit(
     environment: EnvironmentDefinition,
     kernel_vulnerabilities: List[KernelVulnerabilityEntry],
@@ -539,13 +563,14 @@ def run_exploit_chain_audit(
         for notice in triage_report.notices:
             c_name = (notice.component_name or notice.product_name or "").lower()
             for cp in notice.check_points:
-                item_finding = {
-                    "cve_id": cp.target_or_cve,
+                raw_target = cp.target_or_cve
+                base_info = {
                     "cvss_score": float(cp.cvss) if cp.cvss and cp.cvss.replace(".", "", 1).isdigit() else None,
                     "cvss_vector": getattr(cp, "cvss_vector", None),
-                    "summary": f"{notice.conclusion} {cp.content_summary}",
+                    "summary": f"{notice.conclusion or ''} {cp.content_summary or ''}".strip() or None,
                     "cwe_list": getattr(cp, "cwe_list", None),
                 }
+                item_finding = _build_finding(raw_target, base_info, feed_results)
                 pipeline_findings_by_comp.setdefault(c_name, []).append(item_finding)
 
     # 2. Build findings for each workload
@@ -556,27 +581,17 @@ def run_exploit_chain_audit(
         for comp in wl.components:
             comp_lower = comp.strip().lower()
             if comp_lower in pipeline_findings_by_comp:
-                findings.extend(pipeline_findings_by_comp[comp_lower])
+                for f_item in pipeline_findings_by_comp[comp_lower]:
+                    findings.append(_build_finding(f_item.get("cve_id", ""), f_item, feed_results))
 
         # B. Pull explicit entry CVEs
         all_entry_cves = list(wl.entry_cves)
         for c in wl.components:
-            if c.upper().startswith("CVE-"):
+            if c.upper().startswith("CVE-") or c.upper().startswith("GHSA-"):
                 all_entry_cves.append(c)
 
         for cve in all_entry_cves:
-            cid = cve.strip().upper()
-            f_entry: Dict[str, Any] = {
-                "cve_id": cid,
-                "summary": None,  # Do not invent synthetic summaries!
-            }
-            if feed_results and cid in feed_results:
-                fr = feed_results[cid]
-                if getattr(fr, "in_cisa_kev", None) is not None:
-                    f_entry["cisa_kev"] = fr.in_cisa_kev
-                if getattr(fr, "epss_score", None) is not None:
-                    f_entry["epss_score"] = fr.epss_score
-            findings.append(f_entry)
+            findings.append(_build_finding(cve, {}, feed_results))
 
         # C. Inspect workload SBOM if provided
         if wl.sbom_path:
@@ -596,7 +611,8 @@ def run_exploit_chain_audit(
                         for comp_item in comps:
                             cn = (comp_item.get("name") or "").lower()
                             if cn in pipeline_findings_by_comp:
-                                findings.extend(pipeline_findings_by_comp[cn])
+                                for f_item in pipeline_findings_by_comp[cn]:
+                                    findings.append(_build_finding(f_item.get("cve_id", ""), f_item, feed_results))
                 except Exception as e:
                     findings.append({
                         "cve_id": "SBOM-CORRUPT",

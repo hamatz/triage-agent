@@ -1,0 +1,11 @@
+{
+  "bomFormat": "CycloneDX",
+  "specVersion": "1.4",
+  "components": [
+    {
+      "name": "php",
+      "version": "8.3.10",
+      "type": "application"
+    }
+  ]
+}

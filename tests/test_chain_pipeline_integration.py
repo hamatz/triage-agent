@@ -320,6 +320,98 @@ workloads:
         self.assertEqual(item.chain_level, ChainLevel.HIGH_UNVERIFIED)
         self.assertIn("SBOM-CORRUPT", item.foothold_detail)
 
+    def test_triage_report_path_three_feed_states(self):
+        """Review Point: Workload with SBOM + TriageReport (unnormalized CVE and no vector)
+
+        Tests the 3 feed states:
+        1. KEV = True -> CRITICAL_CHAIN
+        2. KEV 取得失敗 (in_cisa_kev=None, error recorded) -> HIGH_UNVERIFIED (要確認)
+        3. フィードなし (feed_results empty) -> HIGH_UNVERIFIED (要確認)
+        """
+        env = load_environment_definition(str(self.env_yaml))
+        telemetry = NodeTelemetry(
+            pool_id="dmz-pool",
+            kernel_package_version="6.8.0-40.40",
+            loaded_modules=["esp4"],
+            modprobe_disabled_modules=[],
+            active_services=[],
+        )
+        triage_report = TriageReport(
+            report_title="Triage Report for Web Workload",
+            scan_target=str(self.sbom_file),
+            total_dependencies=1,
+            notices=[
+                TriageNotice(
+                    product_name="php",
+                    component_name="php",
+                    announcement_date="2026-10-24",
+                    conclusion="PHP session upload uninitialized pointer flaw",
+                    fixed_versions="8.3.13",
+                    severity_note="Critical (CVSS 9.2)",
+                    check_points=[
+                        CheckPointItem(
+                            target_or_cve="CVE-2026-109618 (CVSS 9.2 Critical)",
+                            cvss="9.2",
+                            content_summary="Uninitialized memory reference in session upload progress",
+                            affected_versions="< 8.3.13",
+                            check_point_yes_no="session.upload_progress.enabled が有効か",
+                            verification_method="php.ini 設定確認",
+                        )
+                    ],
+                )
+            ],
+        )
+
+        # State 1: KEV = True -> CRITICAL_CHAIN
+        feeds_kev_true = {
+            "CVE-2026-109618": ThreatFeedResult(
+                cve_id="CVE-2026-109618",
+                in_cisa_kev=True,
+                epss_score=0.42,
+                verified=True,
+            )
+        }
+        res_1 = run_exploit_chain_audit(
+            environment=env,
+            kernel_vulnerabilities=[self.fragnesia_lpe],
+            telemetries={"dmz-pool": telemetry},
+            feed_results=feeds_kev_true,
+            triage_report=triage_report,
+        )
+        self.assertEqual(res_1[0].chain_level, ChainLevel.CRITICAL_CHAIN)
+        self.assertIn("48時間以内", res_1[0].action_deadline)
+        self.assertIn("CVE-2026-109618", res_1[0].foothold_detail)
+
+        # State 2: KEV 取得失敗 (in_cisa_kev=None) -> HIGH_UNVERIFIED
+        feeds_kev_failed = {
+            "CVE-2026-109618": ThreatFeedResult(
+                cve_id="CVE-2026-109618",
+                in_cisa_kev=None,
+                error="CISA KEV: Network unreachable",
+                verified=False,
+            )
+        }
+        res_2 = run_exploit_chain_audit(
+            environment=env,
+            kernel_vulnerabilities=[self.fragnesia_lpe],
+            telemetries={"dmz-pool": telemetry},
+            feed_results=feeds_kev_failed,
+            triage_report=triage_report,
+        )
+        self.assertEqual(res_2[0].chain_level, ChainLevel.HIGH_UNVERIFIED)
+        self.assertIn("2週間以内", res_2[0].action_deadline)
+
+        # State 3: フィードなし (feed_results={}) -> HIGH_UNVERIFIED
+        res_3 = run_exploit_chain_audit(
+            environment=env,
+            kernel_vulnerabilities=[self.fragnesia_lpe],
+            telemetries={"dmz-pool": telemetry},
+            feed_results={},
+            triage_report=triage_report,
+        )
+        self.assertEqual(res_3[0].chain_level, ChainLevel.HIGH_UNVERIFIED)
+        self.assertIn("2週間以内", res_3[0].action_deadline)
+
 
 
 if __name__ == "__main__":

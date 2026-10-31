@@ -358,6 +358,36 @@
       "expected_level": "HIGH_UNVERIFIED",
       "expected_deadline": "2週間以内",
       "description": "Non-existent SBOM on internet-facing workload must trigger HIGH_UNVERIFIED, never falsely treated as safe."
+    },
+    {
+      "id": "chain_sbom_triage_path_critical",
+      "name": "Workload SBOM + Triage Report Path PHP2Shell Critical Chain",
+      "workload_exposure": "internet_facing",
+      "entry_cves": [],
+      "components": [],
+      "sbom_path": "cases/php_sbom/sbom.json",
+      "kernel_version": "6.8.0-40.40",
+      "fixed_version": "6.8.0-47.47",
+      "disabled_modules": [],
+      "loaded_modules": [],
+      "active_services": [],
+      "triage_notices": [
+        {
+          "product_name": "php",
+          "component_name": "php",
+          "conclusion": "PHP session upload vulnerability",
+          "check_points": [
+            {
+              "target_or_cve": "CVE-2026-109618 (CVSS 9.2 Critical)",
+              "cvss": "9.2",
+              "content_summary": "Uninitialized memory reference in session upload progress"
+            }
+          ]
+        }
+      ],
+      "expected_level": "CRITICAL_CHAIN",
+      "expected_deadline": "48時間以内",
+      "description": "Critical exploit chain detected via SBOM components and TriageReport check points (not entry_cves), normalized and enriched by KEV feed."
     }
   ]
 }
