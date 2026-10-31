@@ -3,7 +3,7 @@ import json
 import os
 import sys
 from pathlib import Path
-from typing import List
+from typing import Any, List, Optional
 
 from rich.console import Console
 from rich.panel import Panel
@@ -127,6 +127,138 @@ def format_report_markdown(report: TriageReport) -> str:
         lines.append("")
 
     return "\n".join(lines)
+
+
+def run_chain_audit_flow(args, console: Console) -> List[Any]:
+    """Execute the Exploit Chain & Linux Kernel Exposure audit (v0.4.0)."""
+    from triage_agent.chain.engine import (
+        format_chain_audit_markdown,
+        load_environment_definition,
+        load_node_telemetries,
+        run_exploit_chain_audit,
+    )
+    from triage_agent.chain.feeds import ThreatFeedClient
+    from triage_agent.chain.models import DistroAffectedRange, KernelVulnerabilityEntry
+
+    console.print(
+        Panel.fit(
+            "[bold red]【EXPLOIT CHAIN & KERNEL EXPOSURE AUDIT / 連鎖エクスプロイト監査（v0.4.0）】[/bold red]\n"
+            "「外部露出RCE足場」×「共有カーネルノード上のLPE」によるホスト権限奪取および同居マイクロサービスへの\n"
+            "水平展開（Lateral Movement / Blast Radius）リスクを網羅的かつ決定論的に監査します。",
+            border_style="red",
+        )
+    )
+
+    env_path = args.environments
+    if not env_path:
+        for candidate in ["triage-output/environments.yaml", "environments.yaml", "environments.example.yaml"]:
+            if Path(candidate).exists():
+                env_path = candidate
+                break
+
+    if not env_path or not Path(env_path).exists():
+        console.print("[bold red]❌ エラー: 環境定義ファイル（--environments）が見つかりません。environments.example.yaml を参考に作成してください。[/bold red]")
+        sys.exit(1)
+
+    console.print(f"ℹ️ 環境定義ファイルを読み込みます: [cyan]{env_path}[/cyan]")
+    env_def = load_environment_definition(env_path)
+
+    telemetries = {}
+    if args.telemetry:
+        telemetries = load_node_telemetries(args.telemetry)
+        console.print(f"ℹ️ 実機ノードテレメトリを読み込みました: [cyan]{len(telemetries)} ノード[/cyan]")
+    else:
+        # Check standard output directory
+        std_telemetry_dir = Path("triage-output/telemetry")
+        if std_telemetry_dir.exists():
+            telemetries = load_node_telemetries(std_telemetry_dir)
+            console.print(f"ℹ️ 標準ディレクトリ（triage-output/telemetry）からテレメトリを読み込みました: [cyan]{len(telemetries)} ノード[/cyan]")
+
+    # Build kernel vulnerability targets (builtin verified entries + optional custom ledger)
+    vulnerabilities = [
+        KernelVulnerabilityEntry(
+            cve_id="CVE-2026-46300",
+            name="Fragnesia (Linux Kernel IPsec ESP LPE)",
+            source_url="https://www.bleepingcomputer.com/news/security/new-fragnesia-linux-flaw-lets-attackers-gain-root-privileges/",
+            retrieved_at="2026-10-31",
+            epss_score=0.42,
+            cisa_kev=True,
+            poc_available=True,
+            poc_evidence="Public PoC attributed in BleepingComputer",
+            distro_affected_ranges={
+                "ubuntu": DistroAffectedRange(
+                    package="linux",
+                    fixed_version="6.8.0-47.47",
+                )
+            },
+        )
+    ]
+
+    if args.chain_ledger and Path(args.chain_ledger).exists():
+        try:
+            with open(args.chain_ledger, "r", encoding="utf-8") as f:
+                ledger_data = json.load(f)
+                for item in ledger_data.get("vulnerabilities", []):
+                    # Avoid duplicate if same CVE
+                    if any(v.cve_id == item.get("cve_id") for v in vulnerabilities):
+                        continue
+                    vulnerabilities.append(KernelVulnerabilityEntry(**item))
+            console.print(f"ℹ️ 外部台帳（{args.chain_ledger}）から追加の脆弱性を読み込みました")
+        except Exception as e:
+            console.print(f"[bold yellow]⚠️ 外部台帳読み込み警告: {e}[/bold yellow]")
+
+    # Sync with threat feeds (CISA KEV / EPSS sudden jumps)
+    feed_client = ThreatFeedClient(epss_jump_threshold=args.epss_threshold)
+    target_cves = [v.cve_id for v in vulnerabilities]
+    for wl in env_def.workloads:
+        target_cves.extend(wl.components)
+
+    try:
+        feed_results = feed_client.analyze_cves(list(set(target_cves)), offline=args.dry_run)
+        for v in vulnerabilities:
+            if v.cve_id in feed_results:
+                fr = feed_results[v.cve_id]
+                if fr.in_cisa_kev is not None:
+                    v.cisa_kev = fr.in_cisa_kev
+                if fr.epss_score is not None:
+                    v.epss_score = fr.epss_score
+    except Exception as e:
+        console.print(f"[bold yellow]⚠️ 脅威インテリジェンスフィード同期スキップ（オフライン/エラー）: {e}[/bold yellow]")
+
+    # Run audit
+    audit_items = run_exploit_chain_audit(env_def, vulnerabilities, telemetries)
+
+    # Format and save report
+    report_md = format_chain_audit_markdown(audit_items)
+    out_path = Path(args.chain_output)
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    out_path.write_text(report_md, encoding="utf-8")
+    console.print(f"[bold green]✓ 連鎖エクスプロイト監査レポートを出力しました: {out_path.resolve()}[/bold green]\n")
+
+    # Display critical chains in console
+    critical_chains = [i for i in audit_items if i.chain_level.value == "CRITICAL_CHAIN"]
+    if critical_chains:
+        console.print(
+            Panel(
+                f"[bold red]🚨 【CRITICAL ALERT: 連鎖エクスプロイト（Exploit Chain）を検知しました】[/bold red]\n"
+                f"単体のCVSSスコアではMedium/Highに留まる脆弱性が、公開ワークロードのRCE足場と同一ホスト上のカーネルLPEにより\n"
+                f"結合し、ホスト全体の完全掌握および同居マイクロサービスへの水平展開が可能な状態です。\n\n"
+                + "\n".join([
+                    f"• [bold red]ワークロード: {i.workload_name}[/bold red] (ノード: {i.node_pool_id})\n"
+                    f"  - 足場RCE: {i.foothold_detail or i.app_cve or '未知/疑義'}\n"
+                    f"  - 標的カーネル脆弱性: {i.kernel_cve}\n"
+                    f"  - 緩和策状態: {i.mitigation_status}\n"
+                    f"  - 対応期限: [bold red]{i.action_deadline}[/bold red]\n"
+                    f"  - 影響範囲（水平展開）: {', '.join(i.blast_radius) if i.blast_radius else 'なし'}"
+                    for i in critical_chains
+                ]),
+                border_style="red",
+            )
+        )
+    else:
+        console.print("[bold green]✓ Critical な連鎖エクスプロイト（RCE足場＋未緩和LPE）は検出されませんでした。[/bold green]")
+
+    return audit_items
 
 
 def main():
@@ -261,6 +393,41 @@ def main():
         action="store_true",
         help="Run the ground-truth benchmark suite for Verifier and feeds (ADR-019 / Pillar 4)",
     )
+    parser.add_argument(
+        "--environments",
+        type=str,
+        default=None,
+        help="Path to environments definition YAML for Exploit Chain Analysis (v0.4.0)",
+    )
+    parser.add_argument(
+        "--telemetry",
+        type=str,
+        default=None,
+        help="Path to node telemetry JSON file or directory containing telemetry files (v0.4.0)",
+    )
+    parser.add_argument(
+        "--chain-audit",
+        action="store_true",
+        help="Execute Exploit Chain & Linux Kernel Exposure audit (v0.4.0)",
+    )
+    parser.add_argument(
+        "--chain-output",
+        type=str,
+        default="chain_audit_report.md",
+        help="Path to save the Exploit Chain audit report (default: chain_audit_report.md)",
+    )
+    parser.add_argument(
+        "--chain-ledger",
+        type=str,
+        default=None,
+        help="Optional path to custom kernel vulnerability ledger JSON",
+    )
+    parser.add_argument(
+        "--epss-threshold",
+        type=float,
+        default=0.15,
+        help="EPSS sudden jump delta threshold (default: 0.15)",
+    )
 
     args = parser.parse_args()
 
@@ -312,6 +479,26 @@ def main():
             console.print(f"[bold red]❌ T4 記録エラー:[/bold red] {e}")
             sys.exit(1)
         return
+
+    # Standalone Exploit Chain audit (v0.4.0)
+    chain_audit_items = None
+    if args.chain_audit:
+        chain_audit_items = run_chain_audit_flow(args, console)
+        # If running purely for chain audit (default SBOM without explicit scan options)
+        if args.verify_code is None and not args.self_triage and args.sbom == "sample_sbom.json" and not args.output:
+            if args.fail_on:
+                triggers = [t.strip().lower() for t in args.fail_on.split(",") if t.strip()]
+                has_critical_chain = any(i.chain_level.value == "CRITICAL_CHAIN" for i in chain_audit_items)
+                if ("chain" in triggers or "critical_chain" in triggers or "any" in triggers) and has_critical_chain:
+                    console.print(
+                        Panel(
+                            "[bold red]❌ 【CI/CD ガードレール違反: --fail-on 条件発火 (Critical Exploit Chain 検知)】[/bold red]\n"
+                            "未緩和のカーネルLPEと外部露出RCE足場による連鎖エクスプロイトが検知されたため、終了コード 2 で停止します。",
+                            border_style="red",
+                        )
+                    )
+                    sys.exit(2)
+            return
 
     mode = "demo" if args.demo else ("dry-run" if args.dry_run else "live")
 
@@ -532,6 +719,10 @@ def main():
         audit_file.write_text(format_verification_markdown(audit_report), encoding="utf-8")
         console.print(f"[bold green]✓ 検証結果レポートを出力しました: {audit_file.resolve()}[/bold green]\n")
 
+    # Optional exploit chain audit execution if configured
+    if args.chain_audit and chain_audit_items is None:
+        chain_audit_items = run_chain_audit_flow(args, console)
+
     # Enforce non-zero exit codes if --fail-on conditions are met
     if args.fail_on:
         triggers = [t.strip().lower() for t in args.fail_on.split(",") if t.strip()]
@@ -540,6 +731,10 @@ def main():
         has_unscanned = bool(triage_report.unscanned_or_failed_components)
         has_yes = False
         has_unconfirmed = False
+        has_critical_chain = False
+
+        if chain_audit_items:
+            has_critical_chain = any(i.chain_level.value == "CRITICAL_CHAIN" for i in chain_audit_items)
 
         if audit_report:
             for nr in audit_report.notice_results:
@@ -560,6 +755,9 @@ def main():
 
         if ("unconfirmed" in triggers or "any" in triggers) and has_unconfirmed:
             triggered_reasons.append("外部設定・既定値の要確認項目（未サインオフ）が存在します")
+
+        if ("chain" in triggers or "critical_chain" in triggers or "any" in triggers) and has_critical_chain:
+            triggered_reasons.append("未緩和のカーネルLPEと外部露出RCE足場による連鎖エクスプロイト（Critical Exploit Chain）が検知されました")
 
         if triggered_reasons:
             console.print(

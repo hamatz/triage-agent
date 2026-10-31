@@ -265,6 +265,87 @@ def run_benchmark_suite(benchmark_dir: Optional[Path] = None, output_file: Optio
             "reasoning": f"feed_res: {feed_res}, err: {feed_err}",
         })
 
+    # 5. Exploit Chain & Kernel Exposure Cases (v0.4.0 / ADR-019)
+    from triage_agent.chain.engine import run_exploit_chain_audit
+    from triage_agent.chain.models import (
+        DistroAffectedRange,
+        EnvironmentDefinition,
+        ExposureType,
+        KernelVulnerabilityEntry,
+        NodePoolDefinition,
+        NodeTelemetry,
+        WorkloadDefinition,
+    )
+
+    for case in manifest.get("chain_cases", []):
+        pos_total += 1
+        exp_type = ExposureType.INTERNET_FACING if case["workload_exposure"] == "internet_facing" else ExposureType.INTERNAL_ONLY
+        env = EnvironmentDefinition(
+            environment_name="benchmark_env",
+            node_pools=[
+                NodePoolDefinition(
+                    pool_id="bench_pool",
+                    os_distribution="ubuntu",
+                    kernel_package_version=case["kernel_version"],
+                )
+            ],
+            workloads=[
+                WorkloadDefinition(
+                    name="bench_workload",
+                    exposure=exp_type,
+                    node_pool="bench_pool",
+                    components=case["entry_cves"],
+                )
+            ],
+        )
+        telemetry = NodeTelemetry(
+            pool_id="bench_pool",
+            kernel_package_version=case["kernel_version"],
+            modprobe_disabled_modules=case.get("disabled_modules", []),
+            active_services=case.get("active_services", []),
+        )
+        k_entry = KernelVulnerabilityEntry(
+            cve_id="CVE-2026-46300",
+            name="Fragnesia IPsec LPE",
+            source_url="https://ubuntu.com/security/notices/USN-7000-1",
+            retrieved_at="2026-10-31",
+            epss_score=0.42,
+            cisa_kev=True,
+            poc_available=True,
+            distro_affected_ranges={
+                "ubuntu": DistroAffectedRange(
+                    package="linux",
+                    fixed_version=case["fixed_version"],
+                )
+            },
+        )
+
+        chain_items = run_exploit_chain_audit(
+            environment=env,
+            kernel_vulnerabilities=[k_entry],
+            telemetries={"bench_pool": telemetry},
+            evaluation_date="2026-10-31",
+        )
+        item = chain_items[0]
+        actual_level = item.chain_level.value
+        expected_level = case["expected_level"]
+        level_match = actual_level == expected_level
+        deadline_match = case.get("expected_deadline", "") in item.action_deadline
+        passed = level_match and deadline_match
+
+        if passed:
+            pos_detected += 1
+
+        results.append({
+            "id": case["id"],
+            "category": "chain",
+            "name": case["name"],
+            "expected": expected_level,
+            "actual_status": f"{actual_level} ({item.action_deadline})",
+            "passed": passed,
+            "reasoning": f"Level match: {level_match}, Deadline match: {deadline_match}, Mitigation: {item.mitigation_status}",
+        })
+
     # Calculate overall metrics
     total_cases = len(results)
     passed_cases = sum(1 for r in results if r["passed"])

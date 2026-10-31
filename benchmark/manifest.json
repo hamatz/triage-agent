@@ -212,5 +212,59 @@
       "expected": "NOT_YES",
       "description": "Tomcat RC post mentioning security updates end. Must NOT trigger future pre-announcement."
     }
+  ],
+  "chain_cases": [
+    {
+      "id": "chain_php2shell_fragnesia_critical",
+      "name": "PHP2Shell + Fragnesia DMZ Critical Chain",
+      "workload_exposure": "internet_facing",
+      "entry_cves": ["CVE-2026-109618"],
+      "kernel_version": "6.8.0-40.40",
+      "fixed_version": "6.8.0-47.47",
+      "disabled_modules": [],
+      "active_services": [],
+      "expected_level": "CRITICAL_CHAIN",
+      "expected_deadline": "48時間以内",
+      "description": "Internet-facing workload with PHP2Shell RCE combined with unmitigated Fragnesia kernel LPE must trigger CRITICAL_CHAIN (48h)."
+    },
+    {
+      "id": "chain_fragnesia_mitigated_30d",
+      "name": "Fragnesia Fully Mitigated on DMZ",
+      "workload_exposure": "internet_facing",
+      "entry_cves": ["CVE-2026-109618"],
+      "kernel_version": "6.8.0-40.40",
+      "fixed_version": "6.8.0-47.47",
+      "disabled_modules": ["esp4", "esp6", "rxrpc"],
+      "active_services": [],
+      "expected_level": "MITIGATED_NEEDS_PATCH",
+      "expected_deadline": "30日以内",
+      "description": "All 3 modules disabled via modprobe with no conflicting service allows 30-day routine patching window."
+    },
+    {
+      "id": "chain_fragnesia_side_effect_conflict",
+      "name": "Fragnesia Blocked by IPsec Side-Effect Conflict",
+      "workload_exposure": "internet_facing",
+      "entry_cves": ["CVE-2026-109618"],
+      "kernel_version": "6.8.0-40.40",
+      "fixed_version": "6.8.0-47.47",
+      "disabled_modules": ["esp4", "esp6", "rxrpc"],
+      "active_services": ["ipsec"],
+      "expected_level": "CRITICAL_CHAIN",
+      "expected_deadline": "48時間以内",
+      "description": "Active IPsec service makes disabling modules impossible; must evaluate as unmitigated and trigger CRITICAL_CHAIN."
+    },
+    {
+      "id": "chain_internal_lateral_movement_2w",
+      "name": "Internal Workload Kernel LPE Lateral Movement Prevention",
+      "workload_exposure": "internal_only",
+      "entry_cves": [],
+      "kernel_version": "6.8.0-40.40",
+      "fixed_version": "6.8.0-47.47",
+      "disabled_modules": [],
+      "active_services": [],
+      "expected_level": "HIGH_ISOLATED",
+      "expected_deadline": "2週間以内",
+      "description": "Dream incident lesson: internal workload on unmitigated kernel must be patched within 2 weeks to prevent lateral movement."
+    }
   ]
 }

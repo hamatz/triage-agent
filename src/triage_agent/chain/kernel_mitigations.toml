@@ -1,0 +1,13 @@
+# kernel_mitigations.toml
+# Verifiable Linux Kernel LPE Mitigation Registry (triage-agent v0.4.0)
+# All entries MUST include verified primary sources, exact required directives, and operational side-effects.
+
+[mitigations."CVE-2026-46300"]
+name = "Fragnesia (Linux Kernel IPsec ESP LPE)"
+source_url = "https://www.bleepingcomputer.com/news/security/new-fragnesia-linux-flaw-lets-attackers-gain-root-privileges/"
+retrieved_at = "2026-10-31"
+required_modules = ["esp4", "esp6", "rxrpc"]
+required_directive = "install {mod} /bin/false"
+side_effect_warning = "⚠️ 警告: esp4/esp6/rxrpc を無効化すると IPsec VPN 通信および AFS ファイルシステムが即座に利用不能になります。該当サービス利用ホストではパッチ適用を優先してください。"
+conflict_services = ["ipsec", "strongswan", "openembed", "afs", "openafs"]
+note = "3モジュールすべてが無効化されている必要があります。カーネル組み込み（modules.builtin）の場合はmodprobeで停止不能です。"

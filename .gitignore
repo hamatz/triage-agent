@@ -15,6 +15,10 @@ reports/
 /triage_report.*
 /verification_audit_report.*
 /audit_signoff.*
+/chain_audit_report.*
+/environments.yaml
+/environments.yml
+/telemetry_*.json
 /*triage*.json
 /*triage*.md
 /*audit*.json
@@ -28,6 +32,8 @@ reports/
 /my_sbom.json
 /test_*.json
 
-# Whitelist safe demo/sample files
+# Whitelist safe demo/sample/example files
 !sample_*
 !/sample_*
+!*.example.yaml
+!*.example.json

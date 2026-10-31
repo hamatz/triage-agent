@@ -1,0 +1,46 @@
+# environments.example.yaml
+# 本番環境の構成コード（実機情報）を定義する見本ファイルです。
+# 機密情報を含む実際の environments.yaml は triage-output/ （.gitignore 対象）に配置してください。
+#
+# exposure（外部露出度・実行権限）の定義:
+#   - internet_facing: パブリックインターネットからリクエストを直接受信する（Ingress / ALB 直下）
+#   - untrusted_code: ユーザー指定のコードやスクリプトをサンドボックス内で実行する（例: CI runner, コード実行基盤）
+#   - internal_only: 組織内ネットワークまたは VPC 内部からのみアクセス可能なマイクロサービス
+
+version: "1.0"
+environment: "production"
+
+node_pools:
+  - id: "pool-dmz-ingress"
+    nodes: ["node-worker-01", "node-worker-02"]
+    os_distro: "ubuntu-24.04"
+    kernel_package: "6.8.0-40.40"
+    shared_kernel: true
+
+  - id: "pool-internal-core"
+    nodes: ["node-worker-03", "node-worker-04"]
+    os_distro: "ubuntu-24.04"
+    kernel_package: "6.8.0-47.47"
+    shared_kernel: true
+
+workloads:
+  - id: "web-frontend"
+    namespace: "frontend"
+    node_pool_id: "pool-dmz-ingress"
+    exposure: "internet_facing"
+    entry_cves: []
+    description: "パブリック向けWebフロントエンドAPI"
+
+  - id: "payment-gateway"
+    namespace: "payment"
+    node_pool_id: "pool-dmz-ingress"
+    exposure: "internal_only"
+    entry_cves: []
+    description: "社内決済マイクロサービス（frontend と同一ノードプール上で動作）"
+
+  - id: "background-batch"
+    namespace: "batch"
+    node_pool_id: "pool-internal-core"
+    exposure: "internal_only"
+    entry_cves: []
+    description: "夜間バッチ処理基盤"
