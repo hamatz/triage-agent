@@ -72,39 +72,49 @@ if command -v dpkg >/dev/null 2>&1; then
     PACKAGE_NAME="$(echo "${DPKG_OUT}" | awk '{print $2}')"
     PACKAGE_VER="$(echo "${DPKG_OUT}" | awk '{print $3}')"
   fi
+  # Obtain true source package name (e.g. linux-hwe-6.11, linux-aws, linux)
+  if command -v dpkg-query >/dev/null 2>&1 && [ "${PACKAGE_NAME}" != "unknown" ]; then
+    SRC_PKG="$(dpkg-query -W -f='${source:Package}' "${PACKAGE_NAME}" 2>/dev/null || true)"
+    if [ -n "${SRC_PKG}" ]; then
+      KERNEL_FLAVOR="${SRC_PKG}"
+    fi
+  fi
 elif command -v rpm >/dev/null 2>&1; then
   # RHEL / Rocky / Alma / Fedora
   RPM_OUT="$(rpm -qf "/boot/vmlinuz-${UNAME_R}" 2>/dev/null || true)"
   if [ -n "${RPM_OUT}" ]; then
     PACKAGE_NAME="${RPM_OUT}"
     PACKAGE_VER="$(rpm -q --qf '%{VERSION}-%{RELEASE}' -f "/boot/vmlinuz-${UNAME_R}" 2>/dev/null || echo "${RPM_OUT}")"
+    SRC_RPM="$(rpm -q --qf '%{SOURCERPM}' -f "/boot/vmlinuz-${UNAME_R}" 2>/dev/null || true)"
+    if [ -n "${SRC_RPM}" ]; then
+      KERNEL_FLAVOR="$(echo "${SRC_RPM}" | sed 's/-[0-9].*//')"
+    fi
   fi
 fi
 
-# Detect cloud/specialized kernel flavor
-case "${PACKAGE_NAME}" in
-  *aws*)
-    KERNEL_FLAVOR="linux-aws"
-    ;;
-  *gcp*)
-    KERNEL_FLAVOR="linux-gcp"
-    ;;
-  *azure*)
-    KERNEL_FLAVOR="linux-azure"
-    ;;
-  *oracle*)
-    KERNEL_FLAVOR="linux-oracle"
-    ;;
-  *kvm*)
-    KERNEL_FLAVOR="linux-kvm"
-    ;;
-  *hwe*)
-    KERNEL_FLAVOR="linux-hwe"
-    ;;
-  *)
-    KERNEL_FLAVOR="linux"
-    ;;
-esac
+# Fallback pattern detection if source package was not directly acquired
+if [ "${KERNEL_FLAVOR}" = "linux" ]; then
+  case "${PACKAGE_NAME}" in
+    *aws*)
+      KERNEL_FLAVOR="linux-aws"
+      ;;
+    *gcp*)
+      KERNEL_FLAVOR="linux-gcp"
+      ;;
+    *azure*)
+      KERNEL_FLAVOR="linux-azure"
+      ;;
+    *oracle*)
+      KERNEL_FLAVOR="linux-oracle"
+      ;;
+    *kvm*)
+      KERNEL_FLAVOR="linux-kvm"
+      ;;
+    *hwe*)
+      KERNEL_FLAVOR="linux-hwe"
+      ;;
+  esac
+fi
 
 # 3. Modprobe configuration (lines containing install/blacklist for target modules)
 MODPROBE_LINES=""

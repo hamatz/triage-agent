@@ -150,6 +150,177 @@ workloads:
         self.assertIn("CVE-2026-109618", item.foothold_detail)
         self.assertIn("CVE-2026-46300", item.kernel_cve)
 
+    def test_aws_kernel_flavor_indeterminate_fail_safe(self):
+        """Review Point: Ubuntu AWS kernel 6.8.0-1015.16 must NOT match generic Ubuntu fixed version 6.8.0-47.47 and declare SAFE."""
+        env_aws_yaml = self.work_dir / "aws_env.yaml"
+        env_aws_yaml.write_text(
+            f"""
+environment: "aws-production"
+node_pools:
+  - id: "aws-dmz-pool"
+    os_distro: "ubuntu"
+    os_release: "24.04"
+    kernel_package: "linux-aws"
+    kernel_flavor: "linux-aws"
+    kernel_package_version: "6.8.0-1015.16"
+workloads:
+  - id: "web-aws"
+    exposure: "internet_facing"
+    node_pool_id: "aws-dmz-pool"
+    sbom_path: "{self.sbom_file.resolve()}"
+    components: ["php"]
+""",
+            encoding="utf-8",
+        )
+        env = load_environment_definition(str(env_aws_yaml))
+        telemetry = NodeTelemetry(
+            pool_id="aws-dmz-pool",
+            os_distribution="ubuntu",
+            os_release="24.04",
+            kernel_package_name="linux-aws",
+            kernel_flavor="linux-aws",
+            kernel_package_version="6.8.0-1015.16",
+            loaded_modules=["esp4"],
+            modprobe_disabled_modules=[],
+            active_services=[],
+        )
+        mock_triage_report = TriageReport(
+            report_title="Triage Report for Web AWS Workload",
+            scan_target="web_sbom.json",
+            total_dependencies=1,
+            notices=[
+                TriageNotice(
+                    product_name="php",
+                    component_name="php",
+                    announcement_date="2026-10-24",
+                    conclusion="Critical RCE (PHP2Shell)",
+                    fixed_versions="8.3.13",
+                    severity_note="Critical (CVSS 9.8)",
+                    check_points=[
+                        CheckPointItem(
+                            target_or_cve="CVE-2026-109618",
+                            cvss="9.8",
+                            content_summary="Remote code execution via uninitialized memory reference",
+                            affected_versions="< 8.3.13",
+                            check_point_yes_no="session.upload_progress.enabled が有効か",
+                            verification_method="php.ini 設定確認",
+                        )
+                    ],
+                )
+            ],
+        )
+        mock_feeds = {
+            "CVE-2026-109618": ThreatFeedResult(
+                cve_id="CVE-2026-109618",
+                in_cisa_kev=True,
+                epss_score=0.42,
+                verified=True,
+            )
+        }
+
+        results = run_exploit_chain_audit(
+            environment=env,
+            kernel_vulnerabilities=[self.fragnesia_lpe],
+            telemetries={"aws-dmz-pool": telemetry},
+            evaluation_date="2026-10-31",
+            feed_results=mock_feeds,
+            triage_report=mock_triage_report,
+        )
+
+        item = results[0]
+        self.assertEqual(item.workload_name, "web-aws")
+        # Must NOT be evaluated as SAFE! Because AWS flavor has no fixed version in ledger, it defaults to indeterminate (該当の可能性あり⚠️)
+        self.assertNotEqual(item.chain_level, ChainLevel.SAFE)
+        self.assertIn("要確認", item.kernel_status)
+        self.assertIn("該当の可能性あり⚠️", item.kernel_status)
+        # Combined with confirmed app foothold (PHP2Shell in KEV) on internet-facing workload:
+        self.assertEqual(item.chain_level, ChainLevel.CRITICAL_CHAIN)
+
+    def test_missing_sbom_failsafe(self):
+        """Review Point: Workload with missing sbom_path must evaluate to HIGH_UNVERIFIED (not silently treated as clean/SAFE)."""
+        env_missing_sbom_yaml = self.work_dir / "missing_sbom_env.yaml"
+        env_missing_sbom_yaml.write_text(
+            """
+environment: "production"
+node_pools:
+  - id: "dmz-pool"
+    os_distro: "ubuntu"
+    os_release: "24.04"
+    kernel_package: "6.8.0-40.40"
+workloads:
+  - id: "web-missing-sbom"
+    exposure: "internet_facing"
+    node_pool_id: "dmz-pool"
+    sbom_path: "/nonexistent/path/to/missing_sbom.json"
+""",
+            encoding="utf-8",
+        )
+        env = load_environment_definition(str(env_missing_sbom_yaml))
+        telemetry = NodeTelemetry(
+            pool_id="dmz-pool",
+            kernel_package_version="6.8.0-40.40",
+            loaded_modules=["esp4"],
+            modprobe_disabled_modules=[],
+            active_services=[],
+        )
+
+        results = run_exploit_chain_audit(
+            environment=env,
+            kernel_vulnerabilities=[self.fragnesia_lpe],
+            telemetries={"dmz-pool": telemetry},
+            evaluation_date="2026-10-31",
+        )
+
+        item = results[0]
+        self.assertEqual(item.workload_name, "web-missing-sbom")
+        self.assertEqual(item.chain_level, ChainLevel.HIGH_UNVERIFIED)
+        self.assertIn("SBOM-MISSING", item.foothold_detail)
+        self.assertIn("人手確認", item.action_deadline)
+
+    def test_corrupt_sbom_failsafe(self):
+        """Review Point: Workload with corrupt/invalid JSON sbom_path must evaluate to HIGH_UNVERIFIED."""
+        corrupt_sbom = self.work_dir / "corrupt_sbom.json"
+        corrupt_sbom.write_text("{invalid_json: true,", encoding="utf-8")
+
+        env_corrupt_yaml = self.work_dir / "corrupt_sbom_env.yaml"
+        env_corrupt_yaml.write_text(
+            f"""
+environment: "production"
+node_pools:
+  - id: "dmz-pool"
+    os_distro: "ubuntu"
+    os_release: "24.04"
+    kernel_package: "6.8.0-40.40"
+workloads:
+  - id: "web-corrupt-sbom"
+    exposure: "internet_facing"
+    node_pool_id: "dmz-pool"
+    sbom_path: "{corrupt_sbom.resolve()}"
+""",
+            encoding="utf-8",
+        )
+        env = load_environment_definition(str(env_corrupt_yaml))
+        telemetry = NodeTelemetry(
+            pool_id="dmz-pool",
+            kernel_package_version="6.8.0-40.40",
+            loaded_modules=["esp4"],
+            modprobe_disabled_modules=[],
+            active_services=[],
+        )
+
+        results = run_exploit_chain_audit(
+            environment=env,
+            kernel_vulnerabilities=[self.fragnesia_lpe],
+            telemetries={"dmz-pool": telemetry},
+            evaluation_date="2026-10-31",
+        )
+
+        item = results[0]
+        self.assertEqual(item.workload_name, "web-corrupt-sbom")
+        self.assertEqual(item.chain_level, ChainLevel.HIGH_UNVERIFIED)
+        self.assertIn("SBOM-CORRUPT", item.foothold_detail)
+
+
 
 if __name__ == "__main__":
     unittest.main()

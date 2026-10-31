@@ -129,8 +129,9 @@ def format_report_markdown(report: TriageReport) -> str:
     return "\n".join(lines)
 
 
-def run_chain_audit_flow(args, console: Console) -> List[Any]:
+def run_chain_audit_flow(args, console: Console, triage_report: Optional[Any] = None) -> List[Any]:
     """Execute the Exploit Chain & Linux Kernel Exposure audit (v0.4.0)."""
+    import re
     from triage_agent.chain.engine import (
         format_chain_audit_markdown,
         load_environment_definition,
@@ -174,38 +175,72 @@ def run_chain_audit_flow(args, console: Console) -> List[Any]:
             telemetries = load_node_telemetries(std_telemetry_dir)
             console.print(f"ℹ️ 標準ディレクトリ（triage-output/telemetry）からテレメトリを読み込みました: [cyan]{len(telemetries)} ノード[/cyan]")
 
-    # Build kernel vulnerability targets (builtin verified entries + optional custom ledger)
-    vulnerabilities = [
-        KernelVulnerabilityEntry(
-            cve_id="CVE-2026-46300",
-            name="Fragnesia (Linux Kernel IPsec ESP LPE)",
-            source_url="https://www.bleepingcomputer.com/news/security/new-fragnesia-linux-flaw-lets-attackers-gain-root-privileges/",
-            retrieved_at="2026-10-31",
-            epss_score=0.42,
-            cisa_kev=True,
-            poc_available=True,
-            poc_evidence="Public PoC attributed in BleepingComputer",
-            distro_affected_ranges={
-                "ubuntu": DistroAffectedRange(
-                    package="linux",
-                    fixed_version="6.8.0-47.47",
-                )
-            },
-        )
-    ]
+    # Build kernel vulnerability targets from external ledger or OSV feed (No synthetic hardcoded entries)
+    vulnerabilities: List[KernelVulnerabilityEntry] = []
+    ledger_candidates = []
+    if args.chain_ledger:
+        ledger_candidates.append(args.chain_ledger)
+    ledger_candidates.extend(["triage-output/exploit_chain_ledger.json", "exploit_chain_ledger.json"])
 
-    if args.chain_ledger and Path(args.chain_ledger).exists():
-        try:
-            with open(args.chain_ledger, "r", encoding="utf-8") as f:
-                ledger_data = json.load(f)
-                for item in ledger_data.get("vulnerabilities", []):
-                    # Avoid duplicate if same CVE
-                    if any(v.cve_id == item.get("cve_id") for v in vulnerabilities):
-                        continue
-                    vulnerabilities.append(KernelVulnerabilityEntry(**item))
-            console.print(f"ℹ️ 外部台帳（{args.chain_ledger}）から追加の脆弱性を読み込みました")
-        except Exception as e:
-            console.print(f"[bold yellow]⚠️ 外部台帳読み込み警告: {e}[/bold yellow]")
+    loaded_ledger_path = None
+    for cand in ledger_candidates:
+        if cand and Path(cand).exists():
+            try:
+                with open(cand, "r", encoding="utf-8") as f:
+                    ledger_data = json.load(f)
+                    items = ledger_data.get("vulnerabilities", []) if isinstance(ledger_data, dict) else (ledger_data if isinstance(ledger_data, list) else [])
+                    for item in items:
+                        if not isinstance(item, dict):
+                            continue
+                        cid = item.get("cve_id", "")
+                        if cid == "CVE-0000-00000":
+                            # Skip synthetic placeholder in example ledger
+                            continue
+                        # Convert affected_packages or distro_affected_ranges
+                        aff_ranges = {}
+                        raw_ranges = item.get("distro_affected_ranges") or item.get("affected_packages") or {}
+                        for k, v in raw_ranges.items():
+                            if isinstance(v, dict):
+                                aff_ranges[k] = DistroAffectedRange(
+                                    package=v.get("package", "linux"),
+                                    fixed_version=v.get("fixed_version", ""),
+                                )
+                        vulnerabilities.append(
+                            KernelVulnerabilityEntry(
+                                cve_id=cid,
+                                name=item.get("name") or item.get("summary") or cid,
+                                source_url=item.get("source_url") or "https://osv.dev",
+                                retrieved_at=item.get("retrieved_at") or "2026-10-31",
+                                epss_score=item.get("epss_score"),
+                                cisa_kev=item.get("cisa_kev", False),
+                                poc_available=item.get("poc_available", False),
+                                distro_affected_ranges=aff_ranges,
+                            )
+                        )
+                loaded_ledger_path = cand
+                console.print(f"ℹ️ カーネル脆弱性台帳（{cand}）から {len(vulnerabilities)} 件を読み込みました")
+                break
+            except Exception as e:
+                console.print(f"[bold yellow]⚠️ 外部台帳読み込み警告: {e}[/bold yellow]")
+
+    if not vulnerabilities:
+        console.print("[yellow]ℹ️ カーネル脆弱性台帳（--chain-ledger または exploit_chain_ledger.json）に対象エントリがないため、連鎖評価をスキップします。[/yellow]")
+        return []
+
+    # If triage_report wasn't passed directly, check if a generated triage_report.json exists
+    if triage_report is None:
+        report_candidates = ["triage-output/triage_report.json", "triage_report.json"]
+        if args.output and args.output.endswith(".json"):
+            report_candidates.insert(0, args.output)
+        for rc in report_candidates:
+            if Path(rc).exists():
+                try:
+                    with open(rc, "r", encoding="utf-8") as rf:
+                        triage_report = TriageReport(**json.load(rf))
+                        console.print(f"ℹ️ トリアージ結果レポート（{rc}）を自動連携しました")
+                        break
+                except Exception:
+                    pass
 
     # Sync with threat feeds (CISA KEV / EPSS sudden jumps)
     feed_client = ThreatFeedClient(epss_jump_threshold=args.epss_threshold)
@@ -214,9 +249,17 @@ def run_chain_audit_flow(args, console: Console) -> List[Any]:
         target_cves.extend(wl.components)
         target_cves.extend(wl.entry_cves)
 
+    # Extract CVEs from triage_report check points using regex
+    if triage_report and hasattr(triage_report, "notices"):
+        for notice in triage_report.notices:
+            for cp in notice.check_points:
+                extracted = re.findall(r"CVE-\d{4}-\d+", cp.target_or_cve, re.IGNORECASE)
+                target_cves.extend(extracted)
+
     feed_results = {}
     try:
-        feed_results = feed_client.analyze_cves(list(set(target_cves)), offline=args.dry_run)
+        clean_cves = list(set([c.strip().upper() for c in target_cves if c.strip()]))
+        feed_results = feed_client.analyze_cves(clean_cves, offline=args.dry_run)
         for v in vulnerabilities:
             if v.cve_id in feed_results:
                 fr = feed_results[v.cve_id]
@@ -233,6 +276,7 @@ def run_chain_audit_flow(args, console: Console) -> List[Any]:
         kernel_vulnerabilities=vulnerabilities,
         telemetries=telemetries,
         feed_results=feed_results,
+        triage_report=triage_report,
     )
 
     # Format and save report

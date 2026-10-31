@@ -23,6 +23,7 @@ logger = logging.getLogger(__name__)
 
 CISA_KEV_URL = "https://www.cisa.gov/sites/default/files/feeds/known_exploited_vulnerabilities.json"
 FIRST_EPSS_URL = "https://api.first.org/data/v1/epss"
+OSV_VULN_URL = "https://api.osv.dev/v1/vulns"
 
 
 @dataclass
@@ -37,6 +38,10 @@ class ThreatFeedResult:
     previous_epss_score: Optional[float] = None
     epss_delta: Optional[float] = None
     epss_sudden_jump: bool = False
+    cvss_vector: Optional[str] = None
+    cvss_score: Optional[float] = None
+    cwe_list: List[str] = field(default_factory=list)
+    summary: Optional[str] = None
     verified: bool = False
     error: Optional[str] = None
 
@@ -116,6 +121,75 @@ class ThreatFeedClient:
     def _index_kev_data(self, data: Dict[str, Any]) -> Dict[str, Dict[str, Any]]:
         vulnerabilities = data.get("vulnerabilities", [])
         return {item.get("cveID", "").upper(): item for item in vulnerabilities if item.get("cveID")}
+
+    def fetch_osv_vulnerability(self, cve_id: str) -> Optional[Dict[str, Any]]:
+        """Fetch full OSV record for a vulnerability (CVE-XXXX-XXXX or GHSA-XXXX)."""
+        cid = cve_id.strip()
+        url = f"{OSV_VULN_URL}/{cid}"
+        cache_file = self.cache_dir / f"osv_{cid}.json"
+        if cache_file.exists():
+            try:
+                with open(cache_file, "r", encoding="utf-8") as f:
+                    return json.load(f)
+            except Exception:
+                pass
+
+        try:
+            req = urllib.request.Request(
+                url,
+                headers={"User-Agent": "triage-agent/0.4.0 (Security Triaging Tool)"},
+            )
+            with urllib.request.urlopen(req, timeout=self.timeout) as resp:
+                if resp.status == 200:
+                    data = json.loads(resp.read().decode("utf-8"))
+                    self._ensure_dirs()
+                    with open(cache_file, "w", encoding="utf-8") as f:
+                        json.dump(data, f, indent=2)
+                    return data
+        except Exception as e:
+            logger.debug("OSV query for %s returned error: %s", cid, e)
+            return None
+
+    def extract_osv_fixed_ranges(self, osv_data: Dict[str, Any]) -> Dict[str, Any]:
+        """Extract distro-specific package fixed versions from OSV record.
+        
+        Returns dict of distro keys (e.g. 'ubuntu:24.04:linux', 'ubuntu:24.04:linux-aws') to fixed version strings.
+        """
+        results: Dict[str, Any] = {}
+        affected = osv_data.get("affected", [])
+        for aff in affected:
+            pkg = aff.get("package", {})
+            eco = (pkg.get("ecosystem") or "").lower()
+            name = (pkg.get("name") or "").lower()
+
+            # Find fixed version event
+            fixed_ver = None
+            for r in aff.get("ranges", []):
+                for ev in r.get("events", []):
+                    if "fixed" in ev:
+                        fixed_ver = ev["fixed"]
+                        break
+                if fixed_ver:
+                    break
+
+            if not fixed_ver:
+                continue
+
+            # Parse ecosystem: e.g. "ubuntu:24.04:lts", "debian:12"
+            parts = eco.split(":")
+            distro_name = parts[0] if parts else eco
+            release = parts[1] if len(parts) > 1 else ""
+
+            # Key variations:
+            if release:
+                results[f"{distro_name}:{release}:{name}"] = {"package": name, "fixed_version": fixed_ver}
+                if name == "linux":
+                    results[f"{distro_name}:{release}"] = {"package": name, "fixed_version": fixed_ver}
+            results[f"{distro_name}:{name}"] = {"package": name, "fixed_version": fixed_ver}
+            if name == "linux":
+                results[distro_name] = {"package": name, "fixed_version": fixed_ver}
+
+        return results
 
     def fetch_epss_scores(self, cve_ids: List[str]) -> Dict[str, Dict[str, float]]:
         """Query FIRST EPSS API for scores and percentiles.
@@ -270,6 +344,22 @@ class ThreatFeedClient:
             elif epss_error:
                 err_msg = f"EPSS: {epss_error}"
                 res.error = f"{res.error}; {err_msg}" if res.error else err_msg
+
+            # Process OSV (CVSS vector, CWEs, summary)
+            osv_rec = self.fetch_osv_vulnerability(cid)
+            if osv_rec:
+                res.summary = osv_rec.get("summary") or osv_rec.get("details")
+                # Extract severity (CVSS vector)
+                for sev in osv_rec.get("severity", []):
+                    score_str = sev.get("score")
+                    if score_str and ("CVSS:" in score_str or "AV:" in score_str):
+                        res.cvss_vector = score_str
+                        break
+                # Extract CWEs
+                db_spec = osv_rec.get("database_specific", {})
+                cwes = db_spec.get("cwe_ids") or []
+                if isinstance(cwes, list):
+                    res.cwe_list = [str(c) for c in cwes]
 
             # Verified status
             if res.error is None:

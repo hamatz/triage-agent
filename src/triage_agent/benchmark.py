@@ -322,6 +322,7 @@ def run_benchmark_suite(benchmark_dir: Optional[Path] = None, output_file: Optio
                     exposure=exp_type,
                     node_pool="bench_pool",
                     components=case["entry_cves"],
+                    sbom_path=case.get("sbom_path"),
                 )
             ],
         )

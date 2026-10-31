@@ -54,11 +54,12 @@ def _resolve_distro_range(
     candidates = []
     if rel_clean:
         candidates.append(f"{d_clean}:{rel_clean}:{flavor}")
-        candidates.append(f"{d_clean}:{rel_clean}")
     candidates.append(f"{d_clean}:{flavor}")
     
-    # Generic keys only allowed if node is genuinely running the standard/generic kernel
+    # Generic keys (without flavor) are ONLY allowed if node is genuinely running the standard/generic kernel
     if flavor == "linux":
+        if rel_clean:
+            candidates.append(f"{d_clean}:{rel_clean}")
         candidates.append(d_clean)
 
     for c in candidates:
@@ -117,6 +118,13 @@ def audit_exploit_chains(
         unclassifiable_high: List[Dict[str, Any]] = []
 
         for finding in raw_app_findings:
+            if finding.get("is_unclassifiable"):
+                unclassifiable_high.append({
+                    "cve": finding.get("cve_id") or finding.get("cve") or "UNKNOWN",
+                    "basis": finding.get("basis") or "判定不能・要確認",
+                })
+                continue
+
             cid = finding.get("cve_id") or finding.get("id") or finding.get("cve") or "UNKNOWN"
             f_res = evaluate_application_foothold(
                 cve_id=cid,
@@ -571,18 +579,30 @@ def run_exploit_chain_audit(
             findings.append(f_entry)
 
         # C. Inspect workload SBOM if provided
-        if wl.sbom_path and Path(wl.sbom_path).exists():
-            try:
-                with open(wl.sbom_path, "r", encoding="utf-8") as f:
-                    sbom_data = json.load(f)
-                    # Read components from CycloneDX or Syft
-                    comps = sbom_data.get("components") or sbom_data.get("artifacts") or []
-                    for comp_item in comps:
-                        cn = (comp_item.get("name") or "").lower()
-                        if cn in pipeline_findings_by_comp:
-                            findings.extend(pipeline_findings_by_comp[cn])
-            except Exception:
-                pass
+        if wl.sbom_path:
+            sbom_p = Path(wl.sbom_path)
+            if not sbom_p.exists():
+                findings.append({
+                    "cve_id": "SBOM-MISSING",
+                    "is_unclassifiable": True,
+                    "basis": f"指定されたSBOMファイルが存在しません（{wl.sbom_path}）: 判定不能・要確認",
+                })
+            else:
+                try:
+                    with open(sbom_p, "r", encoding="utf-8") as f:
+                        sbom_data = json.load(f)
+                        # Read components from CycloneDX or Syft
+                        comps = sbom_data.get("components") or sbom_data.get("artifacts") or []
+                        for comp_item in comps:
+                            cn = (comp_item.get("name") or "").lower()
+                            if cn in pipeline_findings_by_comp:
+                                findings.extend(pipeline_findings_by_comp[cn])
+                except Exception as e:
+                    findings.append({
+                        "cve_id": "SBOM-CORRUPT",
+                        "is_unclassifiable": True,
+                        "basis": f"SBOMファイルの読み込みに失敗しました（{wl.sbom_path}: {e}）: 判定不能・要確認",
+                    })
 
         app_findings[wl.name] = findings
 

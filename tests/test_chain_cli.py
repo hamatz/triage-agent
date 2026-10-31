@@ -82,6 +82,28 @@ workloads:
             encoding="utf-8",
         )
 
+        # Create test chain ledger
+        self.ledger_json = self.work_dir / "test_ledger.json"
+        self.ledger_json.write_text(
+            json.dumps([
+                {
+                    "cve_id": "CVE-2026-46300",
+                    "name": "Fragnesia IPsec LPE",
+                    "source_url": "https://ubuntu.com/security/notices/USN-7000-1",
+                    "retrieved_at": "2026-10-31",
+                    "epss_score": 0.42,
+                    "cisa_kev": True,
+                    "distro_affected_ranges": {
+                        "ubuntu": {
+                            "package": "linux",
+                            "fixed_version": "6.8.0-47.47"
+                        }
+                    }
+                }
+            ]),
+            encoding="utf-8",
+        )
+
         self.fragnesia_cve = KernelVulnerabilityEntry(
             cve_id="CVE-2026-46300",
             name="Fragnesia IPsec LPE",
@@ -157,6 +179,8 @@ workloads:
             str(self.env_yaml),
             "--telemetry",
             str(self.telemetry_json),
+            "--chain-ledger",
+            str(self.ledger_json),
             "--fail-on",
             "critical_chain",
             "--dry-run",
