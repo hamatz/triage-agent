@@ -123,8 +123,9 @@ workloads:
     def test_cli_fail_on_critical_chain(self):
         """CLI must exit with code 2 when --fail-on critical_chain or chain is triggered."""
         import subprocess
+        import sys
         cmd = [
-            ".venv/bin/python",
+            sys.executable,
             "-m",
             "triage_agent.cli",
             "--chain-audit",
