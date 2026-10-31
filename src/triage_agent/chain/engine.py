@@ -634,6 +634,7 @@ def run_exploit_chain_audit(
 def format_chain_audit_markdown(
     items: List[ChainAuditItem],
     environment_name: str = "Production",
+    feed_results: Optional[Dict[str, Any]] = None,
 ) -> str:
     """Format Exploit Chain audit results into enterprise-ready Markdown report."""
     lines = [
@@ -643,11 +644,34 @@ def format_chain_audit_markdown(
         "> 単一のCVSS値にとらわれず、「外部露出したアプリ層の侵入足場（RCE）」×「同一共有カーネル上のOS権限昇格（LPE）」の結合リスク、",
         "> および同一ノードに同居する別マイクロサービスへの水平展開（Blast Radius）を網羅的に評価します。",
         "",
+    ]
+
+    # Disclose feed failure status ("調べなかったものを隠さない" principle)
+    if feed_results:
+        kev_err_count = sum(1 for fr in feed_results.values() if "KEV" in (getattr(fr, "error", "") or ""))
+        osv_err_count = sum(1 for fr in feed_results.values() if "OSV" in (getattr(fr, "error", "") or ""))
+        epss_err_count = sum(1 for fr in feed_results.values() if "EPSS" in (getattr(fr, "error", "") or ""))
+        if kev_err_count or osv_err_count or epss_err_count:
+            err_details = []
+            if kev_err_count:
+                err_details.append(f"KEV 取得失敗: {kev_err_count} 件")
+            if osv_err_count:
+                err_details.append(f"OSV 取得失敗: {osv_err_count} 件")
+            if epss_err_count:
+                err_details.append(f"EPSS 取得失敗: {epss_err_count} 件")
+            lines.extend([
+                "> ⚠️ **【フィード同期ステータス・調査不全の開示】**（「調べなかったものを隠さない」原則）  ",
+                f"> 外部脅威インテリジェンスフィード照会で障害を検知しました: {', '.join(err_details)}。  ",
+                "> ※ データ取得に失敗した脆弱性は安全側に倒し「足場分類不能・要人手確認」として扱っています。",
+                "",
+            ])
+
+    lines.extend([
         "## 📊 監査サマリ・総合判定",
         "",
         "| ワークロード | ノードプール | カーネルCVE | 深刻度・連鎖判定 | 対応期限 | 影響範囲（水平展開リスク） |",
         "| :--- | :--- | :--- | :--- | :--- | :--- |",
-    ]
+    ])
 
     for item in items:
         badge = item.chain_level.value

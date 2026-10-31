@@ -286,6 +286,24 @@ def run_chain_audit_flow(args, console: Console, triage_report: Optional[Any] = 
     except Exception as e:
         console.print(f"[bold yellow]⚠️ 脅威インテリジェンスフィード同期スキップ（オフライン/エラー）: {e}[/bold yellow]")
 
+    # Disclose partial feed retrieval failures ("調べなかったものを隠さない" principle)
+    if feed_results:
+        kev_err_count = sum(1 for fr in feed_results.values() if "KEV" in (getattr(fr, "error", "") or ""))
+        osv_err_count = sum(1 for fr in feed_results.values() if "OSV" in (getattr(fr, "error", "") or ""))
+        epss_err_count = sum(1 for fr in feed_results.values() if "EPSS" in (getattr(fr, "error", "") or ""))
+        if kev_err_count or osv_err_count or epss_err_count:
+            err_parts = []
+            if kev_err_count:
+                err_parts.append(f"KEV失敗 {kev_err_count}件")
+            if osv_err_count:
+                err_parts.append(f"OSV失敗 {osv_err_count}件")
+            if epss_err_count:
+                err_parts.append(f"EPSS失敗 {epss_err_count}件")
+            console.print(
+                f"[bold yellow]⚠️ フィード照会不全（調査不全の開示）: {', '.join(err_parts)}"
+                f"（この分は安全側に倒し判定不能として扱います）[/bold yellow]"
+            )
+
     # Run audit
     audit_items = run_exploit_chain_audit(
         environment=env_def,
@@ -296,7 +314,11 @@ def run_chain_audit_flow(args, console: Console, triage_report: Optional[Any] = 
     )
 
     # Format and save report
-    report_md = format_chain_audit_markdown(audit_items)
+    report_md = format_chain_audit_markdown(
+        audit_items,
+        environment_name=env_def.environment_name,
+        feed_results=feed_results,
+    )
     out_path = Path(args.chain_output)
     out_path.parent.mkdir(parents=True, exist_ok=True)
     out_path.write_text(report_md, encoding="utf-8")

@@ -190,6 +190,35 @@ workloads:
         self.assertIn("CRITICAL ALERT", proc.stdout)
         self.assertIn("CI/CD ガードレール違反", proc.stdout)
 
+    def test_feed_failure_disclosure_in_report(self):
+        """Review Point: Disclose feed fetch failures in markdown report header."""
+        from triage_agent.chain.engine import format_chain_audit_markdown
+        from triage_agent.chain.feeds import ThreatFeedResult
+
+        mock_feed_with_errors = {
+            "CVE-2026-11111": ThreatFeedResult(
+                cve_id="CVE-2026-11111",
+                in_cisa_kev=None,
+                error="CISA KEV: Network unreachable",
+                verified=False,
+            ),
+            "CVE-2026-22222": ThreatFeedResult(
+                cve_id="CVE-2026-22222",
+                in_cisa_kev=False,
+                error="OSV: 取得失敗 (Connection timed out)",
+                verified=False,
+            ),
+        }
+        report_md = format_chain_audit_markdown(
+            items=[],
+            environment_name="staging",
+            feed_results=mock_feed_with_errors,
+        )
+        self.assertIn("フィード同期ステータス・調査不全の開示", report_md)
+        self.assertIn("KEV 取得失敗: 1 件", report_md)
+        self.assertIn("OSV 取得失敗: 1 件", report_md)
+        self.assertIn("調べなかったものを隠さない", report_md)
+
 
 if __name__ == "__main__":
     unittest.main()
