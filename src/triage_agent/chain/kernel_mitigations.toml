@@ -9,5 +9,5 @@ retrieved_at = "2026-10-31"
 required_modules = ["esp4", "esp6", "rxrpc"]
 required_directive = "install {mod} /bin/false"
 side_effect_warning = "⚠️ 警告: esp4/esp6/rxrpc を無効化すると IPsec VPN 通信および AFS ファイルシステムが即座に利用不能になります。該当サービス利用ホストではパッチ適用を優先してください。"
-conflict_services = ["ipsec", "strongswan", "openembed", "afs", "openafs"]
+conflict_services = ["ipsec", "strongswan", "libreswan", "afs", "openafs"]
 note = "3モジュールすべてが無効化されている必要があります。カーネル組み込み（modules.builtin）の場合はmodprobeで停止不能です。"

@@ -5,7 +5,7 @@ order from naive string comparison or upstream kernel release formats.
 """
 
 import re
-from typing import Optional, Tuple
+from typing import Any, List, Optional, Tuple
 
 
 def _split_debian_part(s: str):
@@ -33,10 +33,19 @@ def _split_debian_part(s: str):
 
 
 def _order_deb_char(c: str) -> int:
-    """Debian character ordering: '~' sorts before everything (even empty string)."""
+    """Debian character ordering (Debian Policy Manual 5.6.12):
+    - '~' sorts earlier than empty string (-1)
+    - empty string sorts at 0
+    - letters (a-z, A-Z) sort earlier than non-letters (symbols like '+', '.', etc.)
+    """
     if c == "~":
         return -1
-    return ord(c)
+    if not c:
+        return 0
+    if c.isalpha():
+        return 100 + ord(c)
+    # Symbols / non-letters sort after letters
+    return 1000 + ord(c)
 
 
 def _compare_deb_strings(a: str, b: str) -> int:
@@ -49,8 +58,8 @@ def _compare_deb_strings(a: str, b: str) -> int:
         if ca == cb:
             i += 1
             continue
-        oa = _order_deb_char(ca) if ca else 0
-        ob = _order_deb_char(cb) if cb else 0
+        oa = _order_deb_char(ca)
+        ob = _order_deb_char(cb)
         if oa != ob:
             return -1 if oa < ob else 1
         i += 1
@@ -119,6 +128,82 @@ def compare_debian_versions(v1: str, v2: str) -> int:
     return compare_debian_parts(r1, r2)
 
 
+def compare_rpm_versions(v1: str, v2: str) -> int:
+    """Compare two RPM version strings according to rpmvercmp rules."""
+    # Split into segments of contiguous digits, contiguous letters, or delimiters
+    def _split_rpm(s: str) -> List[Tuple[str, Any]]:
+        segments = []
+        i = 0
+        n = len(s)
+        while i < n:
+            c = s[i]
+            if c.isalnum() or c in ("~", "^"):
+                if c.isdigit():
+                    num_chars = []
+                    while i < n and s[i].isdigit():
+                        num_chars.append(s[i])
+                        i += 1
+                    segments.append(("int", int("".join(num_chars))))
+                elif c == "~":
+                    segments.append(("tilde", "~"))
+                    i += 1
+                elif c == "^":
+                    segments.append(("caret", "^"))
+                    i += 1
+                else:
+                    alpha_chars = []
+                    while i < n and s[i].isalpha():
+                        alpha_chars.append(s[i])
+                        i += 1
+                    segments.append(("str", "".join(alpha_chars)))
+            else:
+                # Delimiter
+                i += 1
+        return segments
+
+    segs1 = _split_rpm(v1)
+    segs2 = _split_rpm(v2)
+    max_len = max(len(segs1), len(segs2))
+
+    for i in range(max_len):
+        if i >= len(segs1):
+            # segs1 is shorter
+            t2, _ = segs2[i]
+            if t2 == "tilde":
+                return 1
+            return -1
+        if i >= len(segs2):
+            # segs2 is shorter
+            t1, _ = segs1[i]
+            if t1 == "tilde":
+                return -1
+            return 1
+
+        t1, val1 = segs1[i]
+        t2, val2 = segs2[i]
+
+        if t1 == "tilde" and t2 != "tilde":
+            return -1
+        if t2 == "tilde" and t1 != "tilde":
+            return 1
+        if t1 == "caret" and t2 != "caret":
+            return -1
+        if t2 == "caret" and t1 != "caret":
+            return 1
+
+        if t1 == "int" and t2 == "int":
+            if val1 != val2:
+                return -1 if val1 < val2 else 1
+        elif t1 == "str" and t2 == "str":
+            if val1 != val2:
+                return -1 if val1 < val2 else 1
+        else:
+            # Different types: numbers are newer than letters in RPM
+            return 1 if t1 == "int" else -1
+
+    return 0
+
+
 def is_kernel_package_vulnerable(
     distro: Optional[str],
     installed_version: Optional[str],
@@ -148,12 +233,10 @@ def is_kernel_package_vulnerable(
             return res < 0
         elif d_clean in ("rhel", "almalinux", "rocky", "centos", "fedora"):
             # RPM style version compare
-            # Basic fallback for RPM versions
-            res = compare_debian_versions(installed_version, fixed_version)
+            res = compare_rpm_versions(installed_version, fixed_version)
             return res < 0
         else:
-            # Generic fallback: attempt Debian parser, return None on uncertainty
-            res = compare_debian_versions(installed_version, fixed_version)
-            return res < 0
+            # Unknown / unsupported distribution: NEVER guess or assume safe!
+            return None
     except Exception:
         return None

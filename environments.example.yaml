@@ -13,14 +13,26 @@ environment: "production"
 node_pools:
   - id: "pool-dmz-ingress"
     nodes: ["node-worker-01", "node-worker-02"]
-    os_distro: "ubuntu-24.04"
+    os_distro: "ubuntu"
+    os_release: "24.04"
     kernel_package: "6.8.0-40.40"
+    kernel_flavor: "linux"
+    shared_kernel: true
+
+  - id: "pool-eks-workers"
+    nodes: ["node-worker-03", "node-worker-04"]
+    os_distro: "ubuntu"
+    os_release: "24.04"
+    kernel_package: "6.8.0-1015.16"
+    kernel_flavor: "linux-aws"
     shared_kernel: true
 
   - id: "pool-internal-core"
-    nodes: ["node-worker-03", "node-worker-04"]
-    os_distro: "ubuntu-24.04"
+    nodes: ["node-worker-05", "node-worker-06"]
+    os_distro: "ubuntu"
+    os_release: "24.04"
     kernel_package: "6.8.0-47.47"
+    kernel_flavor: "linux"
     shared_kernel: true
 
 workloads:
@@ -28,13 +40,24 @@ workloads:
     namespace: "frontend"
     node_pool_id: "pool-dmz-ingress"
     exposure: "internet_facing"
+    sbom_path: "path/to/frontend_sbom.json"
+    components: ["php", "nginx"]
     entry_cves: []
     description: "パブリック向けWebフロントエンドAPI"
+
+  - id: "ci-sandbox-runner"
+    namespace: "ci"
+    node_pool_id: "pool-dmz-ingress"
+    exposure: "untrusted_code"
+    components: []
+    entry_cves: []
+    description: "CI/CDジョブ・ユーザーコード実行ランナー（任意のコード実行が前提の足場）"
 
   - id: "payment-gateway"
     namespace: "payment"
     node_pool_id: "pool-dmz-ingress"
     exposure: "internal_only"
+    components: ["python"]
     entry_cves: []
     description: "社内決済マイクロサービス（frontend と同一ノードプール上で動作）"
 
@@ -42,5 +65,6 @@ workloads:
     namespace: "batch"
     node_pool_id: "pool-internal-core"
     exposure: "internal_only"
+    components: ["java"]
     entry_cves: []
     description: "夜間バッチ処理基盤"

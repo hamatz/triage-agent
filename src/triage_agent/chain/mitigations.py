@@ -67,15 +67,16 @@ def evaluate_kernel_mitigation(
             "source_url": source_url,
         }
 
-    # 1. Side-effect conflict check: Is an affected service (e.g. IPsec, strongswan) active?
+    # 1. Side-effect conflict check: Is an affected service (e.g. IPsec, strongswan) or xfrm active?
     active_srvs = [s.lower() for s in telemetry.active_services]
     active_conflicts = [c for c in conflict_services if any(c in a for a in active_srvs)]
-    if active_conflicts:
+    if active_conflicts or telemetry.xfrm_active:
+        conflict_desc = ', '.join(active_conflicts) if active_conflicts else "IPsec xfrm (デーモンレス暗号化通信)"
         return {
             "is_mitigated": False,
             "status": "BLOCKED_BY_SIDE_EFFECT",
             "reasoning": (
-                f"【副作用による緩和不可】当該ノード上で競合サービス（{', '.join(active_conflicts)}）の稼働を検知しました。"
+                f"【副作用による緩和不可】当該ノード上で競合通信・サービス（{conflict_desc}）を検知しました。"
                 f"モジュール無効化は通信切断等の重大な副作用を引き起こすため適用不可（未緩和・カーネルパッチ適用必須）として評価します。"
             ),
             "side_effect_warning": side_effect,
@@ -107,6 +108,22 @@ def evaluate_kernel_mitigation(
             "reasoning": (
                 f"【緩和策未完了】必要な全モジュール（{', '.join(required_mods)}）のうち、"
                 f"{', '.join(missing_disabled)} の無効化（install /bin/false）が確認できませんでした（未緩和）。"
+            ),
+            "side_effect_warning": side_effect,
+            "source_url": source_url,
+        }
+
+    # 4. Currently loaded module check: Are any required modules currently loaded in kernel memory?
+    # Even if install /bin/false is configured, previously loaded modules remain active until unloaded or rebooted.
+    loaded_mods = [l.lower() for l in telemetry.loaded_modules]
+    still_loaded = [m for m in required_mods if m.lower() in loaded_mods]
+    if still_loaded:
+        return {
+            "is_mitigated": False,
+            "status": "UNMITIGATED",
+            "reasoning": (
+                f"【緩和策未反映】modprobe の無効化設定は存在しますが、対象モジュール（{', '.join(still_loaded)}）が"
+                f"現在カーネルメモリ内に読み込まれています（/proc/modules）。アンロード（modprobe -r / rmmod）またはノード再起動が完了するまで未緩和です。"
             ),
             "side_effect_warning": side_effect,
             "source_url": source_url,

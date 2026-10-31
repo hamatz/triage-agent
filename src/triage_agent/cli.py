@@ -212,7 +212,9 @@ def run_chain_audit_flow(args, console: Console) -> List[Any]:
     target_cves = [v.cve_id for v in vulnerabilities]
     for wl in env_def.workloads:
         target_cves.extend(wl.components)
+        target_cves.extend(wl.entry_cves)
 
+    feed_results = {}
     try:
         feed_results = feed_client.analyze_cves(list(set(target_cves)), offline=args.dry_run)
         for v in vulnerabilities:
@@ -226,7 +228,12 @@ def run_chain_audit_flow(args, console: Console) -> List[Any]:
         console.print(f"[bold yellow]⚠️ 脅威インテリジェンスフィード同期スキップ（オフライン/エラー）: {e}[/bold yellow]")
 
     # Run audit
-    audit_items = run_exploit_chain_audit(env_def, vulnerabilities, telemetries)
+    audit_items = run_exploit_chain_audit(
+        environment=env_def,
+        kernel_vulnerabilities=vulnerabilities,
+        telemetries=telemetries,
+        feed_results=feed_results,
+    )
 
     # Format and save report
     report_md = format_chain_audit_markdown(audit_items)

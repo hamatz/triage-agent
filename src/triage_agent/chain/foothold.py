@@ -126,11 +126,20 @@ def evaluate_application_foothold(
                 is_unclassifiable=False,
             )
 
-    # 6. Fallback: If score is high (>= 8.5) but unclassified, do NOT declare non-foothold
-    if cvss_score and cvss_score >= 8.5 and is_network_vector:
+    # 6. Fallback: If no diagnostic data is available at all (fresh zero-day before NVD indexing)
+    has_diagnostic_data = bool(vec or summary or cwe_nums or (cvss_score is not None))
+    if not has_diagnostic_data:
         return FootholdResult(
             is_foothold=False,
-            basis="高深刻度ネットワーク脆弱性（足場分類不能・要人手精査）",
+            basis="脆弱性詳細データ未提供・公表直後（足場判定不能・安全側に倒し要確認）",
+            is_unclassifiable=True,
+        )
+
+    # 7. Fallback: If score is high (>= 8.0) or unrated with network reachability, do NOT declare non-foothold
+    if (cvss_score and cvss_score >= 8.0 and is_network_vector) or (cvss_score is None and is_network_vector):
+        return FootholdResult(
+            is_foothold=False,
+            basis="高深刻度または未採点ネットワーク脆弱性（足場分類不能・要人手精査）",
             is_unclassifiable=True,
         )
 

@@ -35,6 +35,10 @@ class WorkloadDefinition(BaseModel):
         default_factory=list,
         description="List of component/package names running in this workload (e.g. ['php', 'nginx'])"
     )
+    entry_cves: List[str] = Field(
+        default_factory=list,
+        description="Explicit entry CVE list (e.g. ['CVE-2026-109618'])"
+    )
     sbom_path: Optional[str] = Field(default=None, description="Path to workload SBOM file if available")
 
 
@@ -42,7 +46,9 @@ class NodePoolDefinition(BaseModel):
     """Shared-kernel node pool / host group definition."""
     pool_id: str = Field(description="Node pool or host group ID (e.g. 'pool-dmz', 'host-bastion-01')")
     os_distribution: str = Field(description="OS distribution ID (e.g. 'ubuntu', 'debian', 'almalinux', 'rhel')")
-    kernel_package_name: str = Field(default="linux-image-generic", description="Kernel package name")
+    os_release: Optional[str] = Field(default=None, description="OS release version (e.g. '24.04', '22.04', '9')")
+    kernel_package_name: str = Field(default="linux-image-generic", description="Kernel package name or flavor")
+    kernel_flavor: Optional[str] = Field(default=None, description="Specific kernel source/flavor (e.g. 'linux-aws', 'linux-gcp', 'linux')")
     kernel_package_version: Optional[str] = Field(
         default=None,
         description="Exact installed kernel package version (e.g. '6.8.0-40.40')"
@@ -94,12 +100,17 @@ class FootholdResult(BaseModel):
 class NodeTelemetry(BaseModel):
     """Observed live runtime telemetry from a host / node."""
     pool_id: str = Field(description="Associated node pool ID")
+    os_distribution: Optional[str] = None
+    os_release: Optional[str] = None
+    kernel_package_name: Optional[str] = None
+    kernel_flavor: Optional[str] = None
     kernel_package_version: Optional[str] = None
     kernel_release: Optional[str] = None
     loaded_modules: List[str] = Field(default_factory=list)
     builtin_modules: List[str] = Field(default_factory=list)
     modprobe_disabled_modules: List[str] = Field(default_factory=list)
     active_services: List[str] = Field(default_factory=list)
+    xfrm_active: bool = Field(default=False, description="True if IPsec xfrm state/policy is configured (e.g. Cilium/Calico)")
     livepatch_modules: List[str] = Field(default_factory=list)
 
 

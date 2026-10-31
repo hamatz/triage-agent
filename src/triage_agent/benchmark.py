@@ -267,6 +267,7 @@ def run_benchmark_suite(benchmark_dir: Optional[Path] = None, output_file: Optio
 
     # 5. Exploit Chain & Kernel Exposure Cases (v0.4.0 / ADR-019)
     from triage_agent.chain.engine import run_exploit_chain_audit
+    from triage_agent.chain.feeds import ThreatFeedResult
     from triage_agent.chain.models import (
         DistroAffectedRange,
         EnvironmentDefinition,
@@ -277,15 +278,41 @@ def run_benchmark_suite(benchmark_dir: Optional[Path] = None, output_file: Optio
         WorkloadDefinition,
     )
 
+    # Mocked threat feed results for benchmark suite (Upholds: feeds injected, no hardcoded engine lists)
+    mock_feed_results = {
+        "CVE-2026-109618": ThreatFeedResult(
+            cve_id="CVE-2026-109618",
+            in_cisa_kev=True,
+            epss_score=0.42,
+            verified=True,
+        ),
+        "CVE-2026-46300": ThreatFeedResult(
+            cve_id="CVE-2026-46300",
+            in_cisa_kev=True,
+            epss_score=0.42,
+            verified=True,
+        ),
+    }
+
     for case in manifest.get("chain_cases", []):
         pos_total += 1
-        exp_type = ExposureType.INTERNET_FACING if case["workload_exposure"] == "internet_facing" else ExposureType.INTERNAL_ONLY
+        raw_exp = case["workload_exposure"].lower()
+        if raw_exp == "untrusted_code":
+            exp_type = ExposureType.UNTRUSTED_CODE
+        elif raw_exp == "internet_facing":
+            exp_type = ExposureType.INTERNET_FACING
+        else:
+            exp_type = ExposureType.INTERNAL_ONLY
+
         env = EnvironmentDefinition(
             environment_name="benchmark_env",
             node_pools=[
                 NodePoolDefinition(
                     pool_id="bench_pool",
                     os_distribution="ubuntu",
+                    os_release="24.04",
+                    kernel_package_name=case.get("kernel_package_name", "linux-image-generic"),
+                    kernel_flavor=case.get("kernel_flavor"),
                     kernel_package_version=case["kernel_version"],
                 )
             ],
@@ -300,7 +327,12 @@ def run_benchmark_suite(benchmark_dir: Optional[Path] = None, output_file: Optio
         )
         telemetry = NodeTelemetry(
             pool_id="bench_pool",
+            os_distribution="ubuntu",
+            os_release="24.04",
+            kernel_package_name=case.get("kernel_package_name", "linux-image-generic"),
+            kernel_flavor=case.get("kernel_flavor"),
             kernel_package_version=case["kernel_version"],
+            loaded_modules=case.get("loaded_modules", []),
             modprobe_disabled_modules=case.get("disabled_modules", []),
             active_services=case.get("active_services", []),
         )
@@ -325,6 +357,7 @@ def run_benchmark_suite(benchmark_dir: Optional[Path] = None, output_file: Optio
             kernel_vulnerabilities=[k_entry],
             telemetries={"bench_pool": telemetry},
             evaluation_date="2026-10-31",
+            feed_results=mock_feed_results,
         )
         item = chain_items[0]
         actual_level = item.chain_level.value

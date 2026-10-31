@@ -63,6 +63,25 @@ workloads:
             encoding="utf-8",
         )
 
+        # Prepare local KEV cache so ThreatFeedClient can resolve in offline / dry-run mode
+        cache_dir = Path("triage-output/cache")
+        cache_dir.mkdir(parents=True, exist_ok=True)
+        self.kev_cache_file = cache_dir / "cisa_kev_catalog.json"
+        self.kev_cache_file.write_text(
+            json.dumps({
+                "vulnerabilities": [
+                    {
+                        "cveID": "CVE-2026-109618",
+                        "vendorProject": "PHP",
+                        "product": "PHP",
+                        "vulnerabilityName": "PHP2Shell RCE",
+                        "dateAdded": "2026-10-24"
+                    }
+                ]
+            }),
+            encoding="utf-8",
+        )
+
         self.fragnesia_cve = KernelVulnerabilityEntry(
             cve_id="CVE-2026-46300",
             name="Fragnesia IPsec LPE",
@@ -96,14 +115,19 @@ workloads:
         self.assertIn("ipsec", telemetries["pool-edge"].active_services)
 
     def test_critical_chain_with_side_effect_conflict(self):
+        from triage_agent.chain.feeds import ThreatFeedClient
+        feed_client = ThreatFeedClient()
+        feed_results = feed_client.analyze_cves(["CVE-2026-109618"], offline=True)
+
         env = load_environment_definition(str(self.env_yaml))
         telemetries = load_node_telemetries(str(self.telemetry_json))
 
-        # Run chain audit
+        # Run chain audit with feed results
         items = run_exploit_chain_audit(
             environment=env,
             kernel_vulnerabilities=[self.fragnesia_cve],
             telemetries=telemetries,
+            feed_results=feed_results,
         )
 
         # public-php-app should trigger CRITICAL_CHAIN because:
