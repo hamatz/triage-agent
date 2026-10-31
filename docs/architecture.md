@@ -77,6 +77,24 @@ flowchart TD
         V_IMP --> SIGNOFF
         V_IMP --> METRICS["workflow_metrics.json\n(試行メトリクスログ)"]
     end
+
+    subgraph Phase5["Phase 5: Exploit Chain & Kernel Exposure Engine（連鎖エクスプロイト＆カーネル露出判定 / v0.4.0）"]
+        OutJSON --> ECE["Exploit Chain Engine"]
+        ENV["環境・トポロジー定義\n(environments.yaml)"] --> ECE
+        
+        subgraph ThreatIntel["脅威インテリジェンス & 実機テレメトリ"]
+            FEEDS["CISA KEV & FIRST EPSS API\n(スコア急上昇・悪用追跡)"]
+            SH["collect_kernel_telemetry.sh\n(読み取り専用 POSIX ホスト収集)"]
+            MITIG["kernel_mitigations.toml\n(一次情報出典付き緩和策レジストリ)"]
+        end
+        FEEDS --> ECE
+        SH -->|"telemetry_{node}.json"| ECE
+        MITIG --> ECE
+
+        ECE --> OutChainMD["【出力⑥】chain_audit_report.md\n(連鎖エクスプロイト監査レポート)"]
+        ECE --> Alert["🚨 Critical Exploit Chain 警報\n(48時間期限 / 水平展開 Blast Radius)"]
+        ECE --> CICD["CI/CD ガードレール\n(--fail-on critical_chain -> exit 2)"]
+    end
 ```
 
 ---
@@ -90,6 +108,7 @@ flowchart TD
 | **Triage Agent** | 収集したシグナルとパッチ差分（Diff）を精読し、発火する具体的設定値・API利用条件を特定。現場指示書を生成 | `List[TargetResearchResult]` | `TriageReport`<br>（`TriageNotice` リスト） | **2段階実行:**<br>1. Commit Diff & 詳細アドバイザリ取得<br>2. `response_schema` による構造化指示書合成 |
 | **Verifier (内製検証)** | 指示書の確認ポイントに基づき、自社リポジトリ内のコード（AST構文木解析・テスト分離）および設定ファイル（Tomcat `server.xml`、PHP `php.ini`、Nginx `nginx.conf` 等）を自動走査。手動監査サインオフと突合 | `TriageReport (JSON)`<br>自社コード & 設定ファイル<br>`AuditAttestation` (任意) | `CodebaseAuditReport` | `config_scanner` (XML/INI/Conf セマンティック解析)<br>`scanner` (AST/コメント完全除去)<br>厳格サインオフ突合（ID・版・NO検証・ドリフト検知） |
 | **Vendor Workflow (外注連携)** | 指示書の確認ポイントから Excel / CSV 早見表をワンクリック出力し、ベンダー回答を一括取り込みしてサインオフ確定。ターンアラウンド時間・往復回数を自動集計 | `TriageReport (JSON)`<br>記入済み早見表 CSV | `vendor_checklist.csv`<br>`workflow_metrics.json` | `export_vendor_checklist_csv` (UTF-8 BOM)<br>`import_vendor_checklist_csv`<br>`log_workflow_event` |
+| **Exploit Chain & Kernel Exposure (v0.4.0)** | 単体のCVSSスコアにとらわれず、「外部公開/コード実行環境のRCE足場」×「同一共有カーネル上のOS権限昇格（LPE）」の結合リスク、および同一ホスト上の同居マイクロサービスへの水平展開（Blast Radius）を決定論的に判定 | `TriageReport (JSON)`<br>`environments.yaml`<br>実機ノードテレメトリ JSON<br>`kernel_mitigations.toml` | `ChainAuditItem` リスト<br>`chain_audit_report.md` | `audit_exploit_chains`<br>`evaluate_application_foothold`<br>`evaluate_kernel_mitigation`<br>`version_parser` (dpkg / rpm 系統判定)<br>`ThreatFeedClient` (CISA KEV / EPSS急上昇) |
 
 ---
 
@@ -209,3 +228,66 @@ sequenceDiagram
 本アーキテクチャでは、「単一システム・単一SBOMに対する深層トリアージとコード検証を行うコアエンジン（`triage-agent`）」と、「部門全体の複数SBOM・複数システムのトリアージ状況を横断集約する集中管理UI（`triage-hub` / 別リポジトリ構想）」の責務境界を明確に分離しています。`triage-agent` がポータブルな標準JSON（`triage_report.json` / `audit_signoff.json`）を出力することで、将来的な集中ダッシュボードへのデータ連携を疎結合に実現します。
 
 なお、全システムの未対応脆弱性がHubに集約されて「全社攻撃地図」と化すリスクを防ぐため、Hubへの連携は件数やステータス等の高位メタデータのみとする **Zero-Detail Federation 原則** を採用し、具体的なファイルパスやコード行情報は各システム側に分散保持させます。また、全社横断CVE影響検索は厳格なアクセス制御（RBAC）と監査ログ（Audit Logging）の対象とします。詳細は [`docs/todo.md`](todo.md) を参照してください。
+
+---
+
+## 8. 連鎖エクスプロイト（Exploit Chain）＆ Linux カーネル露出追跡 (v0.4.0)
+
+2026年10月の Fragnesia（CVE-2026-46300）および PHP2Shell（CVE-2026-109618/109619）事件の教訓に基づき、**「単一脆弱性のCVSS値にとらわれず、システム環境全体での結合リスクと水平展開被害を決定論的に判定する」** エンジンを新設しました。
+
+```mermaid
+flowchart TD
+    subgraph InputData["入力データ層"]
+        W_SBOM["ワークロード SBOM / TriageReport\n(アプリ層所見)"]
+        ENV_CFG["environments.yaml\n(ワークロード露出度 & ノードプール)"]
+        HOST_TEL["collect_kernel_telemetry.sh\n(読み取り専用 POSIX ホスト収集)"]
+        FEED["ThreatFeedClient\n(CISA KEV / FIRST EPSS API)"]
+        MIT_REG["kernel_mitigations.toml\n(一次情報出典付き緩和策台帳)"]
+    end
+
+    subgraph Q1["Q1: OSカーネル版番号・系統判定"]
+        K_CHECK["version_parser\n・Debian/Ubuntu (dpkg) & RHEL (rpm) 厳密規則\n・クラウド系統 (linux-aws, linux-gcp, linux-azure) 分離\n・未登録系統は安全側に倒し要確認"]
+    end
+
+    subgraph Q2["Q2: カーネル緩和策 ＆ 副作用判定"]
+        M_CHECK["mitigations.py\n・対象全モジュール (esp4, esp6, rxrpc) 無効化確認\n・メモリ読み込み済み (loaded_modules) 未緩和検知\n・組み込みモジュール (modules.builtin) 無効化不能検知\n・IPsec/CNI (xfrm) & サービス競合による緩和不能検知"]
+    end
+
+    subgraph Q3["Q3: アプリ層侵入足場 (Foothold) 判定"]
+        F_CHECK["foothold.py (4層多層シグナル)\n1. CISA KEV 実侵害悪用掲載\n2. CVSS AV:N かつ C:H/I:H\n3. 公式アドバイザリ RCE 明記\n4. 拡張CWE (UAF 416, 未初期化 908, 注入 94等)\n※ untrusted_code はアプリCVE 0件でも足場と認定"]
+    end
+
+    subgraph Decision["総合連鎖判定 & 影響範囲算出"]
+        BLAST["Blast Radius 算出\n同一共有ノードプールの全同居ワークロード\n(Podメモリ・Secret・kubeletトークン漏洩リスク)"]
+        
+        COND{"結合条件評価"}
+        COND -- "足場あり/untrusted_code ＆ 未緩和LPE" --> CRIT["🚨 CRITICAL_CHAIN\n(48時間以内対応 / 即時緩和)"]
+        COND -- "緩和策確認済み (副作用競合なし)" --> MITI["🛡️ MITIGATED_NEEDS_PATCH\n(30日以内通常更新)"]
+        COND -- "足場判定不能 (公表直後) ＆ 未緩和LPE" --> UNVER["❓ HIGH_UNVERIFIED\n(2週間以内足場人手精査)"]
+        COND -- "内部限定ワークロード ＆ 未緩和LPE" --> ISOL["⚠️ HIGH_ISOLATED\n(2週間以内 Dream事例横展開対策)"]
+        COND -- "カーネル修正版適用確認済み" --> SAFE["✅ SAFE\n(対応不要・出典日付付き証跡)"]
+    end
+
+    InputData --> Q1
+    InputData --> Q2
+    InputData --> Q3
+    Q1 --> COND
+    Q2 --> COND
+    Q3 --> COND
+    COND --> BLAST
+```
+
+### コア設計原則（安全側倒し ＆ 誤認防止）
+1. **分からないものを安全と言わない（Fail-Safe Verification）:**
+   - クラウド向けカーネル（例: `linux-aws`）で台帳に当該系統の版番号が未登録の場合、汎用の版番号と比較して「修正済み」と断定することを禁止。
+   - 公表直後で CVSS/CWE が未整備の脆弱性は「足場なし」と断定せず、`HIGH_UNVERIFIED`（要人手確認）に倒す。
+   - テレメトリ未取得のホストは、安全側に倒して「未緩和」として扱う。
+2. **作った内容を本物に見せない（Synthetics Separation）:**
+   - 特定の CVE 番号をエンジン内に固定値ハードコードすることを完全禁止。
+   - 見本ファイル（[exploit_chain_ledger.example.json](../exploit_chain_ledger.example.json)）には架空の `CVE-0000-00000` を明記。
+3. **攻撃地図化の防止（Confidential Attack Map Protection）:**
+   - 実環境の `environments.yaml`、ノードテレメトリ JSON、および `chain_audit_report.md` は `.gitignore` でリポジトリへのコミットを防止。
+   - ホスト名収集はオプトインとし、デフォルトでは `anonymized-node` として匿名化。
+4. **横展開・共有カーネル境界の死角排除（Dream 事例の教訓）:**
+   - 外部公開されていない内部マイクロサービスであっても、共有カーネルノードプール上で動く以上、同居 Pod 侵害からのコンテナ脱出・node root 奪取により全ワークロードの Secret や kubelet 認証情報が漏洩します。内部ノードに対しても「2週間以内対応（定期メンテ先送り禁止）」の厳格な期限を課します。
+

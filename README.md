@@ -19,12 +19,14 @@ Tanium、Nexus IQ、Snyk、Trivy などの既存製品は「CVEが発行され�
    現場で発火可否を分けるのは、コードそのものより設定（Tomcat `server.xml` の AJP 設定、PHP `php.ini`、Nginx の `http2` ディレクティブ等）です。設定ファイルとコード双方を走査し、Yes/No早見表に即答します。
 4. **ベンダーとの往復をツールに乗せる（Excel / CSV 帳票出力）:**
    早見表を Excel/CSV でワンクリック出力し、ベンダーの回答を取り込んでタイムスタンプ付きでサインオフ確定。「配布までの時間」「往復回数」を定量記録します。
+5. **単一CVSSにとらわれない「連鎖エクスプロイト」と「カーネル露出」の自動判定（v0.4.0 / ADR-019）:**
+   単体では Medium/High に留まるカーネル LPE（例: Fragnesia CVE-2026-46300）が、外部露出アプリの RCE 足場（例: PHP2Shell）と同一ホスト上で結合した際のホスト掌握・同居マイクロサービスへの水平展開（Blast Radius）リスクを決定論的に判定。実機テレメトリ（パッケージ版、`loaded_modules`、IPsec/xfrm 競合）と照合し、48時間以内／2週間以内の厳格な対応期限を提示します。
 
 ---
 
 ## 1. アーキテクチャ概要
 
-本システムは、過剰な独自コードや複雑なフレームワークを排し、Geminiのネイティブな **Function Calling**・**Google Search Grounding**・**Structured Outputs (Pydantic)** を最大限活用した3フェーズの自律型パイプラインです。
+本システムは、過剰な独自コードや複雑なフレームワークを排し、Geminiのネイティブな **Function Calling**・**Google Search Grounding**・**Structured Outputs (Pydantic)** を最大限活用した自律型パイプラインです。
 また、**Tokenless Architecture (ADR-014)** を採用しており、GitHub PAT（Personal Access Token）の管理・漏洩リスクを排除し、完全無料・オープンな **OSV.dev / OSV-Scanner** を脆弱性調査の第一線に配置しています。
 
 ```mermaid
@@ -85,6 +87,24 @@ flowchart TD
         V_IMP --> SIGNOFF
         V_IMP --> METRICS["試行メトリクスログ\n(workflow_metrics.json)"]
     end
+
+    subgraph Phase5["5. Exploit Chain & Kernel Exposure (連鎖エクスプロイト判定 / v0.4.0)"]
+        OutJSON --> ECE["Exploit Chain Engine"]
+        ENV["環境トポロジー定義\n(environments.yaml)"] --> ECE
+        
+        subgraph ThreatTelemetry["脅威インテリジェンス & 実機テレメトリ"]
+            FEEDS["CISA KEV / FIRST EPSS API\n(急上昇 +0.15 追跡)"]
+            SH["collect_kernel_telemetry.sh\n(読み取り専用 POSIX ホスト収集)"]
+            MITIG["kernel_mitigations.toml\n(一次情報出典付き緩和策台帳)"]
+        end
+        FEEDS --> ECE
+        SH -->|"実機テレメトリ JSON"| ECE
+        MITIG --> ECE
+
+        ECE --> OutChain["【出力⑥】連鎖エクスプロイト監査レポート\n(chain_audit_report.md)"]
+        ECE --> Alert["🚨 Critical Alert (48時間以内 / 水平展開リスク)"]
+        ECE --> CICD["CI/CD ガードレール (--fail-on critical_chain -> exit 2)"]
+    end
 ```
 
 ### コンポーネント・エージェントの役割
@@ -94,6 +114,10 @@ flowchart TD
 4. **Verifier & Vendor Workflow（自社検証 ＆ 外注連携）:** 
    - **内製システム:** 指示書内の「確認ポイント（Yes/No）」に基づき、自社リポジトリのソースコード（AST構文木走査・テストコード分離）およびミドルウェア設定ファイル（Tomcat `server.xml`、PHP `php.ini`、Nginx `nginx.conf` 等）を自動走査し、客観的3状態（YES / 外部設定要確認 / NO）で自社検証レポートを出力。
    - **外注委託システム:** 指示書からワンクリックで Excel / CSV 帳票（`vendor_checklist.csv`）を出力。ベンダー回答を取り込んでタイムスタンプ付きサインオフ（`audit_signoff.json`）を自動確定し、試行成果測定用メトリクス（`workflow_metrics.json`）を記録。
+
+5. **Exploit Chain & Kernel Exposure Engine（連鎖エクスプロイト判定 / v0.4.0）:**
+   - 単体のCVSSスコア（例: 7.8）にとらわれず、「外部公開/コード実行環境のRCE足場（例: PHP2Shell）」×「同一共有カーネル上のOS権限昇格（例: Fragnesia CVE-2026-46300）」の結合リスクを決定論的に判定。
+   - 実機テレメトリ（パッケージ版、`loaded_modules`、IPsec/xfrm競合）と照合し、48時間以内（即時緩和）または2週間以内（横展開防止）の厳格な対応期限と、同一ノードに同居する別マイクロサービスへの水平展開（Blast Radius）リスクを出力。
 
 ---
 
@@ -397,7 +421,28 @@ default_preparations = [
 > - `category = "pre_announcement"`（既定）: 事前予告フィードや定期日程。カレンダー（.ics）生成や事前輪番確保の対象。
 > - `category = "primary_advisory"`: Nginx や Apache HTTP Server などの公開後公式アドバイザリ一覧。カレンダーを日付なし項目で汚染することなく、公式一次情報源の参照リンクとして保持。
 
-### 3.8 グランドトゥルース評価セット（Benchmark Suite / ADR-019 柱4）
+### 3.8 連鎖エクスプロイト（Exploit Chain）＆ Linux カーネル露出監査（v0.4.0 / ADR-019）
+
+単一の脆弱性のCVSS値（例: 7.8）にとらわれず、「外部公開・コード実行環境（RCE足場）」×「同一ホスト上の未解消OSカーネルLPE（権限昇格）」の結合リスク、および同一共有ノードプールに同居する別マイクロサービスへの水平展開（Blast Radius）を決定論的に判定します。
+
+#### 主な特徴
+1. **多層シグナル足場判定:** CISA KEV 実侵害掲載、CVSS AV:N かつ C:H/I:H、公式RCE記述、拡張CWE（UAF 416, 未初期化 908, 注入 94等）の4層OR判定により、PHP2Shell（CVE-2026-109618/109619）のようなCWE未採番のゼロデイも即座に検知。また `untrusted_code`（CIランナーやコード実行基盤）はアプリCVE 0件でも足場として Critical 連鎖を発火。
+2. **クラウドカーネル系統の識別:** AWS（`linux-aws`）、GCP（`linux-gcp`）、Azure（`linux-azure`）などのフレーバーを厳密に区別。台帳に当該系統の修正版がない場合は汎用（generic）版番号と比較して「修正済み」と誤認することを禁止し、「要確認」として安全側に倒します。
+3. **実機テレメトリ検証:** `install /bin/false` 設定だけでなく、`/proc/modules` 内にモジュールが現在読み込まれていないか（再起動必要か）、IPsec / CNI（xfrm）の稼働による緩和副作用（通信切断）がないかを厳格判定。
+4. **横展開・Blast Radius 可視化:** ノード root 奪取時に同居 Pod のメモリ・Secret・kubelet 認証情報がすべて漏洩する実被害を明示。内部限定ワークロードに対しても「2週間以内対応（定期メンテ先送り禁止）」の厳格な期限を課します。
+
+```bash
+# 1. ホストテレメトリの収集（読み取り専用・POSIX sh・ホスト変更なし・ホスト名匿名化）
+sh scripts/collect_kernel_telemetry.sh -o triage-output/telemetry/node_worker_01.json
+
+# 2. 連鎖エクスプロイト監査の実行（環境定義とテレメトリを突合）
+python -m triage_agent.cli --chain-audit --environments environments.yaml --telemetry triage-output/telemetry/
+
+# 3. CI/CD ガードレール: 未緩和の Critical Exploit Chain が検知された場合に非ゼロ終了 (exit 2)
+python -m triage_agent.cli --chain-audit --environments environments.yaml --fail-on critical_chain
+```
+
+### 3.9 グランドトゥルース評価セット（Benchmark Suite / ADR-019 柱4）
 
 過去の実事例や難関エッジケース（複数設定ファイル上書き、Tomcat AJP保護状態判定、構文エラー耐性）および事前予告フィード実例に対する自動正解判定セットを実行し、判定精度とリグレッションの有無を数値で集計します：
 
