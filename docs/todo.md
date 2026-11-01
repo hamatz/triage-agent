@@ -183,68 +183,113 @@ Engineering Enablement（専門家依存の解消と組織的な即応）を実�
   - **根拠の種類を区別して記録:**
     - `iac_config`（構成コード・マニフェスト）／`live_telemetry`（実機スクリプト観測）／`vendor_attestation`（ベンダー回答・配布ID）
 
-#### ②-2 中核：未解消のローカル権限昇格（LPE）台帳 ＆ 連鎖評価（v0.4.0予定）
-- [ ] **LPE 台帳（Exploit Chain Ledger）:**
-  - 環境ごとに「未パッチかつ緩和策未確認の LPE／コンテナ脱出」を保持
-  - **対象の絞り込み:** 非特権ユーザーからの root 昇格、コンテナ脱出のみ（年間数千件のカーネル CVE は対象外）
-  - **優先度の材料:** PoC 公開の有無、CISA KEV 掲載の有無
-- [ ] **連鎖評価（新規 RCE 発生時の突合）:**
-  - 新しい RCE の予告・公表時に、その RCE が到達しうる環境の LPE 台帳を自動突合
-  - **単純ルールで判定（点数化・複雑化しない）:** 「外部から到達可能な RCE」＋「PoC 公開済み／KEV 掲載の未解消 LPE」が同一環境 → **最優先（Critical 扱い）**
-  - **逆方向の即時洗い出し:** 新しい LPE が台帳に入ったら、既知の外部到達可能 RCE がある環境を即座に洗い出す
-- [ ] **SLA への反映（運用ルール）:**
-  - 外部公開の入口を持つホストでは、PoC 公開済み LPE を「ローカル限定」を理由に低優先としない
+#### ②-2 中核：未解消のローカル権限昇格（LPE）台帳 ＆ 連鎖評価（v0.4.0対応完了）
+- [x] **LPE 台帳（Exploit Chain Ledger）:**
+  - 環境ごとに「未パッチかつ緩和策未確認の LPE／コンテナ脱出」を保持（`environments.yaml` および `kernel_ledger.json`）。
+  - **対象の絞り込み:** 非特権ユーザーからの root 昇格、コンテナ脱出（Fragnesia: CVE-2026-46300 等）。
+  - **優先度の材料:** PoC 公開の有無、CISA KEV 掲載の有無、EPSS スパイク値。
+- [x] **連鎖評価（新規 RCE 発生時の突合）:**
+  - 新しい RCE の予告・公表時に、同一ノードプール・カーネル環境上の LPE 台帳を突合。
+  - **単純ルールで判定:** 「外部から到達可能な RCE（または信頼できないコード実行環境・CIランナー）」＋「未解消 LPE」が同一環境 → **最優先（Critical Exploit Chain、48時間以内）**。
+  - **Fail-Safe の徹底:** KEV 取得失敗時やベクトル未確定時は「要確認（足場判定不能）」へ倒し、未知のゼロデイに備え内部限定ノードでも2週間の期限を設定。
+- [x] **SLA への反映（運用ルール）:**
+  - 外部公開の入口を持つホストでは、PoC 公開済み LPE を「ローカル限定」を理由に低優先としない。
 
-#### ②-3 情報収集：カーネル／OS 層の公表を即座に台帳へ
-- [ ] カーネルは公開の事前予告文化がほぼない（linux-distros は非公開）ため、柱1の「予定化」ではなく「公表即台帳化」として扱う
-- [ ] **監視ソース（advisory_sources.toml に `category = "primary_advisory"` として追加）:**
-  - ディストリビューション: Ubuntu CVE Tracker / USN、Debian Security Tracker、Red Hat RHSA
-  - 公表の場: oss-security メーリングリスト公開アーカイブ
-  - 悪用実績: CISA KEV
-- [ ] **バックポート考慮:** バージョン照合はディストリビューションのアドバイザリ／OSV のディストリ別データで行う（バックポートがあるため `uname -r` と上流の影響範囲の単純比較では判定しない）
+#### ②-3 情報収集：カーネル／OS 層の公表を即座に台帳へ（v0.4.0対応完了）
+- [x] カーネルは事前予告文化がないため、公表即台帳化・評価セット化として扱う。
+- [x] **監視ソース（CISA KEV, EPSS API, OSV.dev, Distro Trackers）:**
+  - オフライン時はローカルキャッシュ（`triage-output/cache/`）を参照し、取得失敗時は安全側に要確認へ倒す。
+- [x] **ディストリビューション系統（Flavor）の完全分離:**
+  - `ubuntu:24.04` の一般カーネル版で AWS 向けカーネル（`6.8.0-1015-aws` / `linux-aws`）が誤認バイパスされないよう、フレーバー完全一致または未確定（要確認）へ倒す分離ロジックを実装。
+  - dpkg バージョン比較規則（`~`、エポック、文字順序）および RPM バージョン分割規則の完全準拠。
 
-#### ②-4 Researcher：緩和策の構造化抽出（出典必須）
-- [ ] **アドバイザリから構造化抽出:**
-  - **発火条件:** 必要な権限・ケーパビリティ、必要なカーネルモジュール/機能
-  - **緩和策:** sysctl、modprobe（`install <mod> /bin/false`）、seccomp 等
-  - **緩和策の副作用:** 例）Fragnesia の esp4/esp6/rxrpc 無効化 → IPsec VPN・AFS が停止
-- [ ] **架空パラメータ混入防止（Grounding Guardrail）:**
-  - 抽出結果には原文引用と URL を必須とし、sysctl 名・モジュール名は既知リストと突合して検証（LLM による架空パラメータ混入を防ぐ）
-- [ ] **確認ポイントの生成:**
-  - 「緩和策を取れるか」まで含めて生成（例:「このホストで IPsec を使っているか」→ Yes なら緩和不可・パッチ必須）
+#### ②-4 Researcher / Mitigations：緩和策の構造化検証と副作用検知（v0.4.0対応完了）
+- [x] **緩和策レジストリ（`kernel_mitigations.toml`）:**
+  - 発火条件（必要なモジュール: `esp4`, `esp6`, `rxrpc`）および無効化手法（`modprobe_disabled_modules`）。
+  - **緩和策の副作用検知:** IPsec（strongSwan）や AFS などの稼働サービスを検知し、モジュール無効化による業務停止副作用がある場合は即座に `CANNOT_MITIGATE`（緩和不可・パッチ必須）と判定。
+- [x] **架空パラメータ混入防止（Grounding Guardrail）:**
+  - 出典URLと根拠を明記。
 
-#### ②-5 Verifier：OS 設定・マニフェスト走査（柱2の教訓を最初から適用）
-- [ ] **sysctl:** `/etc/sysctl.d/`, `/run/sysctl.d/`, `/usr/lib/sysctl.d/`, `/etc/sysctl.conf` を全件読み、ファイル名順の後勝ちで評価
-- [ ] **modprobe:** `install <mod> /bin/false` のみを無効化と認める。`blacklist` は自動読込の抑止のみで不十分（要確認扱い）。カーネル組み込み（`=y`）の可能性がありカーネル設定不明なら要確認
-- [ ] **Kubernetes / Compose:** Pod・コンテナ両レベルの `securityContext` 継承、名前空間の Pod Security Admission（`restricted`）を考慮
-  - 未記載は安全扱いしない（`allowPrivilegeEscalation` 既定 true、seccomp は kubelet 既定次第）
-  - Helm / Kustomize は展開済み出力（`helm template` / `kustomize build`）を入力として推奨。テンプレート直読みは要確認寄り
-- [ ] **Dockerfile / IaC:** `USER` ディレクティブ、Ansible/Terraform のセキュリティパラメータ
-- [ ] **実機観測の入力:** 製品非依存の収集スクリプト（`uname -r`, `/etc/os-release`, `sysctl -a` の該当値, `lsmod`, カーネル設定）の JSON を受け付ける。Tanium 等はこの JSON を生成すれば連携可能
+#### ②-5 実機テレメトリ（`/proc`）と安全なノード集約（v0.4.0対応完了）
+- [x] **実機ノード情報（NodeTelemetry）の収集と決定論的評価:**
+  - `/proc/modules`（ロード済み）、`modules.builtin`（組み込みモジュール）、`/etc/modprobe.d/`（無効化設定）、稼働サービスを JSON 経由で取得。
+  - 組み込みモジュール（`=y`）は modprobe で無効化できないため、即座に未緩和と判定。
+- [x] **同一ノードプール内の複数ノード集約（Fail-Safe Aggregation）:**
+  - 読み込み順序に依存しない集約エンジン：
+    - `loaded_modules`: 全ノードの和集合（UNION）（1台でも残っていれば未緩和）
+    - `modprobe_disabled_modules`: 全ノードの積集合（INTERSECTION）（全台無効化のみ有効）
+    - `xfrm_active`: いずれかのノードで有効（ANY）
+    - `kernel_package_version`: 全ノード中最も古い版番号を採用。
+    - **版番号・OS不明時の安全側倒し:** 1台でも版番号やOSが不明なノードがあればプール全体も「不明」とし、「要確認（該当の可能性あり⚠️）」へ倒す。
+    - **実機テレメトリの正本性担保:** 実機テレメトリがあるプールでは、手書きの `environments.yaml` にフォールバックせず実機状態のみを根拠とする。実機なしの手書き判定時は「構成定義上（実機未確認）」と明記。
 
-#### ②-6 アプライアンス（SBOM なし・カーネルはベンダー管理）
-- [ ] ファイアウォール等のアプライアンスは走査対象外とし、柱3のベンダー往復で照会
-  - 質問例: 「ファームウェアのカーネルに CVE-2026-46300 の修正は含まれるか。含まれるならどの版からか」
-  - 回答は配布 ID ごとに計測し、未回答は台帳上「未解消」として扱う
+#### ②-6 データ送信・プライバシー開示と内製パッケージ秘匿（v0.4.0対応完了）
+- [x] **外部通信とデータ送信仕様の完全開示（`docs/data-handling.md`）:**
+  - 外部通信先5系統（OSV, Gemini/Vertex, RSS, GitHub, KEV/EPSS）の送信データと目的、完全ローカル完結データ（コード、環境構成、サインオフ）を明記。
+  - Google Cloud Vertex AI の `GOOGLE_CLOUD_LOCATION`（東京 asia-northeast1）および利用規約（学習不使用）への対応。
+- [x] **内製パッケージの秘匿除外（`--exclude`）:**
+  - CycloneDX の `group` 分割記法や URL エンコードされた PURL（`%40`）にも対応した glob パターン除外。
+  - 意図的な除外（`excluded_components`）と調査エラー（`unscanned_or_failed_components`）を分離し、`--fail-on unscanned` との両立を実現。
+  - CI環境（`CI=true`）ではログへの社内パッケージ名露出を防止（件数のみ出力）。
 
-#### ②-7 評価セット（実装前に先行整備）
-- [ ] `benchmark/cases_hard/` に以下を追加:
-  - sysctl.d の後勝ちで緩和策が打ち消されるケース
-  - `blacklist` のみ（要確認）／`install /bin/false`（NO）の区別
-  - `securityContext` 未記載（安全扱いしない）
-  - Fragnesia 型の連鎖シナリオ（外部公開 RCE ＋ PoC 公開 LPE → 最優先判定）
-  - IPsec 利用ホスト（緩和不可 → パッチ必須の判定）
+#### ②-7 評価セット（v0.4.0対応完了）
+- [x] `benchmark/` に Fragnesia + PHP2Shell 連鎖、CIランナー足場連鎖、IPsec副作用阻害、版番号不明フェイルセーフケースを追加し、全28ケース100%合格（見逃しゼロ）を達成。
 
-### ③ ベンダー・現場回答の「組織知（System Architectural Profile）」化
-- [ ] **システム構成プロファイル（System Profile）機能**
-  - 脆弱性ごとの一過性のサインオフにとどまらず、ベンダーやエンジニアから得られた「システムの恒久的構成事実」をシステム辞書として蓄積：
-    - 例: 「販売管理システムAでは、AJPコネクタは永続的に無効化済み（HTTPリバースプロキシ直結）」
-    - 例: 「バッチ基盤BのLog4jは、オフラインのローカルログ集計でのみ使用（JNDI/LDAP接続不可）」
-- [ ] **次回以降の類似脆弱性への自動照合（問い合わせ削減）**
-  - 次回、同一ミドルウェアで類似の脆弱性が出た際、ゼロからベンダーに再問い合わせせず、蓄積されたプロファイルから「該当システムは設定無効化済み」と即座に自動解決・スキップする仕組み。
-- [ ] **構成プロファイルの機密性管理（事前偵察・リコン防止）**
-  - 「プロキシ未経由」「AJP無効」といった構成プロファイルは、脆弱性パッチ適用後も長期間有効であり続ける（TTLパージされにくい）ため、攻撃者にとっては侵入経路や攻撃面を絞り込むための格好の「事前偵察（Reconnaissance）情報」となります。
-  - したがって、構成プロファイル辞書もレポート本体と同様に「機密情報（Confidential）」として厳格に分類し、アクセス制御（RBAC）と漏洩防止策を徹底します。
+---
+
+## 4. v0.5.0 実地試行（PoC）即応マイルストーン（System Profile / Container Boundary / Trial Report）
+
+実地試行（PoC）で評価される **「ベンダー往復回数の削減」「対応所要時間の短縮」を直接数値で証明する** ための最優先マイルストーンです。
+
+### 柱 A: System Profile（組織知化）：4つの安全歯止め付き設計
+脆弱性ごとの一過性のサインオフにとどまらず、ベンダーやエンジニアから得られた「システムの構成事実」を蓄積し、次回以降の重複照会を劇的に削減します。
+
+- [ ] **期限 & 確かめ方付き構成事実データモデル (`system_profile.yaml`)**:
+  - 「恒久」と呼ばず、必ず有効期限と検証方法を付与。
+  - **機械検証可能事実（`php.ini`、`server.xml`、`nginx.conf` 等）**:
+    - プロファイルは前回ベースラインとして扱い、実行ごとに Verifier で必ず再走査（コード変更があれば即座に検知）。
+  - **非機械的事実（「SGでLDAPを外部遮断」「専用閉域網運用」等）**:
+    - 対象環境（`environment`）、有効期限（`valid_until`）、根拠の種類（`evidence_type: iac_config | live_telemetry | vendor_attestation`）を必須化。期限切れは自動で「要再確認（プロファイル期限切れ⚠️）」へ倒す。
+  - **判定文言の明示**:
+    - `NO (構成プロファイル・2026-10-15 確認・期限 2027-10-15・ec-sales-core)` のように時点・期限・システムIDを明記。
+- [ ] **`config_check` 構造化キー完全一致ディスパッチ（LLM推測禁止）**:
+  - 自然言語による曖昧な対応付けを禁止し、v0.3.0 で整備した `config_check`（`tomcat_ajp`, `nginx_http2`, `php_upload_progress` 等）の構造化キー完全一致でのみ自動解決。
+  - 一致しない確認ポイントは安全側に倒して通常照会。
+- [ ] **ベンダー CSV の「確認のみ（事前回答入り）」出力**:
+  - プロファイル合致項目を CSV から消さず、変化検知のために行を保持。
+  - 回答欄に `【事前確認済】無効 (前回: 2026-10-15確認済)。変更がなければ空欄のまま返送してください` を記載し、ベンダーの手間を実質ゼロ化。
+  - 往復回数計測で「確認のみで済んだ行」を分離集計し、2月の経営報告で「照会の ◯ 割が確認のみ（ゼロ工数）で完了した」と数値化。
+- [ ] **サインオフからの候補書き出し & 人手承認フロー (`--export-profile-candidates`)**:
+  - `audit_signoff.json` から候補を抽出し、`status: pending_review` で出力。
+  - 人間（アーキテクト）が内容を確認し承認（`status: approved`、承認者名、承認日付）したものだけを `system_profile.yaml` に組み込み。
+
+### 柱 B: コンテナ境界走査（危険を上げる方向・Critical昇格のみ）
+Kubernetes マニフェスト（Pod/Deployment）や Compose の設定を走査し、攻撃連鎖（Chain Audit）に結合します。
+
+- [ ] **コンテナ境界破断フラグの走査と Critical 昇格**:
+  - `securityContext.privileged: true`
+  - 危険ケーパビリティ（`CAP_SYS_ADMIN`, `CAP_NET_ADMIN`, `CAP_DAC_OVERRIDE` 等）
+  - `hostPID: true`, `hostNetwork: true`, `hostIPC: true`
+  - `allowPrivilegeEscalation: true` かつ root 実行
+  - 検出時はアプリRCEとカーネルLPEの連鎖を即座に **Critical Exploit Chain（48時間以内即時対処）へ昇格**。
+- [ ] **安易な緩和の禁止 & 証跡の区別**:
+  - `restricted` な Pod であっても期限緩和（48h→2週）は禁止（カーネルLPEは通常システムコール経由で届くため）。
+  - マニフェスト走査は `iac_config`（構成コード上）として扱い、実機 Pod 稼働テレメトリ（`kubectl get pod -o json`）と明確に区別。
+
+### 柱 C: 試行レポート機能（経営報告直結の可視化）
+試行評価・役員報告でそのまま使える定量レポートを出力します。
+
+- [ ] **総括指標（KPI）集計エンジン**:
+  - T(-1)〜T4 の MTTR リードタイム短縮実績（基準値 74.9 時間との比較、短縮時間・短縮率）。
+  - 配布IDごとの往復回数および「確認のみ化率（%）」。
+  - 夜間・休日（Off-Hours）緊急招集の削減件数。
+- [ ] **Markdown 試行総括レポート (`triage-output/trial_summary_report.md`)**:
+  - スライドや社内 Wiki に直接貼り付け可能な Markdown 表形式。
+- [ ] **Web GUI (DAWN Studio) 試行サマリカード**:
+  - ダッシュボード上部に重要 KPI（短縮時間、確認のみ化率、事前予告件数）をカード表示。
+
+### 柱 D: 実地試行現場フィードバック吸収枠（2〜3割）
+- [ ] 現場やベンダーからの「この確認ポイントが伝わらなかった」「この設定記述に対応してほしい」という声に応じた `config_check` 語彙の追加・微調整枠の確保。
 
 ### ④ 対応ライフサイクルの時間測定とROI可視化（Lifecycle Metrics / MTTR / v0.3.1先行対応完了）
 - [x] **ライフサイクル・タイムスタンプ自動記録（`src/triage_agent/tools/lifecycle_metrics.py`）**
@@ -274,7 +319,7 @@ Engineering Enablement（専門家依存の解消と組織的な即応）を実�
 
 ---
 
-## 3. 技術的深化ロードマップ（Technical Deep Dive）
+## 5. 技術的深化ロードマップ（Technical Deep Dive）
 
 - [ ] **AST（抽象構文木）を利用した高精度コード検査の拡充**
   - Python標準 `ast`（Call/Attribute/Keyword解析）およびブロックコメント除外は実装完了。
@@ -291,7 +336,7 @@ Engineering Enablement（専門家依存の解消と組織的な即応）を実�
 
 ---
 
-## 4. マルチSBOM・部門横断ポートフォリオ管理構想（別リポジトリ予定: `triage-hub`）
+## 6. マルチSBOM・部門横断ポートフォリオ管理構想（別リポジトリ予定: `triage-hub`）
 
 本リポジトリ（`triage-agent`）は「単一システム・単一SBOMに対する深層トリアージとコード検証エンジン」としての責務に集中し、複数のSBOMや部署内全システムの状況を束ねて統合トラックする機能は、将来的に別リポジトリ（集中管理ダッシュボード）として疎結合に切り出す構想です。
 
@@ -328,7 +373,7 @@ Engineering Enablement（専門家依存の解消と組織的な即応）を実�
 
 ---
 
-## 4. 中長期検討課題（Backlog）
+## 7. 中長期検討課題（Backlog）
 
 - [ ] **GitHub Enterprise / GitLab 対応**
   - 社内閉域網で稼働している GitHub Enterprise Server や GitLab のリポジトリ・Advisory APIへの接続オプション追加。
