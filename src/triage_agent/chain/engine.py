@@ -1238,8 +1238,8 @@ def _format_kernel_auto_section(ka: Any) -> List[str]:
         lines.extend([
             f"### {pid}: 層1・層2 の脆弱性（{len(top)} 件中 {len(shown)} 件を表示）",
             "",
-            "| CVE | 層 | KEV | EPSS | ディストリ重大度 | 修正版 | 勧告 |",
-            "| :--- | :--- | :---: | ---: | :--- | :--- | :--- |",
+            "| CVE | 層 | KEV | EPSS | CVSS | ディストリ重大度 | 修正版 | 勧告 |",
+            "| :--- | :--- | :---: | ---: | ---: | :--- | :--- | :--- |",
         ])
         for x in shown:
             epss = f"{x.epss:.3f}" if x.epss is not None else "—"
@@ -1248,7 +1248,8 @@ def _format_kernel_auto_section(ka: Any) -> List[str]:
             fixed = f"`{x.fixed_evr}`" if x.fixed_evr else "**修正版なし**"
             promo = getattr(x, "promotion", None)
             tier = f"{x.tier}（昇格: {promo.label}）" if promo else str(x.tier)
-            lines.append(f"| `{x.cve_id}` | {tier} | {'✓' if x.in_kev else ''} | {epss} | {x.severity} | {fixed} | {link} |")
+            cvss = f"{x.cvss_score:g}" if getattr(x, "cvss_score", None) is not None else "—"
+            lines.append(f"| `{x.cve_id}` | {tier} | {'✓' if x.in_kev else ''} | {epss} | {cvss} | {x.severity} | {fixed} | {link} |")
         if p.tier_counts.get(2, 0) > p.tier2_itemized:
             lines.append("")
             lines.append(
@@ -1269,9 +1270,13 @@ def _format_kernel_history_lines(ka: Any) -> List[str]:
     rules = [f"EPSS が前回から {getattr(ka, 'epss_jump', 0.15):g} 以上上昇", "人による `--promote`（出典 URL 必須）"]
     if getattr(ka, "cvss_available", False):
         rules.insert(1, "既存の CVSS が LPE 型の 7.0 以上へ引き上げ")
-    lines.append(f"> 昇格の規則: {'、'.join(rules)}。昇格したものは、露出が続く限り層1 のまま扱います。" + (
-        "" if getattr(ka, "cvss_available", False) else "CVSS の引き上げは、CVSS の照会元が未接続のため判定していません。"
-    ))
+    if getattr(ka, "cvss_available", False):
+        cvss_note = f"CVSS は {getattr(ka, 'cvss_source', None) or '登録された照会元'} の採点です（照会元により値が異なることがあります）。"
+    elif getattr(ka, "cvss_source", None):
+        cvss_note = f"CVSS（{ka.cvss_source}）を今回は取得できなかったため、CVSS の引き上げは判定していません。"
+    else:
+        cvss_note = "CVSS の照会元が登録されていないため、CVSS の引き上げは判定していません。"
+    lines.append(f"> 昇格の規則: {'、'.join(rules)}。昇格したものは、露出が続く限り層1 のまま扱います。{cvss_note}")
     lines.append("")
     previous = getattr(ka, "previous_taken_at", None)
     changes = getattr(ka, "changes", {}) or {}

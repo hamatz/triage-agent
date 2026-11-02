@@ -259,7 +259,7 @@ def run_chain_audit_flow(args, console: Console, triage_report: Optional[Any] = 
     if getattr(args, "kernel_auto", False):
         from triage_agent.chain.kernel_exposure import run_kernel_auto
         from triage_agent.chain.kernel_history import load_manual_promotions, load_snapshot, save_snapshot
-        from triage_agent.chain.sources import build_adapters, load_registry
+        from triage_agent.chain.sources import build_adapters, build_cvss_source, load_registry, load_signal_registry
 
         auto_feed = ThreatFeedClient(epss_jump_threshold=args.epss_threshold)
         offline = bool(args.dry_run)
@@ -277,6 +277,8 @@ def run_chain_audit_flow(args, console: Console, triage_report: Optional[Any] = 
             console.print(f"[bold red]❌ 手動昇格の台帳（{state_dir}/promotions.json）を読めません: {e}[/bold red]")
             sys.exit(1)
 
+        cvss_source = build_cvss_source(load_signal_registry(), cache_dir=str(auto_feed.cache_dir))
+
         console.print("ℹ️ カーネル脆弱性を自動照会しています（ディストリの勧告 × 実機のカーネル版）...")
         kernel_auto_result = run_kernel_auto(
             environment=env_def,
@@ -291,7 +293,11 @@ def run_chain_audit_flow(args, console: Console, triage_report: Optional[Any] = 
             previous_snapshot=previous_snapshot,
             manual_promotions=manual_promotions,
             epss_jump=args.epss_threshold,
+            cvss_lookup=(lambda ids: cvss_source.lookup(ids, offline=offline)) if cvss_source else None,
         )
+        if cvss_source is not None:
+            kernel_auto_result.cvss_source = cvss_source.label
+            kernel_auto_result.errors.extend(cvss_source.notes)
         kernel_auto_result.kev_catalog_info = auto_feed.kev_catalog_info
         if auto_feed.kev_catalog_info:
             info = auto_feed.kev_catalog_info

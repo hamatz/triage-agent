@@ -197,7 +197,7 @@ class TestChangesBetweenRuns(HistoryTestCase):
         first = self.run_at(T0)
         report = format_chain_audit_markdown([], environment_name="t", kernel_auto=first)
         self.assertIn("今回の結果が比較の基準になります", report)
-        self.assertIn("CVSS の照会元が未接続", report)
+        self.assertIn("CVSS の照会元が登録されていない", report)
         self.epss["CVE-2026-98432"] = {"epss": 0.30, "percentile": 0.97}
         second = self.run_at(T1, first.snapshot)
         report = format_chain_audit_markdown([], environment_name="t", kernel_auto=second)

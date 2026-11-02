@@ -90,6 +90,7 @@ class KernelAutoResult:
     tier2_limit: int = DEFAULT_TIER2_LIMIT
     kev_catalog_info: Optional[Dict[str, object]] = None   # provenance of the KEV catalog used
     cvss_available: bool = False
+    cvss_source: Optional[str] = None           # label of the CVSS source, shown in the report
     epss_jump: float = DEFAULT_EPSS_JUMP
     promotions: Dict[str, Promotion] = field(default_factory=dict)     # in force for exposed CVEs
     manual_promotions: Dict[str, dict] = field(default_factory=dict)   # the --promote ledger

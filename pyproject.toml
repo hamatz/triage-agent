@@ -12,6 +12,12 @@ dependencies = [
     "rich>=13.0.0",
 ]
 
+[project.optional-dependencies]
+# Development: pip install -e ".[dev]"
+dev = [
+    "pytest>=8.0",
+]
+
 [project.scripts]
 triage-agent = "triage_agent.cli:main"
 triage-verifier = "triage_agent.verifier:main"

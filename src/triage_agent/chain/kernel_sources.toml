@@ -37,3 +37,11 @@ ubuntu = "Ubuntu:{release}{lts}"
 debian = "Debian:{major}"
 almalinux = "AlmaLinux:{major}"
 rocky = "Rocky Linux:{major}"
+
+# Threat signal sources used to order and promote automatically found kernel CVEs. They are looked up
+# in bulk for every exposed CVE; nothing about the environment is sent.
+[signals.cvss]
+class = "triage_agent.chain.sources.cvss_redhat:RedHatCvssSource"
+description = "Red Hat Security Data API (cve.json?package=kernel): Red Hat's CVSS v3 for kernel CVEs"
+packages = ["kernel"]
+verified_at = "2026-11-03"

@@ -16,6 +16,8 @@
 | **GitHub API / Web 検索** | GitHub Inc. / Google Search | 調査対象の OSS リポジトリ名、CVE 番号（公開情報のみ） | 公開コミットログ、公開 Issue / PR、公式リリースノート | 脆弱性の修正コミット差分（Diff）や詳細な発火条件の補足 | Web 検索（Google Search）は `--dry-run` で停止。<br>GitHub API は `--dry-run` でも通信します（停止は `--demo` のみ。未認証時はレートリミット自動保護） |
 | **CISA KEV / FIRST EPSS API** | 米国 CISA / FIRST.org | CVE 番号（例: `CVE-2026-109618`） | 実侵害悪用フラグ（True/False）、EPSS 悪用予測スコア | 連鎖エクスプロイト判定における侵入足場（RCE）の客観的評価、および `--kernel-auto` で見つかったカーネル脆弱性の層分け | オフライン/dry-run実行時はローカルキャッシュ（`triage-output/cache/`）のみ参照 |
 | **ディストリの勧告メタデータ**<br>(例: `cdn.amazonlinux.com`) | 各ディストリビューション（Amazon Linux など） | なし（公開リポジトリのメタデータを HTTP GET で取得するのみ） | カーネルパッケージの修正版と CVE の対応（`updateinfo.xml`） | `--kernel-auto` 指定時に、実機のカーネル版に影響する脆弱性を自動で引く（ADR-021） | `--kernel-auto` を付けなければ通信しません。`--dry-run` ではローカルキャッシュ（`triage-output/cache/alas/`）のみ参照 |
+| **OSV.dev API（カーネル）**<br>(`api.osv.dev`) | Google / OpenSSF | ディストリのカーネルのソースパッケージ名とその版（例: `Ubuntu:24.04:LTS` の `linux-aws` `6.8.0-1015.16`） | その版に影響する脆弱性の ID と、層 1・2 のものの修正版・重大度 | `--kernel-auto` で Ubuntu・Debian・AlmaLinux・Rocky Linux のプールのカーネルを照会する（ADR-021） | `--kernel-auto` を付けなければ通信しません。`--dry-run` ではローカルキャッシュ（`triage-output/cache/osv/`）のみ参照。ホスト名やノード ID は送りません |
+| **Red Hat Security Data API**<br>(`access.redhat.com`) | Red Hat | なし（`package=kernel` の一覧を HTTP GET で一括取得するのみ。CVE 番号も送りません） | カーネルの CVE ごとの CVSS v3（Red Hat の採点） | `--kernel-auto` で見つかった CVE の並び順と、CVSS の引き上げによる昇格の判定（ADR-021） | `--kernel-auto` を付けなければ通信しません。`--dry-run` では通信しません。`kernel_sources.toml` の `[signals.cvss]` を消すと使いません |
 
 ---
 
@@ -64,7 +66,7 @@ python -m triage_agent.cli --sbom my_sbom.json --dry-run --calendar upcoming.ics
 ```
 
 ### 選択肢 C: 完全オフライン・外部通信ゼロで試す（`--demo`）
-`--demo` フラグを付与した場合、外部ネットワークへの通信（OSV, Gemini, RSS, GitHub, KEV/EPSS, ディストリの勧告メタデータ）をすべて遮断し、同梱の合成データのみを用いて手元で動作を検証できます。
+`--demo` フラグを付与した場合、外部ネットワークへの通信（OSV, Gemini, RSS, GitHub, KEV/EPSS, ディストリの勧告メタデータ, Red Hat Security Data API）をすべて遮断し、同梱の合成データのみを用いて手元で動作を検証できます。
 
 ```bash
 python -m triage_agent.cli --demo

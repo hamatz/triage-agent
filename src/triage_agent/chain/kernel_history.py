@@ -127,8 +127,9 @@ def evaluate_promotions(
             continue
         cur_cvss, prev_cvss = cvss.get(cve) or {}, prev.get("cvss") or {}
         cur_score, prev_score = cur_cvss.get("score"), prev_cvss.get("score")
+        same_source = not (cur_cvss.get("source") and prev_cvss.get("source")) or cur_cvss.get("source") == prev_cvss.get("source")
         if (
-            cur_score is not None and prev_score is not None
+            same_source and cur_score is not None and prev_score is not None
             and float(cur_score) >= CVSS_PROMOTION_FLOOR and float(cur_score) > float(prev_score)
             and is_lpe_vector(cur_cvss.get("vector"))
             and (float(prev_score) < CVSS_PROMOTION_FLOOR or not is_lpe_vector(prev_cvss.get("vector")))
@@ -208,7 +209,7 @@ def build_snapshot(result, kev: Set[str], epss: Dict[str, Optional[float]], cvss
         if result.epss_available and cve in epss:
             rec["epss"] = epss[cve]
         if getattr(result, "cvss_available", False) and cve in cvss:
-            rec["cvss"] = cvss[cve]
+            rec["cvss"] = {k: cvss[cve].get(k) for k in ("vector", "score", "source")}
         signals[cve] = rec
     pools: Dict[str, dict] = {}
     for pid, s in result.pools.items():
