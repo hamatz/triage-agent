@@ -42,4 +42,5 @@ python -m triage_agent.cli --self-triage --dry-run
 ```
 
 `.github/workflows/self-triage.yml` が用意されており、毎週月曜日に自動でドッグフーディング自己診断を実行します。
+`GEMINI_API_KEY`（または Vertex AI 認証）が未設定の場合は安全に `--dry-run`（オフラインシミュレーション）で実行され、外部 API キーなしでもパイプラインの健全性や依存関係の整合性が検証されます。
 サプライチェーン保護のためアクションをコミット SHA で固定し、機密漏洩・攻撃地図化防止（ADR-013）のため GitHub Step Summary には件数サマリのみを出力します。
