@@ -3,7 +3,8 @@
 For every node pool, identify the running kernel lineage, ask the registered adapter which CVEs that
 lineage has fixes for, decide which of them the pool is still exposed to, and classify them:
 
-    tier 1  confirmed exploitation risk : listed in CISA KEV
+    tier 1  confirmed exploitation risk : listed in CISA KEV, or promoted (kernel_history: EPSS jump,
+                                          upward CVSS revision, or a person's --promote)
     tier 2  suspected LPE               : EPSS >= threshold, or distribution severity 'critical'
     tier 3  other unfixed CVEs          : counted only
 
@@ -17,6 +18,14 @@ Distribution specific logic lives only in the adapters (triage_agent.chain.sourc
 from dataclasses import dataclass, field
 from typing import Callable, Dict, Iterable, List, Optional, Set, Tuple
 
+from triage_agent.chain.kernel_history import (
+    DEFAULT_EPSS_JUMP,
+    PoolChanges,
+    Promotion,
+    build_snapshot,
+    compute_changes,
+    evaluate_promotions,
+)
 from triage_agent.chain.models import (
     DistroAffectedRange,
     EnvironmentDefinition,
@@ -46,6 +55,8 @@ class ExposedCve:
     epss: Optional[float]
     advisory_ids: List[str]
     source_url: str
+    promotion: Optional[Promotion] = None
+    cvss_score: Optional[float] = None
 
 
 @dataclass
@@ -78,6 +89,17 @@ class KernelAutoResult:
     epss_threshold: float = DEFAULT_EPSS_THRESHOLD
     tier2_limit: int = DEFAULT_TIER2_LIMIT
     kev_catalog_info: Optional[Dict[str, object]] = None   # provenance of the KEV catalog used
+    cvss_available: bool = False
+    epss_jump: float = DEFAULT_EPSS_JUMP
+    promotions: Dict[str, Promotion] = field(default_factory=dict)     # in force for exposed CVEs
+    manual_promotions: Dict[str, dict] = field(default_factory=dict)   # the --promote ledger
+    previous_taken_at: Optional[str] = None     # None: no previous snapshot (this run is the baseline)
+    changes: Dict[str, PoolChanges] = field(default_factory=dict)
+    snapshot: Optional[dict] = None             # to be saved by the caller (live runs only)
+
+    @property
+    def new_tier1_total(self) -> int:
+        return sum(len(c.new_tier1) for c in self.changes.values())
 
 
 def _split_epoch(version: Optional[str]) -> Tuple[Optional[str], Optional[str]]:
@@ -179,8 +201,15 @@ def run_kernel_auto(
     offline: bool = False,
     epss_threshold: float = DEFAULT_EPSS_THRESHOLD,
     tier2_limit: int = DEFAULT_TIER2_LIMIT,
+    previous_snapshot: Optional[dict] = None,
+    manual_promotions: Optional[Dict[str, dict]] = None,
+    epss_jump: float = DEFAULT_EPSS_JUMP,
+    cvss_lookup: Optional[Callable[[List[str]], Dict[str, dict]]] = None,
+    now: Optional[str] = None,
 ) -> KernelAutoResult:
-    result = KernelAutoResult(epss_threshold=epss_threshold, tier2_limit=tier2_limit)
+    result = KernelAutoResult(epss_threshold=epss_threshold, tier2_limit=tier2_limit, epss_jump=epss_jump)
+    result.manual_promotions = {k.upper(): v for k, v in (manual_promotions or {}).items()}
+    result.previous_taken_at = (previous_snapshot or {}).get("taken_at")
     manual = {c.upper() for c in (manual_cve_ids or set())}
     identities = identify_pools(environment, telemetries)
 
@@ -299,11 +328,25 @@ def run_kernel_auto(
             except Exception as e:  # noqa: BLE001
                 result.epss_available = False
                 result.errors.append(f"EPSS を取得できませんでした（{e}）。層2の判定が不完全です")
+    cvss: Dict[str, dict] = {}
+    if all_cves and cvss_lookup is not None and not offline:
+        try:
+            cvss = cvss_lookup(all_cves) or {}
+            result.cvss_available = True
+        except Exception as e:  # noqa: BLE001
+            result.errors.append(f"CVSS を取得できませんでした（{e}）。CVSS の引き上げによる昇格を判定していません")
+
+    # 4a) promotions (deterministic, against the previous run's snapshot)
+    epss_scores = {c: (v or {}).get("epss") for c, v in epss.items()}
+    result.promotions = evaluate_promotions(
+        set(all_cves), set(kev), epss_scores, cvss, previous_snapshot, result.manual_promotions,
+        epss_jump=epss_jump, now=now,
+    )
 
     # 4b) fetch details (fixed version, distribution severity) only for what can reach tier 1 / 2
     def _signal_tier(fix: KernelAdvisoryFix) -> int:
         score = (epss.get(fix.cve_id) or {}).get("epss")
-        if fix.cve_id in kev:
+        if fix.cve_id in kev or fix.cve_id in result.promotions:
             return 1
         if (score is not None and score >= epss_threshold) or fix.severity == "critical":
             return 2
@@ -326,7 +369,8 @@ def run_kernel_auto(
                 summary.no_fix_available += 1
             in_kev = fix.cve_id in kev
             score = (epss.get(fix.cve_id) or {}).get("epss")
-            if in_kev:
+            promotion = result.promotions.get(fix.cve_id)
+            if in_kev or promotion is not None:
                 tier = 1
             elif (score is not None and score >= epss_threshold) or fix.severity == "critical":
                 tier = 2
@@ -336,8 +380,12 @@ def run_kernel_auto(
             exposed.append(ExposedCve(
                 cve_id=fix.cve_id, tier=tier, fixed_evr=fix.fixed_evr, severity=fix.severity, in_kev=in_kev,
                 epss=score, advisory_ids=list(fix.advisory_ids), source_url=fix.advisory_url or fix.source_url,
+                promotion=promotion, cvss_score=(cvss.get(fix.cve_id) or {}).get("score"),
             ))
-        exposed.sort(key=lambda x: (x.tier, not x.in_kev, -(x.epss or 0.0), -SEVERITY_RANK.get(x.severity, 0), x.cve_id))
+        exposed.sort(key=lambda x: (
+            x.tier, not x.in_kev, x.promotion is None, -(x.epss or 0.0), -SEVERITY_RANK.get(x.severity, 0),
+            -(x.cvss_score or 0.0), x.cve_id,
+        ))
         summary.exposed = exposed
         summary.upgrade_target = _max_version(identity.distro, [x.fixed_evr for x in exposed if x.tier in (1, 2) and x.fixed_evr])
         summary.all_fixes_target = _max_version(identity.distro, [x.fixed_evr for x in exposed if x.fixed_evr])
@@ -358,9 +406,10 @@ def run_kernel_auto(
                         package=identity.package, fixed_version=_engine_fixed_version(identity, x.fixed_evr)
                     )
                 }
+            promoted = f"・昇格: {x.promotion.label} {x.promotion.detail}" if x.promotion else ""
             result.entries.append(KernelVulnerabilityEntry(
                 cve_id=x.cve_id,
-                name=f"{x.cve_id}（{adapter.name} 自動照会・層{x.tier}{'・修正版なし' if not x.fixed_evr else ''}）",
+                name=f"{x.cve_id}（{adapter.name} 自動照会・層{x.tier}{promoted}{'・修正版なし' if not x.fixed_evr else ''}）",
                 source_url=x.source_url,
                 retrieved_at=(fix_src.retrieved_at or "")[:10],
                 epss_score=x.epss,
@@ -371,4 +420,9 @@ def run_kernel_auto(
                 provenance="auto",
             ))
         summary.tier2_itemized = tier2_used
+
+    # 6) run-to-run changes and the snapshot for the next run
+    result.changes = compute_changes(result, previous_snapshot)
+    if not offline:
+        result.snapshot = build_snapshot(result, set(kev), epss_scores, cvss, previous_snapshot, now=now)
     return result

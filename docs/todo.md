@@ -302,8 +302,9 @@ v0.4.0 の連鎖評価を、複数マシンからの収集を前提とした運�
   - [x] 事前検証（2026-11-02）: ALAS は AL2023（本体・livepatch）と AL2（本体・Extras 5.10/5.15）の `updateinfo.xml` から CVE・修正版・重大度を取得可能。OSV は Ubuntu/Debian で約 1 万件（大半が修正版なし）、Alma/Rocky は勧告単位で約 100 件。
   - [x] 共通契約（`chain/sources/base.py`）、宣言的な登録表（`chain/kernel_sources.toml`）、ALAS アダプタ、3 層分類、`--kernel-auto`、livepatch による解消の判定。
   - [x] OSV アダプタ（Ubuntu / Debian / Alma / Rocky）。件数は ID で数え、層 1・2 のものだけ詳細を取得。照会結果は 24 時間、レコードは更新日時でキャッシュ。
-  - [ ] 層 2 の CVSS シグナル（ALAS には CVE 単位の CVSS がないため、別の情報源で補う）。
-- [ ] **④ スナップショットと昇格ルール、`--fail-on promoted`、`--promote`**
+  - [ ] 層 2 の CVSS シグナル（ALAS には CVE 単位の CVSS がないため、別の情報源で補う）。昇格の規則（`cvss_lookup`）は実装済みで、照会元の接続待ち。候補は NVD API（中立だが分析待ちが多く、無認証は 30 秒に 5 件）と Red Hat Security Data API（カーネルの CVE をほぼすべて採点・一括取得可）。事前検証で網羅率を比べて決める。
+- [x] **④ スナップショットと昇格ルール、`--fail-on promoted`、`--promote`**
+  - `chain/kernel_history.py`。EPSS 急上昇・CVSS の引き上げ（照会元の接続待ち）・手動昇格（`promotions.json`、出典 URL 必須）。昇格は露出が続く限り維持。レポートに「前回の実行からの変化」と昇格の一覧。
 - [ ] **⑤ RHEL 対応**（OSV の `Red Hat` ecosystem で足りるか、CSAF/VEX が要るかの検証から）
 - [ ] **⑥ ディストリ対応表の公開とアダプタ寄稿の手引き**
 - [ ] **⑦ ベンチマークへの追加**（層の昇格、収集の欠けたプール、系統違い、livepatch、照会元の無いディストリ）

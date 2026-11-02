@@ -334,12 +334,13 @@ def audit_exploit_chains(
 
             if k_entry.auto_tier == 2 and chain_lvl == ChainLevel.CRITICAL_CHAIN:
                 # ADR-021 decision 1: automatically suspected LPEs are capped at HIGH_UNVERIFIED.
-                # They are promoted (to tier 1) when KEV / EPSS / PoC signals change.
+                # They are promoted (to tier 1) when KEV / EPSS / CVSS signals change, or by --promote.
                 chain_lvl = ChainLevel.HIGH_UNVERIFIED
                 deadline = "2週間以内（自動照会による LPE の疑い・人による確認）"
                 recs = [
                     f"【層2・自動推定】{k_entry.cve_id} は自動照会で見つかった LPE の疑いです（KEV 未掲載）。"
-                    "足場のあるワークロードと同じカーネルにあるため、人が内容を確認し、LPE と判断した場合は手動台帳に登録して Critical として扱ってください。",
+                    "足場のあるワークロードと同じカーネルにあるため、人が内容を確認し、LPE と判断した場合は "
+                    f"`--promote {k_entry.cve_id} --promote-source <根拠の URL>` で層1 に昇格させ、Critical として扱ってください。",
                 ] + recs
 
             foothold_desc = None
@@ -1185,9 +1186,10 @@ def _format_kernel_auto_section(ka: Any) -> List[str]:
         "## 🧭 カーネル脆弱性の自動照会（横展開）",
         "",
         "> 手動台帳に載っていないカーネル脆弱性を、実機のカーネル版とディストリの勧告から引いています（ADR-021）。  ",
-        f"> 層1 = CISA KEV 掲載、層2 = EPSS {ka.epss_threshold:g} 以上またはディストリ重大度 critical（LPE の疑い・上限は HIGH_UNVERIFIED）、層3 = その他（件数のみ）。",
+        f"> 層1 = CISA KEV 掲載または昇格、層2 = EPSS {ka.epss_threshold:g} 以上またはディストリ重大度 critical（LPE の疑い・上限は HIGH_UNVERIFIED）、層3 = その他（件数のみ）。",
         "",
     ]
+    lines.extend(_format_kernel_history_lines(ka))
     info = getattr(ka, "kev_catalog_info", None)
     if info:
         lines.extend([
@@ -1237,14 +1239,16 @@ def _format_kernel_auto_section(ka: Any) -> List[str]:
             f"### {pid}: 層1・層2 の脆弱性（{len(top)} 件中 {len(shown)} 件を表示）",
             "",
             "| CVE | 層 | KEV | EPSS | ディストリ重大度 | 修正版 | 勧告 |",
-            "| :--- | ---: | :---: | ---: | :--- | :--- | :--- |",
+            "| :--- | :--- | :---: | ---: | :--- | :--- | :--- |",
         ])
         for x in shown:
             epss = f"{x.epss:.3f}" if x.epss is not None else "—"
             adv = ", ".join(x.advisory_ids[:2]) + (" …" if len(x.advisory_ids) > 2 else "")
             link = f"[{adv}]({x.source_url})" if x.source_url.startswith("http") else adv
             fixed = f"`{x.fixed_evr}`" if x.fixed_evr else "**修正版なし**"
-            lines.append(f"| `{x.cve_id}` | {x.tier} | {'✓' if x.in_kev else ''} | {epss} | {x.severity} | {fixed} | {link} |")
+            promo = getattr(x, "promotion", None)
+            tier = f"{x.tier}（昇格: {promo.label}）" if promo else str(x.tier)
+            lines.append(f"| `{x.cve_id}` | {tier} | {'✓' if x.in_kev else ''} | {epss} | {x.severity} | {fixed} | {link} |")
         if p.tier_counts.get(2, 0) > p.tier2_itemized:
             lines.append("")
             lines.append(
@@ -1256,4 +1260,71 @@ def _format_kernel_auto_section(ka: Any) -> List[str]:
         lines.extend(["### ⚠️ 照会時の注意（調べられなかったものを隠さない）", ""])
         lines.extend(f"- {e}" for e in ka.errors)
         lines.append("")
+    return lines
+
+
+def _format_kernel_history_lines(ka: Any) -> List[str]:
+    """Run-to-run changes and promotions (ADR-021 decision 2)."""
+    lines: List[str] = []
+    rules = [f"EPSS が前回から {getattr(ka, 'epss_jump', 0.15):g} 以上上昇", "人による `--promote`（出典 URL 必須）"]
+    if getattr(ka, "cvss_available", False):
+        rules.insert(1, "既存の CVSS が LPE 型の 7.0 以上へ引き上げ")
+    lines.append(f"> 昇格の規則: {'、'.join(rules)}。昇格したものは、露出が続く限り層1 のまま扱います。" + (
+        "" if getattr(ka, "cvss_available", False) else "CVSS の引き上げは、CVSS の照会元が未接続のため判定していません。"
+    ))
+    lines.append("")
+    previous = getattr(ka, "previous_taken_at", None)
+    changes = getattr(ka, "changes", {}) or {}
+    if previous is None:
+        lines.extend([
+            "> 前回のスナップショットがないため、今回の結果が比較の基準になります。次回の実行から、変化と昇格を判定します。",
+            "",
+        ])
+    else:
+        lines.extend([f"### 前回の実行（{previous}）からの変化", ""])
+        rows = []
+        for pid in sorted(changes):
+            c = changes[pid]
+            if not c.baseline:
+                rows.append(f"| `{pid}` | — | — | — | {'；'.join(c.notes)} |")
+                continue
+            def _ids(items, limit=5):
+                if not items:
+                    return "0"
+                head = ", ".join(f"`{i}`" for i in items[:limit])
+                return f"{len(items)}（{head}{' …' if len(items) > limit else ''}）"
+            rows.append(f"| `{pid}` | {_ids(c.new_tier1)} | {_ids(c.new_tier2, 3)} | {_ids(c.resolved, 3)} | {'；'.join(c.notes) or '—'} |")
+        if rows:
+            lines.extend([
+                "| ノードプール | 新たに層1 | 新たに層2 | 解消（層1・2） | 備考 |",
+                "| :--- | :--- | :--- | :--- | :--- |",
+            ])
+            lines.extend(rows)
+            lines.append("")
+    promotions = getattr(ka, "promotions", {}) or {}
+    if promotions:
+        pools_by_cve: Dict[str, List[str]] = {}
+        for pid, p in ka.pools.items():
+            for x in p.exposed:
+                pools_by_cve.setdefault(x.cve_id, []).append(pid)
+        lines.extend([
+            f"### 昇格して層1 として扱っている脆弱性（{len(promotions)} 件）",
+            "",
+            "| CVE | 規則 | 内容 | 検知 | 該当プール |",
+            "| :--- | :--- | :--- | :--- | :--- |",
+        ])
+        for cve in sorted(promotions, key=lambda c: (not promotions[c].new, c)):
+            p = promotions[cve]
+            detail = p.detail + (f"（[出典]({p.source_url})）" if p.source_url else "")
+            when = (p.detected_at or "")[:10] + ("・**今回**" if p.new else "")
+            lines.append(f"| `{cve}` | {p.label} | {detail} | {when} | {', '.join(f'`{x}`' for x in sorted(pools_by_cve.get(cve, [])))} |")
+        lines.append("")
+    manual = getattr(ka, "manual_promotions", {}) or {}
+    idle = sorted(c for c in manual if c not in promotions)
+    if idle:
+        lines.extend([
+            f"> 手動昇格の台帳にあるが、今回どのプールにも露出していないもの: {', '.join(f'`{c}`' for c in idle)}"
+            "（修正済み、または KEV 掲載で層1）。不要になったら `--unpromote` で外せます。",
+            "",
+        ])
     return lines
