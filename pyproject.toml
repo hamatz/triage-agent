@@ -6,7 +6,7 @@ readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
     "google-genai>=2.34.0",
-    "pydantic>=2.14.1",
+    "pydantic>=2.14.2",
     "httpx>=0.28.0",
     "python-dotenv>=1.2.4",
     "rich>=13.0.0",
