@@ -111,6 +111,9 @@ fi
 # 2. Distro package version and flavor detection
 PACKAGE_NAME="unknown"
 PACKAGE_VER="unknown"
+PACKAGE_EPOCH=""
+PACKAGE_BIN_NAME=""
+LIVEPATCH_PACKAGES=""
 KERNEL_FLAVOR="linux"
 
 if command -v dpkg >/dev/null 2>&1; then
@@ -134,11 +137,20 @@ elif command -v rpm >/dev/null 2>&1; then
   if [ -n "${RPM_OUT}" ]; then
     PACKAGE_NAME="${RPM_OUT}"
     PACKAGE_VER="$(rpm -q --qf '%{VERSION}-%{RELEASE}' -f "/boot/vmlinuz-${UNAME_R}" 2>/dev/null || echo "${RPM_OUT}")"
+    # Epoch and binary package name are needed to compare against distro advisories precisely
+    # (e.g. Amazon Linux 2023 kernels carry epoch 1; 'kernel' vs 'kernel6.12' are different lines).
+    PACKAGE_EPOCH="$(rpm -q --qf '%{EPOCHNUM}' -f "/boot/vmlinuz-${UNAME_R}" 2>/dev/null || true)"
+    PACKAGE_BIN_NAME="$(rpm -q --qf '%{NAME}' -f "/boot/vmlinuz-${UNAME_R}" 2>/dev/null || true)"
     SRC_RPM="$(rpm -q --qf '%{SOURCERPM}' -f "/boot/vmlinuz-${UNAME_R}" 2>/dev/null || true)"
     if [ -n "${SRC_RPM}" ]; then
       KERNEL_FLAVOR="$(echo "${SRC_RPM}" | sed 's/-[0-9].*//')"
     fi
   fi
+fi
+
+# Installed livepatch packages (RPM based distros ship them as kernel-livepatch-<kernel version>-<release>)
+if command -v rpm >/dev/null 2>&1; then
+  LIVEPATCH_PACKAGES="$(rpm -qa --qf '%{NAME}=%{EPOCHNUM}:%{VERSION}-%{RELEASE}\n' 'kernel-livepatch-*' 2>/dev/null | sort -u || true)"
 fi
 
 # Fallback pattern detection if source package was not directly acquired
@@ -263,6 +275,8 @@ JSON_PAYLOAD=$(cat <<EOF
   "kernel_flavor": "$(json_escape "${KERNEL_FLAVOR}")",
   "kernel_release": "$(json_escape "${UNAME_R}")",
   "distro_package_version": "$(json_escape "${PACKAGE_VER}")",
+  "kernel_package_epoch": "$(json_escape "${PACKAGE_EPOCH}")",
+  "kernel_binary_package": "$(json_escape "${PACKAGE_BIN_NAME}")",
   "loaded_modules": $(to_json_array "${LOADED_MODULES}"),
   "builtin_modules": $(to_json_array "${BUILTIN_MODULES}"),
   "modprobe_config": [$(
@@ -281,7 +295,8 @@ JSON_PAYLOAD=$(cat <<EOF
   "active_services": [${ACTIVE_SERVICES}],
   "xfrm_active": ${XFRM_ACTIVE},
   "livepatch_active": ${LIVEPATCH_ACTIVE},
-  "livepatch_modules": $(to_json_array "${LIVEPATCH_MODULES}")
+  "livepatch_modules": $(to_json_array "${LIVEPATCH_MODULES}"),
+  "livepatch_packages": $(to_json_array "${LIVEPATCH_PACKAGES}")
 }
 EOF
 )

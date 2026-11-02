@@ -94,6 +94,14 @@ class KernelVulnerabilityEntry(BaseModel):
         default_factory=dict,
         description="Distro key (e.g. 'ubuntu') to affected package range"
     )
+    # ADR-021: entries produced by the automatic advisory lookup
+    applies_to_pools: Optional[List[str]] = Field(
+        default=None, description="If set, the entry is evaluated only for these node pools (lineage specific fix)"
+    )
+    auto_tier: Optional[int] = Field(
+        default=None, description="1 = confirmed (KEV), 2 = suspected LPE (capped at HIGH_UNVERIFIED); None for manual entries"
+    )
+    provenance: str = Field(default="manual", description="'manual' (sourced ledger) or 'auto' (advisory adapter)")
 
 
 class FootholdResult(BaseModel):
@@ -118,6 +126,15 @@ class NodeTelemetry(BaseModel):
     active_services: List[str] = Field(default_factory=list)
     xfrm_active: bool = Field(default=False, description="True if IPsec xfrm state/policy is configured (e.g. Cilium/Calico)")
     livepatch_modules: List[str] = Field(default_factory=list)
+    # Exact running kernel package identity (ADR-021 decision 3), used by advisory adapters.
+    kernel_package_epoch: Optional[str] = Field(default=None, description="RPM epoch of the running kernel package ('0' when none)")
+    kernel_binary_package: Optional[str] = Field(
+        default=None, description="Binary package that owns the running kernel image (e.g. 'kernel', 'kernel6.12', 'kernel-core')"
+    )
+    livepatch_packages: List[str] = Field(
+        default_factory=list,
+        description="Installed livepatch packages as 'name=epoch:version-release' (e.g. 'kernel-livepatch-6.12.94-123.174=1:1.0-9.amzn2023')",
+    )
     # Collection provenance (ADR-021 decision 4): how many nodes back this (possibly aggregated) telemetry.
     node_ids: List[str] = Field(
         default_factory=list,

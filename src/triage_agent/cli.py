@@ -254,7 +254,49 @@ def run_chain_audit_flow(args, console: Console, triage_report: Optional[Any] = 
             except Exception as e:
                 console.print(f"[bold yellow]⚠️ 外部台帳読み込み警告: {e}[/bold yellow]")
 
-    if not vulnerabilities:
+    # ADR-021: automatic kernel advisory lookup (lateral discovery of LPEs missing from the manual ledger)
+    kernel_auto_result = None
+    if getattr(args, "kernel_auto", False):
+        from triage_agent.chain.kernel_exposure import run_kernel_auto
+        from triage_agent.chain.sources import build_adapters, load_registry
+
+        auto_feed = ThreatFeedClient(epss_jump_threshold=args.epss_threshold)
+        offline = bool(args.dry_run)
+
+        def _kev_lookup():
+            if offline:
+                cache_file = auto_feed.cache_dir / "cisa_kev_catalog.json"
+                if not cache_file.exists():
+                    raise RuntimeError("オフラインで KEV のキャッシュがありません")
+                return auto_feed._index_kev_data(json.loads(cache_file.read_text(encoding="utf-8")))
+            return auto_feed.fetch_cisa_kev_catalog()
+
+        console.print("ℹ️ カーネル脆弱性を自動照会しています（ディストリの勧告 × 実機のカーネル版）...")
+        kernel_auto_result = run_kernel_auto(
+            environment=env_def,
+            telemetries=telemetries,
+            adapters=build_adapters(load_registry(), cache_dir=str(auto_feed.cache_dir)),
+            kev_lookup=_kev_lookup,
+            epss_lookup=auto_feed.fetch_epss_scores,
+            manual_cve_ids={v.cve_id for v in vulnerabilities},
+            offline=offline,
+            epss_threshold=args.kernel_auto_epss,
+            tier2_limit=args.kernel_auto_tier2_limit,
+        )
+        for pid, summary in sorted(kernel_auto_result.pools.items()):
+            if summary.status == "ok":
+                c = summary.tier_counts
+                console.print(
+                    f"   - {pid}: 層1 {c[1]} 件 / 層2 {c[2]} 件 / 層3 {c[3]} 件"
+                    + (f"（{summary.upgrade_target} 以上で層1・2 を解消）" if summary.upgrade_target else "")
+                )
+            else:
+                console.print(f"[yellow]   - {pid}: {summary.reason}[/yellow]")
+        for err in kernel_auto_result.errors:
+            console.print(f"[bold yellow]⚠️ 自動照会: {err}[/bold yellow]")
+        vulnerabilities.extend(kernel_auto_result.entries)
+
+    if not vulnerabilities and kernel_auto_result is None:
         console.print("[yellow]ℹ️ カーネル脆弱性台帳（--chain-ledger または exploit_chain_ledger.json）に対象エントリがないため、連鎖評価をスキップします。[/yellow]")
         return []
 
@@ -342,6 +384,7 @@ def run_chain_audit_flow(args, console: Console, triage_report: Optional[Any] = 
         feed_results=feed_results,
         coverage=pool_coverage,
         load_issues=telemetry_issues,
+        kernel_auto=kernel_auto_result,
     )
     out_path = Path(args.chain_output)
     out_path.parent.mkdir(parents=True, exist_ok=True)
@@ -518,6 +561,24 @@ def main():
         type=str,
         default=None,
         help="Path to node telemetry JSON file or directory containing telemetry files (v0.4.0)",
+    )
+    parser.add_argument(
+        "--kernel-auto",
+        action="store_true",
+        help="Look up kernel advisories automatically for each node pool's running kernel (ADR-021). "
+             "Uses the adapters in chain/kernel_sources.toml; with --dry-run only cached data is used.",
+    )
+    parser.add_argument(
+        "--kernel-auto-epss",
+        type=float,
+        default=0.1,
+        help="EPSS score at or above which an automatically found kernel CVE is tier 2 (default: 0.1)",
+    )
+    parser.add_argument(
+        "--kernel-auto-tier2-limit",
+        type=int,
+        default=10,
+        help="Maximum tier 2 CVEs per pool included in the chain evaluation (default: 10; the rest are counted)",
     )
     parser.add_argument(
         "--telemetry-max-age",

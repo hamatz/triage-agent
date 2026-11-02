@@ -1,0 +1,25 @@
+# kernel_sources.toml
+# Declarative registry of kernel advisory source adapters (ADR-021 decision 0 / 3).
+#
+# Each adapter turns one family of distribution advisories into the common shape defined in
+# triage_agent/chain/sources/base.py. Distributions without an adapter keep working with the manual
+# ledger and are reported as "照会元なし" (no automatic source) instead of being treated as safe.
+#
+# To add a distribution: implement an adapter class, register it here with the os-release IDs it
+# covers, and add test fixtures. See docs/exploit-chain.md.
+
+[adapters.alas]
+class = "triage_agent.chain.sources.alas:AlasAdapter"
+description = "Amazon Linux Security Center (repository updateinfo.xml)"
+distros = ["amzn"]
+verified_at = "2026-11-02"
+
+# Repositories whose updateinfo is read, per Amazon Linux release (x86_64 metadata).
+[adapters.alas.repos."2023"]
+core = "https://cdn.amazonlinux.com/al2023/core/mirrors/latest/x86_64/mirror.list"
+kernel-livepatch = "https://cdn.amazonlinux.com/al2023/kernel-livepatch/mirrors/latest/x86_64/mirror.list"
+
+[adapters.alas.repos."2"]
+core = "https://cdn.amazonlinux.com/2/core/latest/x86_64/mirror.list"
+extras-kernel-5-10 = "https://cdn.amazonlinux.com/2/extras/kernel-5.10/latest/x86_64/mirror.list"
+extras-kernel-5-15 = "https://cdn.amazonlinux.com/2/extras/kernel-5.15/latest/x86_64/mirror.list"

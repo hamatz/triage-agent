@@ -155,6 +155,8 @@ def audit_exploit_chains(
 
         # Evaluate against each target kernel vulnerability
         for k_entry in kernel_vulnerabilities:
+            if k_entry.applies_to_pools is not None and pool.pool_id not in k_entry.applies_to_pools:
+                continue  # lineage specific automatic entry for another pool
             pool_telemetry = telemetry_map.get(pool.pool_id)
             
             # Resolve OS and kernel flavor from telemetry or pool definition
@@ -217,6 +219,8 @@ def audit_exploit_chains(
                 kernel_status = f"NO (修正済み: {k_entry.cve_id}・パッケージ版 {eff_version}・{today_str}確認・{match_exp}{grounding_note})"
             else:
                 kernel_status = f"YES (脆弱性該当: {k_entry.cve_id}・パッケージ版 {eff_version} < 修正版 {range_info.fixed_version}・{match_exp}{grounding_note})"
+            if k_entry.provenance == "auto":
+                kernel_status += f"［自動照会・層{k_entry.auto_tier}・出典: {k_entry.source_url}］"
 
             if not is_vuln:
                 # Kernel is definitively patched for this specific CVE
@@ -327,6 +331,16 @@ def audit_exploit_chains(
                     f"ワークロード（{wl.name}）は内部限定ですが、同一ノード（{wl.node_pool}）上に未解消 LPE（{k_entry.cve_id}）が存在します。",
                     "Dream 事例（内部管理機侵害・LDAP奪取）の教訓に基づき、横展開攻撃を防ぐため 2 週間以内にパッチまたは緩和策を適用してください（定期メンテ放置禁止）。",
                 ]
+
+            if k_entry.auto_tier == 2 and chain_lvl == ChainLevel.CRITICAL_CHAIN:
+                # ADR-021 decision 1: automatically suspected LPEs are capped at HIGH_UNVERIFIED.
+                # They are promoted (to tier 1) when KEV / EPSS / PoC signals change.
+                chain_lvl = ChainLevel.HIGH_UNVERIFIED
+                deadline = "2週間以内（自動照会による LPE の疑い・人による確認）"
+                recs = [
+                    f"【層2・自動推定】{k_entry.cve_id} は自動照会で見つかった LPE の疑いです（KEV 未掲載）。"
+                    "足場のあるワークロードと同じカーネルにあるため、人が内容を確認し、LPE と判断した場合は手動台帳に登録して Critical として扱ってください。",
+                ] + recs
 
             foothold_desc = None
             if detected_footholds:
@@ -619,6 +633,18 @@ def _aggregate_pool_telemetries(nodes: List[NodeTelemetry]) -> NodeTelemetry:
     livepatch_sets = [set(n.livepatch_modules or []) for n in nodes]
     common_livepatch = list(set.intersection(*livepatch_sets)) if livepatch_sets else []
 
+    # Running kernel identity: only kept when every node agrees (otherwise the pool is mixed -> unknown).
+    def _same(values):
+        vals = [v for v in values]
+        if any(v is None or str(v).strip() == "" for v in vals):
+            return None
+        return vals[0] if len(set(vals)) == 1 else None
+
+    eff_epoch = _same([n.kernel_package_epoch for n in nodes])
+    eff_binary = _same([n.kernel_binary_package for n in nodes])
+    lp_sets = [set(n.livepatch_packages or []) for n in nodes]
+    common_lp_packages = sorted(set.intersection(*lp_sets)) if lp_sets else []
+
     # Collection provenance: oldest timestamp wins; any unknown timestamp makes the pool's freshness unknown.
     collected = [n.oldest_collected_at for n in nodes]
     oldest_collected = None if any(c is None for c in collected) else min(collected)
@@ -626,6 +652,9 @@ def _aggregate_pool_telemetries(nodes: List[NodeTelemetry]) -> NodeTelemetry:
     expected_counts = [n.expected_nodes_count for n in nodes if n.expected_nodes_count is not None]
 
     return NodeTelemetry(
+        kernel_package_epoch=eff_epoch,
+        kernel_binary_package=eff_binary,
+        livepatch_packages=common_lp_packages,
         node_ids=all_node_ids,
         observed_nodes_count=sum(n.observed_nodes_count for n in nodes),
         oldest_collected_at=oldest_collected,
@@ -789,6 +818,9 @@ def load_node_telemetries_with_report(
             active_services=data.get("active_services", []),
             xfrm_active=bool(data.get("xfrm_active", False)),
             livepatch_modules=livepatch,
+            kernel_package_epoch=(str(data.get("kernel_package_epoch")).strip() or None) if data.get("kernel_package_epoch") not in (None, "") else None,
+            kernel_binary_package=data.get("kernel_binary_package") or None,
+            livepatch_packages=[str(x) for x in data.get("livepatch_packages", []) if x] if isinstance(data.get("livepatch_packages"), list) else [],
             node_ids=[] if is_anonymous else [raw_node_id],
             observed_nodes_count=1,
             oldest_collected_at=collected_at.strftime("%Y-%m-%dT%H:%M:%SZ") if collected_at else None,
@@ -1016,6 +1048,7 @@ def format_chain_audit_markdown(
     feed_results: Optional[Dict[str, Any]] = None,
     coverage: Optional[Dict[str, PoolCoverage]] = None,
     load_issues: Optional[List[TelemetryLoadIssue]] = None,
+    kernel_auto: Optional[Any] = None,
 ) -> str:
     """Format Exploit Chain audit results into enterprise-ready Markdown report."""
     lines = [
@@ -1087,6 +1120,9 @@ def format_chain_audit_markdown(
             lines.append(f"- {issue.message}{suffix}")
         lines.append("")
 
+    if kernel_auto is not None:
+        lines.extend(_format_kernel_auto_section(kernel_auto))
+
     lines.extend([
         "## 📊 監査サマリ・総合判定",
         "",
@@ -1135,3 +1171,77 @@ def format_chain_audit_markdown(
 
     return "\n".join(lines)
 
+
+
+def _format_kernel_auto_section(ka: Any) -> List[str]:
+    """Report section for the automatic kernel advisory lookup (ADR-021)."""
+    status_label = {
+        "ok": "✅ 照会済み",
+        "no_adapter": "ℹ️ 照会元なし（手動台帳のみ）",
+        "unidentified": "❓ 系統を特定できない",
+        "source_error": "⚠️ 照会不全（未修正なしとは扱いません）",
+    }
+    lines = [
+        "## 🧭 カーネル脆弱性の自動照会（横展開）",
+        "",
+        "> 手動台帳に載っていないカーネル脆弱性を、実機のカーネル版とディストリの勧告から引いています（ADR-021）。  ",
+        f"> 層1 = CISA KEV 掲載、層2 = EPSS {ka.epss_threshold:g} 以上またはディストリ重大度 critical（LPE の疑い・上限は HIGH_UNVERIFIED）、層3 = その他（件数のみ）。",
+        "",
+    ]
+    if not ka.kev_available or not ka.epss_available:
+        missing = [n for n, ok in (("CISA KEV", ka.kev_available), ("EPSS", ka.epss_available)) if not ok]
+        lines.extend([
+            f"> ⚠️ **{'・'.join(missing)} を取得できなかったため、層の判定が不完全です。** 層3 の中に、本来は層1・2 のものが含まれている可能性があります。",
+            "",
+        ])
+    lines.extend([
+        "| ノードプール | 系統 | 現行の版 | 層1 | 層2 | 層3 | livepatch で解消 | 層1・2 を解消する版 | 状態 |",
+        "| :--- | :--- | :--- | ---: | ---: | ---: | ---: | :--- | :--- |",
+    ])
+    for pid in sorted(ka.pools):
+        p = ka.pools[pid]
+        if p.status == "ok":
+            counts = [str(p.tier_counts.get(t, 0)) for t in (1, 2, 3)]
+            lp = str(p.livepatched)
+            target = f"`{p.upgrade_target}`" if p.upgrade_target else "—（層1・2 なし）"
+        else:
+            counts, lp, target = ["—", "—", "—"], "—", "—"
+        state = status_label.get(p.status, p.status)
+        if p.reason:
+            state += f"：{p.reason}"
+        if p.status == "ok" and not p.grounded_in_telemetry:
+            state += "（構成定義上の版で照会）"
+        lines.append(
+            f"| `{pid}` | {f'`{p.lineage}`' if p.lineage else '—'} | {f'`{p.installed}`' if p.installed else '—'} "
+            f"| {counts[0]} | {counts[1]} | {counts[2]} | {lp} | {target} | {state} |"
+        )
+    lines.append("")
+    for pid in sorted(ka.pools):
+        p = ka.pools[pid]
+        top = [x for x in p.exposed if x.tier in (1, 2)]
+        if p.status != "ok" or not top:
+            continue
+        shown = top[:15]
+        lines.extend([
+            f"### {pid}: 層1・層2 の脆弱性（{len(top)} 件中 {len(shown)} 件を表示）",
+            "",
+            "| CVE | 層 | KEV | EPSS | ディストリ重大度 | 修正版 | 勧告 |",
+            "| :--- | ---: | :---: | ---: | :--- | :--- | :--- |",
+        ])
+        for x in shown:
+            epss = f"{x.epss:.3f}" if x.epss is not None else "—"
+            adv = ", ".join(x.advisory_ids[:2]) + (" …" if len(x.advisory_ids) > 2 else "")
+            link = f"[{adv}]({x.source_url})" if x.source_url.startswith("http") else adv
+            lines.append(f"| `{x.cve_id}` | {x.tier} | {'✓' if x.in_kev else ''} | {epss} | {x.severity} | `{x.fixed_evr}` | {link} |")
+        if p.tier_counts.get(2, 0) > p.tier2_itemized:
+            lines.append("")
+            lines.append(
+                f"> 層2 のうち上位 {p.tier2_itemized} 件を連鎖評価に含めています。残り {p.tier_counts[2] - p.tier2_itemized} 件も "
+                f"`{p.upgrade_target}` 以上に更新すれば解消します。"
+            )
+        lines.append("")
+    if ka.errors:
+        lines.extend(["### ⚠️ 照会時の注意（調べられなかったものを隠さない）", ""])
+        lines.extend(f"- {e}" for e in ka.errors)
+        lines.append("")
+    return lines
