@@ -1188,6 +1188,12 @@ def _format_kernel_auto_section(ka: Any) -> List[str]:
         f"> 層1 = CISA KEV 掲載、層2 = EPSS {ka.epss_threshold:g} 以上またはディストリ重大度 critical（LPE の疑い・上限は HIGH_UNVERIFIED）、層3 = その他（件数のみ）。",
         "",
     ]
+    info = getattr(ka, "kev_catalog_info", None)
+    if info:
+        lines.extend([
+            f"> 使用した CISA KEV カタログ: 版 `{info.get('catalogVersion')}`（公開 {info.get('dateReleased')}・{info.get('count')} 件）",
+            "",
+        ])
     if not ka.kev_available or not ka.epss_available:
         missing = [n for n, ok in (("CISA KEV", ka.kev_available), ("EPSS", ka.epss_available)) if not ok]
         lines.extend([

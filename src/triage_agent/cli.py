@@ -264,12 +264,7 @@ def run_chain_audit_flow(args, console: Console, triage_report: Optional[Any] = 
         offline = bool(args.dry_run)
 
         def _kev_lookup():
-            if offline:
-                cache_file = auto_feed.cache_dir / "cisa_kev_catalog.json"
-                if not cache_file.exists():
-                    raise RuntimeError("オフラインで KEV のキャッシュがありません")
-                return auto_feed._index_kev_data(json.loads(cache_file.read_text(encoding="utf-8")))
-            return auto_feed.fetch_cisa_kev_catalog()
+            return auto_feed.load_cached_kev_catalog() if offline else auto_feed.fetch_cisa_kev_catalog()
 
         console.print("ℹ️ カーネル脆弱性を自動照会しています（ディストリの勧告 × 実機のカーネル版）...")
         kernel_auto_result = run_kernel_auto(
@@ -283,6 +278,10 @@ def run_chain_audit_flow(args, console: Console, triage_report: Optional[Any] = 
             epss_threshold=args.kernel_auto_epss,
             tier2_limit=args.kernel_auto_tier2_limit,
         )
+        kernel_auto_result.kev_catalog_info = auto_feed.kev_catalog_info
+        if auto_feed.kev_catalog_info:
+            info = auto_feed.kev_catalog_info
+            console.print(f"ℹ️ CISA KEV カタログ: 版 {info['catalogVersion']}（公開 {info['dateReleased']}・{info['count']} 件）")
         for pid, summary in sorted(kernel_auto_result.pools.items()):
             if summary.status == "ok":
                 c = summary.tier_counts

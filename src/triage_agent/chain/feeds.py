@@ -61,14 +61,64 @@ class ThreatFeedClient:
         self.epss_jump_threshold = epss_jump_threshold
         self.timeout = timeout
         self._kev_cache: Optional[Dict[str, Dict[str, Any]]] = None
+        # Provenance of the KEV catalog actually used (catalogVersion, dateReleased, count, origin)
+        self.kev_catalog_info: Optional[Dict[str, Any]] = None
 
     def _ensure_dirs(self) -> None:
         self.cache_dir.mkdir(parents=True, exist_ok=True)
         if self.history_path.parent:
             self.history_path.parent.mkdir(parents=True, exist_ok=True)
 
+    @staticmethod
+    def validate_kev_data(data: Any) -> Optional[str]:
+        """Return why ``data`` is not a genuine CISA KEV catalog, or None if it looks valid.
+
+        The official feed always carries catalogVersion, dateReleased, count and vulnerabilities.
+        A file missing them (e.g. a test fixture or a truncated download) must never be used as
+        the catalog: silently using it would hide actively exploited CVEs.
+        """
+        if not isinstance(data, dict):
+            return "JSON オブジェクトではありません"
+        missing = [k for k in ("catalogVersion", "dateReleased", "vulnerabilities") if k not in data]
+        if missing:
+            return f"CISA KEV カタログの必須項目がありません（{', '.join(missing)}）"
+        vulns = data.get("vulnerabilities")
+        if not isinstance(vulns, list):
+            return "vulnerabilities が配列ではありません"
+        count = data.get("count")
+        if count is not None and count != len(vulns):
+            return f"件数が一致しません（count={count}, 実際={len(vulns)}）"
+        return None
+
+    def _accept_kev_data(self, data: Dict[str, Any], origin: str) -> Dict[str, Dict[str, Any]]:
+        self._kev_cache = self._index_kev_data(data)
+        self.kev_catalog_info = {
+            "catalogVersion": data.get("catalogVersion"),
+            "dateReleased": data.get("dateReleased"),
+            "count": len(data.get("vulnerabilities", [])),
+            "origin": origin,
+        }
+        return self._kev_cache
+
+    def load_cached_kev_catalog(self) -> Dict[str, Dict[str, Any]]:
+        """Use only the local cache (offline / dry-run). Raises if it is missing or not a genuine catalog."""
+        cache_file = self.cache_dir / "cisa_kev_catalog.json"
+        if not cache_file.exists():
+            raise RuntimeError("オフラインで KEV のキャッシュがありません")
+        try:
+            data = json.loads(cache_file.read_text(encoding="utf-8"))
+        except Exception as e:
+            raise RuntimeError(f"KEV のキャッシュを読めません（{e}）") from e
+        problem = self.validate_kev_data(data)
+        if problem:
+            raise RuntimeError(f"KEV のキャッシュを使えません: {problem}（{cache_file}）")
+        return self._accept_kev_data(data, origin=f"cache:{cache_file}")
+
     def fetch_cisa_kev_catalog(self, force_refresh: bool = False) -> Dict[str, Dict[str, Any]]:
-        """Fetch the full CISA KEV catalog. Cached locally for 24h by default."""
+        """Fetch the full CISA KEV catalog. Cached locally for 24h by default.
+
+        Cached or downloaded data is validated (see ``validate_kev_data``); invalid data is never used.
+        """
         if self._kev_cache is not None and not force_refresh:
             return self._kev_cache
 
@@ -82,8 +132,10 @@ class ThreatFeedClient:
                 if time.time() - mtime < 86400:
                     with open(cache_file, "r", encoding="utf-8") as f:
                         data = json.load(f)
-                        self._kev_cache = self._index_kev_data(data)
-                        return self._kev_cache
+                    problem = self.validate_kev_data(data)
+                    if problem is None:
+                        return self._accept_kev_data(data, origin=f"cache:{cache_file}")
+                    logger.warning("Ignoring invalid KEV cache %s: %s", cache_file, problem)
             except Exception as e:
                 logger.warning("Failed to read KEV cache: %s", e)
 
@@ -97,23 +149,25 @@ class ThreatFeedClient:
                 if resp.status == 200:
                     raw_data = resp.read().decode("utf-8")
                     data = json.loads(raw_data)
+                    problem = self.validate_kev_data(data)
+                    if problem:
+                        raise RuntimeError(f"downloaded KEV catalog is invalid: {problem}")
                     with open(cache_file, "w", encoding="utf-8") as f:
                         f.write(raw_data)
-                    self._kev_cache = self._index_kev_data(data)
-                    return self._kev_cache
+                    return self._accept_kev_data(data, origin=CISA_KEV_URL)
                 else:
                     raise urllib.error.HTTPError(
                         CISA_KEV_URL, resp.status, f"HTTP {resp.status}", resp.headers, None
                     )
         except Exception as e:
             logger.warning("Failed to download CISA KEV catalog: %s", e)
-            # Fallback to stale cache if present
+            # Fallback to stale cache if present AND genuine
             if cache_file.exists():
                 try:
                     with open(cache_file, "r", encoding="utf-8") as f:
                         data = json.load(f)
-                        self._kev_cache = self._index_kev_data(data)
-                        return self._kev_cache
+                    if self.validate_kev_data(data) is None:
+                        return self._accept_kev_data(data, origin=f"stale-cache:{cache_file}")
                 except Exception:
                     pass
             raise RuntimeError(f"CISA KEV catalog unavailable: {e}") from e
@@ -278,16 +332,11 @@ class ThreatFeedClient:
             except Exception as e:
                 kev_error = str(e)
         else:
-            # Try offline cache
-            cache_file = self.cache_dir / "cisa_kev_catalog.json"
-            if cache_file.exists():
-                try:
-                    with open(cache_file, "r", encoding="utf-8") as f:
-                        kev_catalog = self._index_kev_data(json.load(f))
-                except Exception:
-                    kev_error = "Offline cache unreadable"
-            else:
-                kev_error = "Offline mode and no local KEV cache found"
+            # Offline: genuine cached catalog only
+            try:
+                kev_catalog = self.load_cached_kev_catalog()
+            except Exception as e:
+                kev_error = str(e)
 
         # Step 2: EPSS lookup
         epss_data: Dict[str, Dict[str, float]] = {}

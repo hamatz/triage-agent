@@ -75,6 +75,7 @@ class KernelAutoResult:
     kev_available: bool = True
     epss_threshold: float = DEFAULT_EPSS_THRESHOLD
     tier2_limit: int = DEFAULT_TIER2_LIMIT
+    kev_catalog_info: Optional[Dict[str, object]] = None   # provenance of the KEV catalog used
 
 
 def _split_epoch(version: Optional[str]) -> Tuple[Optional[str], Optional[str]]:

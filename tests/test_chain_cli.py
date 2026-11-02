@@ -1,6 +1,7 @@
 """Integration tests for CLI Exploit Chain and Linux Kernel Exposure Audit (v0.4.0)."""
 
 import json
+import os
 import tempfile
 import unittest
 from pathlib import Path
@@ -64,12 +65,18 @@ workloads:
             encoding="utf-8",
         )
 
-        # Prepare local KEV cache so ThreatFeedClient can resolve in offline / dry-run mode
-        cache_dir = Path("triage-output/cache")
-        cache_dir.mkdir(parents=True, exist_ok=True)
-        self.kev_cache_file = cache_dir / "cisa_kev_catalog.json"
+        # Prepare a KEV cache so ThreatFeedClient can resolve in offline / dry-run mode.
+        # It lives in the test's own directory: writing to the repository's triage-output/cache
+        # would make real runs use this one-entry catalog.
+        self.cache_dir = self.work_dir / "triage-output" / "cache"
+        self.cache_dir.mkdir(parents=True, exist_ok=True)
+        self.kev_cache_file = self.cache_dir / "cisa_kev_catalog.json"
         self.kev_cache_file.write_text(
             json.dumps({
+                "title": "CISA Catalog of Known Exploited Vulnerabilities (test fixture)",
+                "catalogVersion": "2026.10.24",
+                "dateReleased": "2026-10-24T00:00:00.000Z",
+                "count": 1,
                 "vulnerabilities": [
                     {
                         "cveID": "CVE-2026-109618",
@@ -139,7 +146,7 @@ workloads:
 
     def test_critical_chain_with_side_effect_conflict(self):
         from triage_agent.chain.feeds import ThreatFeedClient
-        feed_client = ThreatFeedClient()
+        feed_client = ThreatFeedClient(cache_dir=self.cache_dir, history_path=self.work_dir / "epss_history.json")
         feed_results = feed_client.analyze_cves(["CVE-2026-109618"], offline=True)
 
         env = load_environment_definition(str(self.env_yaml))
@@ -186,7 +193,10 @@ workloads:
             "critical_chain",
             "--dry-run",
         ]
-        proc = subprocess.run(cmd, capture_output=True, text=True)
+        # Run in the test directory so the CLI's relative paths (cache, report) never touch the repository.
+        repo_src = str(Path(__file__).resolve().parents[1] / "src")
+        env = {**os.environ, "PYTHONPATH": repo_src + os.pathsep + os.environ.get("PYTHONPATH", "")}
+        proc = subprocess.run(cmd, capture_output=True, text=True, cwd=self.work_dir, env=env)
         self.assertEqual(proc.returncode, 2)
         self.assertIn("CRITICAL ALERT", proc.stdout)
         self.assertIn("CI/CD ガードレール違反", proc.stdout)

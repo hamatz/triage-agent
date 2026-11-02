@@ -305,7 +305,10 @@ class TestCliKernelAuto(unittest.TestCase):
             work = Path(d)
             cache = work / "triage-output" / "cache"
             _seed_alas_cache(cache)
-            (cache / "cisa_kev_catalog.json").write_text(json.dumps({"vulnerabilities": [{"cveID": "CVE-2026-72402"}]}), encoding="utf-8")
+            (cache / "cisa_kev_catalog.json").write_text(json.dumps({
+                "catalogVersion": "2026.11.01", "dateReleased": "2026-11-01T00:00:00.000Z", "count": 1,
+                "vulnerabilities": [{"cveID": "CVE-2026-72402"}],
+            }), encoding="utf-8")
             (work / "env.yaml").write_text(
                 'environment: "t"\nnode_pools:\n  - id: "al23"\n    nodes_count: 1\nworkloads:\n'
                 '  - id: "ci"\n    exposure: "untrusted_code"\n    node_pool_id: "al23"\n',
@@ -332,6 +335,8 @@ class TestCliKernelAuto(unittest.TestCase):
             # Offline: EPSS is not queried, and the report says the tiering is incomplete.
             self.assertIn("EPSS を取得できなかったため", report)
             self.assertNotIn("updateinfo を取得できませんでした", report)
+            # The KEV catalog actually used is disclosed.
+            self.assertIn("使用した CISA KEV カタログ: 版 `2026.11.01`", report)
 
 
 if __name__ == "__main__":

@@ -302,16 +302,20 @@ class TestCleanComponentVerification(unittest.TestCase):
         )
 
         csv_file = self.code_dir / "axios_checklist.csv"
-        _, _, dist_id = export_checklist_csv(
-            report,
-            output_path=str(csv_file),
-            target_product="axios",
-        )
+        # export_checklist_csv records to triage-output/workflow_metrics.json relative to the working
+        # directory. Run it inside the test directory so the real metrics (used for trial reports)
+        # never receive test events.
+        import contextlib
+        with contextlib.chdir(self.code_dir):
+            _, _, dist_id = export_checklist_csv(
+                report,
+                output_path=str(csv_file),
+                target_product="axios",
+            )
 
-        # Inspect generated workflow metric
-        from triage_agent.tools.vendor_workflow import get_workflow_metrics
-        # Metrics file is triage-output/workflow_metrics.json by default in export_checklist_csv
-        metrics = get_workflow_metrics()
+            # Inspect generated workflow metric
+            from triage_agent.tools.vendor_workflow import get_workflow_metrics
+            metrics = get_workflow_metrics()
         dist_entry = metrics.get("distributions", {}).get(dist_id)
         self.assertIsNotNone(dist_entry)
         self.assertEqual(dist_entry["announced_at"], "2026-10-28")

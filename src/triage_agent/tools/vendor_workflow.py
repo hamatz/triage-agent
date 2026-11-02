@@ -358,10 +358,19 @@ def import_vendor_checklist(
     return len(new_attestations), target_audit_path, summary_info
 
 
-def record_workflow_event(event_type: str, details: Dict[str, Any], metrics_file: str = "triage-output/workflow_metrics.json") -> None:
+DEFAULT_WORKFLOW_METRICS_FILE = "triage-output/workflow_metrics.json"
+
+
+def _resolve_metrics_file(metrics_file: Optional[str]) -> str:
+    """Explicit path > TRIAGE_WORKFLOW_METRICS_FILE environment variable > triage-output default."""
+    return metrics_file or os.environ.get("TRIAGE_WORKFLOW_METRICS_FILE") or DEFAULT_WORKFLOW_METRICS_FILE
+
+
+def record_workflow_event(event_type: str, details: Dict[str, Any], metrics_file: Optional[str] = None) -> None:
     """Record lifecycle metrics event to track timeline T(-1) to T(4), turnaround, and off-hours (v0.3.1)."""
     from triage_agent.tools.lifecycle_metrics import calculate_case_metrics, is_off_hours_jst
 
+    metrics_file = _resolve_metrics_file(metrics_file)
     p = Path(metrics_file).resolve()
     p.parent.mkdir(parents=True, exist_ok=True)
 
@@ -479,8 +488,9 @@ def record_workflow_event(event_type: str, details: Dict[str, Any], metrics_file
     p.write_text(json.dumps(metrics, indent=2, ensure_ascii=False), encoding="utf-8")
 
 
-def get_workflow_metrics(metrics_file: str = "triage-output/workflow_metrics.json") -> Dict[str, Any]:
+def get_workflow_metrics(metrics_file: Optional[str] = None) -> Dict[str, Any]:
     """Retrieve current workflow metrics summary and distribution breakdowns."""
+    metrics_file = _resolve_metrics_file(metrics_file)
     p = Path(metrics_file).resolve()
     if not p.exists():
         return {
@@ -502,9 +512,10 @@ def record_remediation_completed(
     distribution_id: str,
     remediated_at: Optional[str] = None,
     note: Optional[str] = None,
-    metrics_file: str = "triage-output/workflow_metrics.json",
+    metrics_file: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Manually record T4 remediation / patch deployment completion timestamp for a distribution ID (ADR-019 / v0.3.1)."""
+    metrics_file = _resolve_metrics_file(metrics_file)
     p = Path(metrics_file).resolve()
     if not p.exists():
         raise FileNotFoundError(f"Workflow metrics file not found: {metrics_file}")
