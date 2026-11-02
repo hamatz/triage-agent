@@ -6,7 +6,7 @@ OS/Kernel-layer Privilege Escalation (LPE) vulnerabilities across shared-kernel 
 
 import json
 import re
-from datetime import date
+from datetime import date, datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -20,6 +20,8 @@ from triage_agent.chain.models import (
     KernelVulnerabilityEntry,
     NodePoolDefinition,
     NodeTelemetry,
+    PoolCoverage,
+    TelemetryLoadIssue,
     WorkloadDefinition,
 )
 from triage_agent.chain.version_parser import is_kernel_package_vulnerable
@@ -87,6 +89,7 @@ def audit_exploit_chains(
     today_str = evaluation_date or date.today().isoformat()
     telemetry_map = telemetry_by_pool or {}
     pool_map: Dict[str, NodePoolDefinition] = {p.pool_id: p for p in environment.node_pools}
+    coverage_map = build_pool_coverage(environment, telemetry_map)
 
     # Group workloads by node pool for blast radius calculation
     workloads_by_pool: Dict[str, List[WorkloadDefinition]] = {}
@@ -163,6 +166,7 @@ def audit_exploit_chains(
                 eff_pkg = pool_telemetry.kernel_package_name or "linux"
                 eff_flavor = pool_telemetry.kernel_flavor or "unknown"
                 eff_version = pool_telemetry.kernel_package_version
+                # Partial coverage (ADR-021 decision 4) is handled below: it never yields SAFE or MITIGATED.
                 is_telemetry_grounded = True
             else:
                 eff_distro = pool.os_distribution or "ubuntu"
@@ -189,15 +193,29 @@ def audit_exploit_chains(
                     fixed_version=range_info.fixed_version,
                 )
 
+            pool_cov = coverage_map.get(pool.pool_id)
+            is_partial_telemetry = bool(pool_telemetry and pool_cov and pool_cov.is_known_incomplete)
+            if is_partial_telemetry:
+                grounding_note = f"・実機テレメトリは一部のノードのみ（{pool_cov.describe()}）"
+            elif pool_telemetry:
+                grounding_note = f"・実機テレメトリ確認済み（{pool_cov.describe() if pool_cov else '台数不明'}）"
+            else:
+                grounding_note = "・構成定義上（実機未確認）"
+
             # Fail-safe: Missing version, unknown flavor, or indeterminate comparison defaults to vulnerable!
             if is_vuln is None:
                 is_vuln = True
                 kernel_status = f"要確認 (該当の可能性あり⚠️: {match_exp} / 現行: {eff_version or '未確定'})"
+            elif is_vuln is False and is_partial_telemetry:
+                # Collected nodes are patched, but uncollected nodes may still run a vulnerable kernel.
+                is_vuln = True
+                kernel_status = (
+                    f"要確認 (該当の可能性あり⚠️: 収集済みノードはパッケージ版 {eff_version} で修正済みですが、"
+                    f"未収集のノードがあります{grounding_note})"
+                )
             elif is_vuln is False:
-                grounding_note = "・実機テレメトリ確認済み" if is_telemetry_grounded else "・構成定義上（実機未確認）"
                 kernel_status = f"NO (修正済み: {k_entry.cve_id}・パッケージ版 {eff_version}・{today_str}確認・{match_exp}{grounding_note})"
             else:
-                grounding_note = "・実機テレメトリ確認済み" if is_telemetry_grounded else "・構成定義上（実機未確認）"
                 kernel_status = f"YES (脆弱性該当: {k_entry.cve_id}・パッケージ版 {eff_version} < 修正版 {range_info.fixed_version}・{match_exp}{grounding_note})"
 
             if not is_vuln:
@@ -230,6 +248,18 @@ def audit_exploit_chains(
             )
 
             is_mitigated = mitigation_res["is_mitigated"]
+            if is_mitigated and is_partial_telemetry:
+                # The mitigation is confirmed only on collected nodes; uncollected nodes are unknown.
+                is_mitigated = False
+                mitigation_res = {
+                    **mitigation_res,
+                    "is_mitigated": False,
+                    "status": "UNVERIFIED_PARTIAL_COVERAGE",
+                    "reasoning": (
+                        f"収集済みのノードでは緩和策を確認できましたが、未収集のノードがあるためプール全体では未確認です"
+                        f"（{pool_cov.describe()}）。全ノードのテレメトリを収集してください。"
+                    ),
+                }
             mitigation_status_str = f"{mitigation_res['status']}: {mitigation_res['reasoning']}"
 
             # Step 3: Chain Level Evaluation (Q3)
@@ -421,9 +451,23 @@ def load_environment_definition(path_or_str: str) -> EnvironmentDefinition:
         pool_id = item.get("pool_id") or item.get("id") or "default-pool"
         os_dist = item.get("os_distribution") or item.get("os_distro") or "ubuntu"
         os_rel = str(item.get("os_release") or item.get("release") or "")
-        k_pkg = item.get("kernel_package_name") or item.get("kernel_package") or "linux-image-generic"
+        # Legacy key 'kernel_package' was read as BOTH name and version. Disambiguate it:
+        # a value starting with a digit is a package version (e.g. '6.8.0-40.40'), otherwise a package name.
+        legacy_pkg = item.get("kernel_package")
+        legacy_is_version = isinstance(legacy_pkg, str) and legacy_pkg[:1].isdigit()
+        k_pkg = (
+            item.get("kernel_package_name")
+            or (legacy_pkg if legacy_pkg and not legacy_is_version else None)
+            or "linux-image-generic"
+        )
         k_flavor = item.get("kernel_flavor") or item.get("flavor")
-        pkg_ver = item.get("kernel_package_version") or item.get("kernel_package")
+        pkg_ver = item.get("kernel_package_version") or (legacy_pkg if legacy_is_version else None)
+        if isinstance(item.get("nodes"), list):
+            expected_nodes: Optional[int] = len(item["nodes"])
+        elif item.get("nodes_count") is not None:
+            expected_nodes = int(item["nodes_count"])
+        else:
+            expected_nodes = None
         node_pools.append(
             NodePoolDefinition(
                 pool_id=pool_id,
@@ -434,7 +478,7 @@ def load_environment_definition(path_or_str: str) -> EnvironmentDefinition:
                 kernel_package_version=pkg_ver,
                 kernel_release=item.get("kernel_release"),
                 livepatch_active=item.get("livepatch_active", False),
-                nodes_count=len(item.get("nodes", [])) if "nodes" in item else item.get("nodes_count", 1),
+                nodes_count=expected_nodes,
             )
         )
 
@@ -575,7 +619,17 @@ def _aggregate_pool_telemetries(nodes: List[NodeTelemetry]) -> NodeTelemetry:
     livepatch_sets = [set(n.livepatch_modules or []) for n in nodes]
     common_livepatch = list(set.intersection(*livepatch_sets)) if livepatch_sets else []
 
+    # Collection provenance: oldest timestamp wins; any unknown timestamp makes the pool's freshness unknown.
+    collected = [n.oldest_collected_at for n in nodes]
+    oldest_collected = None if any(c is None for c in collected) else min(collected)
+    all_node_ids = [nid for n in nodes for nid in (n.node_ids or [])]
+    expected_counts = [n.expected_nodes_count for n in nodes if n.expected_nodes_count is not None]
+
     return NodeTelemetry(
+        node_ids=all_node_ids,
+        observed_nodes_count=sum(n.observed_nodes_count for n in nodes),
+        oldest_collected_at=oldest_collected,
+        expected_nodes_count=max(expected_counts) if expected_counts else None,
         pool_id=pool_id,
         os_distribution=eff_distro,
         os_release=eff_release,
@@ -592,64 +646,257 @@ def _aggregate_pool_telemetries(nodes: List[NodeTelemetry]) -> NodeTelemetry:
     )
 
 
-def load_node_telemetries(path_or_str: str) -> Dict[str, NodeTelemetry]:
-    """Load NodeTelemetry objects from a JSON file or a directory of JSON files."""
-    import json
-    from pathlib import Path
+# Placeholder node_id emitted by the v0.4 collector for every host; cannot be used to de-duplicate.
+_LEGACY_ANONYMOUS_NODE_IDS = {"", "anonymized-node", "unknown-node", "unidentified-node"}
+COLLECTION_MANIFEST_KIND = "collection_manifest"
+DEFAULT_TELEMETRY_MAX_AGE_DAYS = 7
 
+
+def _parse_iso_utc(value: Any) -> Optional[datetime]:
+    """Parse an ISO 8601 timestamp (e.g. '2026-11-02T01:23:45Z') into an aware UTC datetime."""
+    if not value or not isinstance(value, str):
+        return None
+    try:
+        dt = datetime.fromisoformat(value.strip().replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(timezone.utc)
+
+
+def _parse_disabled_modules(modprobe_lines: List[str]) -> List[str]:
+    """Extract module names disabled by modprobe config lines.
+
+    Recognized forms (same semantics as v0.4, but no longer limited to esp4/esp6/rxrpc):
+      - 'install <module> /bin/false'
+      - 'blacklist <module>'
+    """
+    disabled: List[str] = []
+    for line in modprobe_lines or []:
+        tokens = str(line).split()
+        if len(tokens) < 2:
+            continue
+        directive, module = tokens[0].lower(), tokens[1].lower()
+        if directive == "blacklist" or (directive == "install" and "/bin/false" in line):
+            if module not in disabled:
+                disabled.append(module)
+    return disabled
+
+
+def load_node_telemetries_with_report(
+    path_or_str: str,
+    max_age_days: Optional[int] = DEFAULT_TELEMETRY_MAX_AGE_DAYS,
+    now: Optional[datetime] = None,
+) -> Tuple[Dict[str, NodeTelemetry], List[TelemetryLoadIssue]]:
+    """Load node telemetry files (a file or a directory tree) and aggregate them per pool.
+
+    ADR-021 decision 4 / 5:
+    - Records without a pool_id are rejected (v0.4 silently fell back to node_id, which merged every
+      anonymized host into one bogus pool).
+    - Records older than ``max_age_days`` are excluded from the evidence (None or 0 disables the check).
+    - Records with the same stable node_id are de-duplicated (the newest wins).
+    - ``collection_manifest`` JSON files declare the expected node set of a pool.
+    Returns (telemetry_by_pool, issues). Issues are never silently dropped.
+    """
     p = Path(path_or_str)
+    issues: List[TelemetryLoadIssue] = []
     if not p.exists():
-        return {}
+        issues.append(TelemetryLoadIssue(severity="warning", source=str(p), message="テレメトリのパスが存在しません"))
+        return {}, issues
 
-    nodes_by_pool: Dict[str, List[NodeTelemetry]] = {}
+    now_utc = now or datetime.now(timezone.utc)
+    files = [p] if p.is_file() else sorted(p.rglob("*.json"))
 
-    def _parse_telemetry_file(fpath: Path) -> Optional[NodeTelemetry]:
+    # pool_id -> node key -> (collected_at datetime or None, telemetry)
+    records: Dict[str, Dict[str, Tuple[Optional[datetime], NodeTelemetry]]] = {}
+    manifest_expected: Dict[str, int] = {}
+
+    for fpath in files:
         try:
             with open(fpath, "r", encoding="utf-8") as f:
                 data = json.load(f)
-            # Handle field mapping from collect_kernel_telemetry.sh
-            pool_id = data.get("pool_id") or data.get("node_pool_id") or data.get("node_id") or fpath.stem
-            modprobe_cfg = data.get("modprobe_config", [])
-            disabled = []
-            for line in modprobe_cfg:
-                if "/bin/false" in line or "blacklist" in line:
-                    for mod in ["esp4", "esp6", "rxrpc"]:
-                        if mod in line and mod not in disabled:
-                            disabled.append(mod)
+        except Exception as e:
+            issues.append(TelemetryLoadIssue(severity="warning", source=str(fpath), message=f"JSON として読めないため除外しました（{e}）"))
+            continue
+        if not isinstance(data, dict):
+            issues.append(TelemetryLoadIssue(severity="warning", source=str(fpath), message="形式が不正なため除外しました（JSON オブジェクトではありません）"))
+            continue
 
-            return NodeTelemetry(
-                pool_id=pool_id,
-                os_distribution=data.get("os_distribution") or data.get("os_distro"),
-                os_release=str(data.get("os_release")) if data.get("os_release") else None,
-                kernel_package_name=data.get("kernel_package_name") or data.get("package_name"),
-                kernel_flavor=data.get("kernel_flavor") or data.get("flavor"),
-                kernel_package_version=data.get("distro_package_version") or data.get("kernel_package_version"),
-                kernel_release=data.get("kernel_release"),
-                loaded_modules=data.get("loaded_modules", []),
-                builtin_modules=data.get("builtin_modules", []),
-                modprobe_disabled_modules=disabled,
-                active_services=data.get("active_services", []),
-                xfrm_active=bool(data.get("xfrm_active", False)),
-                livepatch_modules=data.get("livepatch_modules", []),
-            )
-        except Exception:
-            return None
+        # Collection manifest: declares which nodes the collector targeted for a pool.
+        if data.get("kind") == COLLECTION_MANIFEST_KIND:
+            m_pool = data.get("pool_id")
+            targets = data.get("targets")
+            if not m_pool or not isinstance(targets, list):
+                issues.append(TelemetryLoadIssue(severity="warning", source=str(fpath), message="収集マニフェストに pool_id または targets がないため無視しました"))
+                continue
+            manifest_expected[m_pool] = max(manifest_expected.get(m_pool, 0), len(set(map(str, targets))))
+            failed = [str(t) for t in (data.get("failed") or []) + (data.get("unreachable") or [])]
+            if failed:
+                issues.append(TelemetryLoadIssue(
+                    severity="warning", source=str(fpath),
+                    message=f"プール {m_pool}: 収集に失敗した、または届かなかったノードが {len(failed)} 台あります",
+                ))
+            continue
 
-    if p.is_file():
-        t = _parse_telemetry_file(p)
-        if t:
-            nodes_by_pool.setdefault(t.pool_id, []).append(t)
-    elif p.is_dir():
-        for json_file in sorted(p.glob("*.json")):
-            t = _parse_telemetry_file(json_file)
-            if t:
-                nodes_by_pool.setdefault(t.pool_id, []).append(t)
+        pool_id = data.get("pool_id") or data.get("node_pool_id")
+        if not pool_id:
+            issues.append(TelemetryLoadIssue(
+                severity="warning", source=str(fpath),
+                message="pool_id がないため除外しました（収集スクリプトに -p <プールID> を指定してください）",
+            ))
+            continue
+
+        collected_at = _parse_iso_utc(data.get("collected_at"))
+        if collected_at is not None and max_age_days:
+            age_days = (now_utc - collected_at).total_seconds() / 86400
+            if age_days > max_age_days:
+                issues.append(TelemetryLoadIssue(
+                    severity="warning", source=str(fpath),
+                    message=f"プール {pool_id}: 収集から {age_days:.1f} 日経過しており、許容日数（{max_age_days} 日）を超えるため根拠から除外しました",
+                ))
+                continue
+        elif collected_at is None:
+            issues.append(TelemetryLoadIssue(
+                severity="info", source=str(fpath),
+                message=f"プール {pool_id}: collected_at がないため、鮮度を確認できません",
+            ))
+
+        raw_node_id = str(data.get("node_id") or "").strip()
+        is_anonymous = raw_node_id.lower() in _LEGACY_ANONYMOUS_NODE_IDS
+        # Legacy anonymized records cannot be de-duplicated; key them by file so each counts once.
+        node_key = f"file:{fpath}" if is_anonymous else raw_node_id
+
+        livepatch = data.get("livepatch_modules")
+        if not isinstance(livepatch, list):
+            livepatch = []
+
+        telemetry = NodeTelemetry(
+            pool_id=pool_id,
+            os_distribution=data.get("os_distribution") or data.get("os_distro"),
+            os_release=str(data.get("os_release")) if data.get("os_release") else None,
+            kernel_package_name=data.get("kernel_package_name") or data.get("package_name"),
+            kernel_flavor=data.get("kernel_flavor") or data.get("flavor"),
+            kernel_package_version=data.get("distro_package_version") or data.get("kernel_package_version"),
+            kernel_release=data.get("kernel_release"),
+            loaded_modules=data.get("loaded_modules", []),
+            builtin_modules=data.get("builtin_modules", []),
+            modprobe_disabled_modules=(
+                data.get("modprobe_disabled_modules")
+                if isinstance(data.get("modprobe_disabled_modules"), list)
+                else _parse_disabled_modules(data.get("modprobe_config", []))
+            ),
+            active_services=data.get("active_services", []),
+            xfrm_active=bool(data.get("xfrm_active", False)),
+            livepatch_modules=livepatch,
+            node_ids=[] if is_anonymous else [raw_node_id],
+            observed_nodes_count=1,
+            oldest_collected_at=collected_at.strftime("%Y-%m-%dT%H:%M:%SZ") if collected_at else None,
+        )
+
+        pool_records = records.setdefault(pool_id, {})
+        previous = pool_records.get(node_key)
+        if previous is not None:
+            prev_at = previous[0]
+            issues.append(TelemetryLoadIssue(
+                severity="info", source=str(fpath),
+                message=f"プール {pool_id}: 同じノード（{raw_node_id}）のテレメトリが複数あるため、新しい方を採用しました",
+            ))
+            # Keep the newer record; on unknown timestamps keep the first one seen (deterministic by sorted path).
+            if prev_at is None or collected_at is None or collected_at <= prev_at:
+                continue
+        pool_records[node_key] = (collected_at, telemetry)
 
     telemetries: Dict[str, NodeTelemetry] = {}
-    for pool_id, nodes in nodes_by_pool.items():
-        telemetries[pool_id] = _aggregate_pool_telemetries(nodes)
+    for pool_id, pool_records in records.items():
+        nodes = [t for _, t in pool_records.values()]
+        agg = _aggregate_pool_telemetries(nodes)
+        if pool_id in manifest_expected:
+            agg.expected_nodes_count = manifest_expected[pool_id]
+        telemetries[pool_id] = agg
 
+    for m_pool in manifest_expected:
+        if m_pool not in telemetries:
+            issues.append(TelemetryLoadIssue(
+                severity="warning", source=m_pool,
+                message=f"プール {m_pool}: 収集マニフェストはありますが、有効なテレメトリが 1 件もありません",
+            ))
+
+    return telemetries, issues
+
+
+def load_node_telemetries(
+    path_or_str: str,
+    max_age_days: Optional[int] = None,
+) -> Dict[str, NodeTelemetry]:
+    """Load NodeTelemetry objects from a JSON file or a directory of JSON files.
+
+    Backward-compatible wrapper: freshness is not enforced unless ``max_age_days`` is given.
+    Use ``load_node_telemetries_with_report`` to also receive the load issues.
+    """
+    telemetries, _ = load_node_telemetries_with_report(path_or_str, max_age_days=max_age_days)
     return telemetries
+
+
+def build_pool_coverage(
+    environment: EnvironmentDefinition,
+    telemetries: Optional[Dict[str, NodeTelemetry]],
+) -> Dict[str, PoolCoverage]:
+    """Compute per-pool telemetry coverage (observed vs expected nodes) for every known pool."""
+    telemetry_map = telemetries or {}
+    pool_ids: List[str] = [p.pool_id for p in environment.node_pools]
+    for wl in environment.workloads:
+        if wl.node_pool not in pool_ids:
+            pool_ids.append(wl.node_pool)
+    known_ids = set(pool_ids)
+    for tid in telemetry_map:
+        if tid not in pool_ids:
+            pool_ids.append(tid)
+
+    pool_defs = {p.pool_id: p for p in environment.node_pools}
+    coverage: Dict[str, PoolCoverage] = {}
+    for pid in pool_ids:
+        tel = telemetry_map.get(pid)
+        pool_def = pool_defs.get(pid)
+        if tel is not None and tel.expected_nodes_count is not None:
+            expected, source = tel.expected_nodes_count, "manifest"
+        elif pool_def is not None and pool_def.nodes_count is not None:
+            expected, source = pool_def.nodes_count, "environments.yaml"
+        else:
+            expected, source = None, "unknown"
+        coverage[pid] = PoolCoverage(
+            pool_id=pid,
+            expected_nodes=expected,
+            expected_source=source,
+            observed_nodes=tel.observed_nodes_count if tel else 0,
+            oldest_collected_at=tel.oldest_collected_at if tel else None,
+            has_telemetry=tel is not None,
+            in_environment=pid in known_ids,
+        )
+    return coverage
+
+
+def find_pool_mismatches(
+    environment: EnvironmentDefinition,
+    telemetries: Optional[Dict[str, NodeTelemetry]],
+) -> List[TelemetryLoadIssue]:
+    """Report pools present only in telemetry, and workload pools without any telemetry."""
+    telemetry_ids = set((telemetries or {}).keys())
+    defined_ids = {p.pool_id for p in environment.node_pools}
+    workload_pools = {wl.node_pool for wl in environment.workloads}
+    issues: List[TelemetryLoadIssue] = []
+    for tid in sorted(telemetry_ids - defined_ids - workload_pools):
+        issues.append(TelemetryLoadIssue(
+            severity="warning", source=tid,
+            message=f"プール {tid}: テレメトリはありますが環境定義にないため、評価に使われていません（-p の値と environments.yaml の id を確認してください）",
+        ))
+    if telemetry_ids:
+        for pid in sorted(workload_pools - telemetry_ids):
+            issues.append(TelemetryLoadIssue(
+                severity="warning", source=pid,
+                message=f"プール {pid}: ワークロードが配置されていますが実機テレメトリがありません（構成定義の値で評価します）",
+            ))
+    return issues
 
 
 def _build_finding(
@@ -767,6 +1014,8 @@ def format_chain_audit_markdown(
     items: List[ChainAuditItem],
     environment_name: str = "Production",
     feed_results: Optional[Dict[str, Any]] = None,
+    coverage: Optional[Dict[str, PoolCoverage]] = None,
+    load_issues: Optional[List[TelemetryLoadIssue]] = None,
 ) -> str:
     """Format Exploit Chain audit results into enterprise-ready Markdown report."""
     lines = [
@@ -797,6 +1046,46 @@ def format_chain_audit_markdown(
                 "> ※ データ取得に失敗した脆弱性は安全側に倒し「足場分類不能・要人手確認」として扱っています。",
                 "",
             ])
+
+    if coverage:
+        lines.extend([
+            "## 🛰️ 実機テレメトリの収集状況",
+            "",
+            "> 期待ノード数に満たないプールでは、未収集のノードに古いカーネルが残っている可能性があるため、",
+            "> 「修正済み（SAFE）」「緩和済み」と判定しません（ADR-021）。",
+            "",
+            "| ノードプール | 収集台数 | 期待ノード数の出典 | 最も古い収集日時 (UTC) | 状態 |",
+            "| :--- | :--- | :--- | :--- | :--- |",
+        ])
+        source_label = {"manifest": "収集マニフェスト", "environments.yaml": "環境定義", "unknown": "不明"}
+        for pid in sorted(coverage):
+            cov = coverage[pid]
+            if not cov.in_environment:
+                state = "⚠️ 環境定義にないプール（評価に使われていません）"
+            elif not cov.has_telemetry:
+                state = "ℹ️ 実機テレメトリなし（構成定義の値で評価）"
+            elif cov.is_known_incomplete:
+                state = "⚠️ 一部のノードのみ（SAFE / 緩和済みを出しません）"
+            elif cov.expected_nodes is None:
+                state = "❓ 期待ノード数不明（環境定義に nodes を記載してください）"
+            else:
+                state = "✅ 全ノード収集済み"
+            lines.append(
+                f"| `{pid}` | {cov.describe()} | {source_label.get(cov.expected_source, cov.expected_source)} "
+                f"| {cov.oldest_collected_at or '不明'} | {state} |"
+            )
+        lines.append("")
+
+    warn_issues = [i for i in (load_issues or []) if i.severity == "warning"]
+    if warn_issues:
+        lines.extend([
+            "### ⚠️ テレメトリ読み込み時の注意（除外・不一致）",
+            "",
+        ])
+        for issue in warn_issues:
+            suffix = f"（`{Path(issue.source).name}`）" if issue.source.endswith(".json") else ""
+            lines.append(f"- {issue.message}{suffix}")
+        lines.append("")
 
     lines.extend([
         "## 📊 監査サマリ・総合判定",

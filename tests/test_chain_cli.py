@@ -48,7 +48,8 @@ workloads:
         self.telemetry_json = self.work_dir / "telemetry_edge.json"
         self.telemetry_json.write_text(
             json.dumps({
-                "node_id": "pool-edge",
+                "node_id": "node-edge-01",
+                "pool_id": "pool-edge",
                 "distro_package_version": "6.8.0-40.40",
                 "loaded_modules": [],
                 "builtin_modules": [],

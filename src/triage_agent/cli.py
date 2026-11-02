@@ -133,9 +133,11 @@ def run_chain_audit_flow(args, console: Console, triage_report: Optional[Any] = 
     """Execute the Exploit Chain & Linux Kernel Exposure audit (v0.4.0)."""
     import re
     from triage_agent.chain.engine import (
+        build_pool_coverage,
+        find_pool_mismatches,
         format_chain_audit_markdown,
         load_environment_definition,
-        load_node_telemetries,
+        load_node_telemetries_with_report,
         run_exploit_chain_audit,
     )
     from triage_agent.chain.feeds import ThreatFeedClient
@@ -165,15 +167,32 @@ def run_chain_audit_flow(args, console: Console, triage_report: Optional[Any] = 
     env_def = load_environment_definition(env_path)
 
     telemetries = {}
-    if args.telemetry:
-        telemetries = load_node_telemetries(args.telemetry)
-        console.print(f"ℹ️ 実機ノードテレメトリを読み込みました: [cyan]{len(telemetries)} ノード[/cyan]")
-    else:
-        # Check standard output directory
-        std_telemetry_dir = Path("triage-output/telemetry")
-        if std_telemetry_dir.exists():
-            telemetries = load_node_telemetries(std_telemetry_dir)
-            console.print(f"ℹ️ 標準ディレクトリ（triage-output/telemetry）からテレメトリを読み込みました: [cyan]{len(telemetries)} ノード[/cyan]")
+    telemetry_issues = []
+    max_age = getattr(args, "telemetry_max_age", 7)
+    telemetry_source = args.telemetry
+    if not telemetry_source and Path("triage-output/telemetry").exists():
+        telemetry_source = "triage-output/telemetry"
+    if telemetry_source:
+        telemetries, telemetry_issues = load_node_telemetries_with_report(
+            str(telemetry_source), max_age_days=max_age if max_age and max_age > 0 else None
+        )
+        total_nodes = sum(t.observed_nodes_count for t in telemetries.values())
+        console.print(
+            f"ℹ️ 実機ノードテレメトリを読み込みました（{telemetry_source}）: "
+            f"[cyan]{len(telemetries)} プール / {total_nodes} ノード[/cyan]"
+        )
+    telemetry_issues.extend(find_pool_mismatches(env_def, telemetries))
+    for issue in telemetry_issues:
+        if issue.severity == "warning":
+            suffix = f"（{Path(issue.source).name}）" if issue.source.endswith(".json") else ""
+            console.print(f"[bold yellow]⚠️ テレメトリ: {issue.message}{suffix}[/bold yellow]")
+    pool_coverage = build_pool_coverage(env_def, telemetries)
+    for cov in pool_coverage.values():
+        if cov.is_known_incomplete:
+            console.print(
+                f"[bold yellow]⚠️ プール {cov.pool_id}: 実機テレメトリが一部のノードのみです（{cov.describe()}）。"
+                f"このプールでは SAFE / 緩和済みと判定しません。[/bold yellow]"
+            )
 
     # Build kernel vulnerability targets from external ledger or OSV feed (No synthetic hardcoded entries)
     vulnerabilities: List[KernelVulnerabilityEntry] = []
@@ -257,9 +276,12 @@ def run_chain_audit_flow(args, console: Console, triage_report: Optional[Any] = 
     # Sync with threat feeds (CISA KEV / EPSS sudden jumps)
     feed_client = ThreatFeedClient(epss_jump_threshold=args.epss_threshold)
     target_cves = [v.cve_id for v in vulnerabilities]
+    # Only CVE/GHSA identifiers are sent to external feeds. Component names (which may be internal
+    # package names) must never leave the machine (docs/data-handling.md, ADR-021 decision 5).
+    vuln_id_pattern = re.compile(r"^(CVE-\d{4}-\d{4,7}|GHSA-[\w-]+)$", re.IGNORECASE)
     for wl in env_def.workloads:
-        target_cves.extend(wl.components)
-        target_cves.extend(wl.entry_cves)
+        target_cves.extend(c for c in wl.components if vuln_id_pattern.match(c.strip()))
+        target_cves.extend(c for c in wl.entry_cves if vuln_id_pattern.match(c.strip()))
 
     # Extract CVEs/GHSAs from triage_report notices and checkpoints using regex
     if triage_report and hasattr(triage_report, "notices"):
@@ -318,6 +340,8 @@ def run_chain_audit_flow(args, console: Console, triage_report: Optional[Any] = 
         audit_items,
         environment_name=env_def.environment_name,
         feed_results=feed_results,
+        coverage=pool_coverage,
+        load_issues=telemetry_issues,
     )
     out_path = Path(args.chain_output)
     out_path.parent.mkdir(parents=True, exist_ok=True)
@@ -494,6 +518,12 @@ def main():
         type=str,
         default=None,
         help="Path to node telemetry JSON file or directory containing telemetry files (v0.4.0)",
+    )
+    parser.add_argument(
+        "--telemetry-max-age",
+        type=int,
+        default=7,
+        help="Telemetry older than this many days is excluded from the evidence (default: 7, 0 disables) (ADR-021)",
     )
     parser.add_argument(
         "--chain-audit",

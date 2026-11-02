@@ -4,8 +4,14 @@
 # modprobe configuration, livepatch status, and active networking services (IPsec/xfrm).
 #
 # Usage:
-#   sh collect_kernel_telemetry.sh [-o output.json] [-p pool_id] [-m "esp4 esp6 rxrpc"] [--include-hostname]
-#   If -o is omitted, outputs to stdout.
+#   sh collect_kernel_telemetry.sh -p pool_id [-o output.json] [-m "esp4 esp6 rxrpc"] [-s salt] [--include-hostname]
+#   -p is required: it must match a node pool id in environments.yaml.
+#   If -o is omitted, outputs to stdout (e.g. `ssh host 'sh -s -- -p pool-a' < collect_kernel_telemetry.sh`).
+#
+# Node identity (ADR-021): node_id is an anonymized but stable hash of /etc/machine-id (or the hostname
+# if machine-id is unavailable) and an optional organization salt (-s or TRIAGE_NODE_ID_SALT). The same
+# host always yields the same id, so the audit can count collected nodes and detect duplicates without
+# exposing host names. Use --include-hostname to emit the raw hostname instead.
 
 set -eu
 
@@ -13,6 +19,7 @@ OUTPUT_FILE=""
 POOL_ID=""
 TARGET_MODULES="esp4 esp6 rxrpc"
 INCLUDE_HOSTNAME="false"
+NODE_ID_SALT="${TRIAGE_NODE_ID_SALT:-}"
 
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -28,12 +35,16 @@ while [ $# -gt 0 ]; do
       TARGET_MODULES="$2"
       shift 2
       ;;
+    -s|--salt)
+      NODE_ID_SALT="$2"
+      shift 2
+      ;;
     --include-hostname)
       INCLUDE_HOSTNAME="true"
       shift 1
       ;;
     -h|--help)
-      echo "Usage: $0 [-o output.json] [-p pool_id] [-m \"esp4 esp6 rxrpc\"] [--include-hostname]"
+      echo "Usage: $0 -p pool_id [-o output.json] [-m \"esp4 esp6 rxrpc\"] [-s salt] [--include-hostname]"
       exit 0
       ;;
     *)
@@ -43,13 +54,46 @@ while [ $# -gt 0 ]; do
   esac
 done
 
+if [ -z "${POOL_ID}" ]; then
+  echo "Error: -p <pool_id> is required (it must match a node pool id in environments.yaml)." >&2
+  exit 1
+fi
+
 # Convert space-separated modules to grep regex: (esp4|esp6|rxrpc)
 MODULES_REGEX="$(echo "${TARGET_MODULES}" | tr ' ' '|' | sed 's/^|//;s/|$//')"
+
+hash_sha256() {
+  if command -v sha256sum >/dev/null 2>&1; then
+    sha256sum | awk '{print $1}'
+  elif command -v shasum >/dev/null 2>&1; then
+    shasum -a 256 | awk '{print $1}'
+  elif command -v openssl >/dev/null 2>&1; then
+    openssl dgst -sha256 | awk '{print $NF}'
+  else
+    return 1
+  fi
+}
 
 if [ "${INCLUDE_HOSTNAME}" = "true" ]; then
   NODE_NAME="$(hostname 2>/dev/null || echo 'unknown-node')"
 else
-  NODE_NAME="anonymized-node"
+  HOST_KEY=""
+  if [ -r /etc/machine-id ]; then
+    HOST_KEY="$(tr -d ' \n' < /etc/machine-id 2>/dev/null || true)"
+  fi
+  if [ -z "${HOST_KEY}" ]; then
+    HOST_KEY="$(hostname 2>/dev/null || true)"
+  fi
+  NODE_HASH=""
+  if [ -n "${HOST_KEY}" ]; then
+    NODE_HASH="$(printf '%s:%s' "${NODE_ID_SALT}" "${HOST_KEY}" | hash_sha256 2>/dev/null | cut -c1-12 || true)"
+  fi
+  if [ -n "${NODE_HASH}" ]; then
+    NODE_NAME="node-${NODE_HASH}"
+  else
+    # No hash tool or identity available: the audit counts this file as one node but cannot de-duplicate it.
+    NODE_NAME="anonymized-node"
+  fi
 fi
 
 COLLECTED_AT="$(date -u +"%Y-%m-%dT%H:%M:%SZ" 2>/dev/null || echo '1970-01-01T00:00:00Z')"
@@ -166,8 +210,11 @@ fi
 
 # 8. Livepatch state
 LIVEPATCH_ACTIVE="false"
+LIVEPATCH_MODULES=""
 if [ -d /sys/kernel/livepatch ] && [ "$(ls -A /sys/kernel/livepatch 2>/dev/null)" ]; then
   LIVEPATCH_ACTIVE="true"
+  # Each entry is a loaded livepatch module (e.g. kpatch_..., livepatch_..., lkp_...)
+  LIVEPATCH_MODULES="$(ls -1 /sys/kernel/livepatch 2>/dev/null || true)"
 fi
 
 # Helper to escape JSON strings
@@ -208,7 +255,7 @@ to_json_array() {
 JSON_PAYLOAD=$(cat <<EOF
 {
   "node_id": "$(json_escape "${NODE_NAME}")",
-  "pool_id": $([ -n "${POOL_ID}" ] && printf '"%s"' "$(json_escape "${POOL_ID}")" || printf 'null'),
+  "pool_id": "$(json_escape "${POOL_ID}")",
   "collected_at": "${COLLECTED_AT}",
   "os_distribution": "$(json_escape "${OS_DISTRO}")",
   "os_release": "$(json_escape "${OS_RELEASE}")",
@@ -233,7 +280,8 @@ JSON_PAYLOAD=$(cat <<EOF
   )],
   "active_services": [${ACTIVE_SERVICES}],
   "xfrm_active": ${XFRM_ACTIVE},
-  "livepatch_active": ${LIVEPATCH_ACTIVE}
+  "livepatch_active": ${LIVEPATCH_ACTIVE},
+  "livepatch_modules": $(to_json_array "${LIVEPATCH_MODULES}")
 }
 EOF
 )
