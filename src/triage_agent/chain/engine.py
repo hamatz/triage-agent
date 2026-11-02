@@ -1201,17 +1201,22 @@ def _format_kernel_auto_section(ka: Any) -> List[str]:
             "",
         ])
     lines.extend([
-        "| ノードプール | 系統 | 現行の版 | 層1 | 層2 | 層3 | livepatch で解消 | 層1・2 を解消する版 | 状態 |",
-        "| :--- | :--- | :--- | ---: | ---: | ---: | ---: | :--- | :--- |",
+        "| ノードプール | 系統 | 現行の版 | 層1 | 層2 | 層3 | うち修正版なし | livepatch で解消 | 層1・2 を解消する版 | 状態 |",
+        "| :--- | :--- | :--- | ---: | ---: | ---: | ---: | ---: | :--- | :--- |",
     ])
     for pid in sorted(ka.pools):
         p = ka.pools[pid]
         if p.status == "ok":
             counts = [str(p.tier_counts.get(t, 0)) for t in (1, 2, 3)]
             lp = str(p.livepatched)
-            target = f"`{p.upgrade_target}`" if p.upgrade_target else "—（層1・2 なし）"
+            nofix = str(p.no_fix_available) + ("（層3 は未取得）" if getattr(p, "details_not_fetched", 0) else "")
+            top_no_fix = any(x.tier in (1, 2) and not x.fixed_evr for x in p.exposed)
+            if p.upgrade_target:
+                target = f"`{p.upgrade_target}`" + ("（修正版のないものを除く）" if top_no_fix else "")
+            else:
+                target = "—（修正版なし）" if top_no_fix else "—（層1・2 なし）"
         else:
-            counts, lp, target = ["—", "—", "—"], "—", "—"
+            counts, lp, target, nofix = ["—", "—", "—"], "—", "—", "—"
         state = status_label.get(p.status, p.status)
         if p.reason:
             state += f"：{p.reason}"
@@ -1219,7 +1224,7 @@ def _format_kernel_auto_section(ka: Any) -> List[str]:
             state += "（構成定義上の版で照会）"
         lines.append(
             f"| `{pid}` | {f'`{p.lineage}`' if p.lineage else '—'} | {f'`{p.installed}`' if p.installed else '—'} "
-            f"| {counts[0]} | {counts[1]} | {counts[2]} | {lp} | {target} | {state} |"
+            f"| {counts[0]} | {counts[1]} | {counts[2]} | {nofix} | {lp} | {target} | {state} |"
         )
     lines.append("")
     for pid in sorted(ka.pools):
@@ -1238,7 +1243,8 @@ def _format_kernel_auto_section(ka: Any) -> List[str]:
             epss = f"{x.epss:.3f}" if x.epss is not None else "—"
             adv = ", ".join(x.advisory_ids[:2]) + (" …" if len(x.advisory_ids) > 2 else "")
             link = f"[{adv}]({x.source_url})" if x.source_url.startswith("http") else adv
-            lines.append(f"| `{x.cve_id}` | {x.tier} | {'✓' if x.in_kev else ''} | {epss} | {x.severity} | `{x.fixed_evr}` | {link} |")
+            fixed = f"`{x.fixed_evr}`" if x.fixed_evr else "**修正版なし**"
+            lines.append(f"| `{x.cve_id}` | {x.tier} | {'✓' if x.in_kev else ''} | {epss} | {x.severity} | {fixed} | {link} |")
         if p.tier_counts.get(2, 0) > p.tier2_itemized:
             lines.append("")
             lines.append(

@@ -23,3 +23,17 @@ kernel-livepatch = "https://cdn.amazonlinux.com/al2023/kernel-livepatch/mirrors/
 core = "https://cdn.amazonlinux.com/2/core/latest/x86_64/mirror.list"
 extras-kernel-5-10 = "https://cdn.amazonlinux.com/2/extras/kernel-5.10/latest/x86_64/mirror.list"
 extras-kernel-5-15 = "https://cdn.amazonlinux.com/2/extras/kernel-5.15/latest/x86_64/mirror.list"
+
+[adapters.osv]
+class = "triage_agent.chain.sources.osv:OsvAdapter"
+description = "OSV.dev (distribution kernel records, queried per installed version)"
+distros = ["ubuntu", "debian", "almalinux", "rocky"]
+verified_at = "2026-11-02"
+
+# OSV ecosystem name per os-release ID. {release} = VERSION_ID, {major} = its first component,
+# {lts} = ':LTS' for Ubuntu LTS releases (YY.04 with an even YY), '' otherwise.
+[adapters.osv.ecosystems]
+ubuntu = "Ubuntu:{release}{lts}"
+debian = "Debian:{major}"
+almalinux = "AlmaLinux:{major}"
+rocky = "Rocky Linux:{major}"

@@ -14,7 +14,7 @@ Contract every adapter must honour:
 
 import re
 from dataclasses import dataclass, field
-from typing import List, Optional, Sequence, Set
+from typing import Dict, List, Optional, Sequence, Set
 
 # Common severity scale. Adapters map their distribution's scale onto it.
 SEVERITY_LEVELS = ("critical", "high", "medium", "low", "unknown")
@@ -72,6 +72,12 @@ class KernelAdvisoryFix:
     source_url: str = ""
     retrieved_at: str = ""
     advisory_url: Optional[str] = None
+    # Set by sources that answer "which vulnerabilities affect THIS version" (e.g. OSV version queries):
+    affected_confirmed: bool = False            # the source says the queried version is affected
+    applies_to_versions: Optional[Set[str]] = None   # installed versions the answer is valid for
+    # Fixed version / severity not fetched yet; the core asks the adapter to ``enrich`` the CVEs that
+    # matter (tier 1 and 2), so tens of thousands of large records are never downloaded.
+    details_pending: bool = False
 
 
 @dataclass
@@ -107,9 +113,22 @@ class KernelAdvisoryAdapter:
         """Lineage key for a pool, or None if this adapter cannot identify it precisely."""
         raise NotImplementedError
 
-    def fetch(self, lineages: Set[str], offline: bool = False) -> SourceResult:
-        """Return fixes for the requested lineages (and livepatch fixes when available)."""
+    def fetch(
+        self,
+        lineages: Set[str],
+        offline: bool = False,
+        identities: Optional[Dict[str, List[PoolKernelIdentity]]] = None,
+    ) -> SourceResult:
+        """Return fixes for the requested lineages (and livepatch fixes when available).
+
+        ``identities`` maps each lineage to the pools running it, for sources that are queried per
+        installed version. Sources that publish complete advisory lists may ignore it.
+        """
         raise NotImplementedError
+
+    def enrich(self, fixes: List[KernelAdvisoryFix], offline: bool = False) -> List[str]:
+        """Fill fixed_evr / severity of fixes marked ``details_pending``. Returns error messages."""
+        return []
 
     @staticmethod
     def livepatch_matches(target_kernel: str, running_version: str) -> bool:

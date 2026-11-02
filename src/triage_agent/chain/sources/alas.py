@@ -118,7 +118,7 @@ class AlasAdapter(KernelAdvisoryAdapter):
                 return data_path.read_bytes(), meta
             raise
 
-    def fetch(self, lineages: Set[str], offline: bool = False) -> SourceResult:
+    def fetch(self, lineages: Set[str], offline: bool = False, identities=None) -> SourceResult:
         result = SourceResult(adapter=self.name, retrieved_at=time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()))
         releases = sorted({lk.split(":")[1] for lk in lineages})
         repos: Dict[str, Dict[str, str]] = self.config.get("repos", {})

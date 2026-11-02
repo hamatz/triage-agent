@@ -60,6 +60,8 @@ class PoolAutoSummary:
     tier_counts: Dict[int, int] = field(default_factory=lambda: {1: 0, 2: 0, 3: 0})
     livepatched: int = 0
     indeterminate: int = 0            # version comparison impossible (counted as exposed, tier as signals say)
+    no_fix_available: int = 0         # exposed CVEs for which the distribution has not shipped a fix (where known)
+    details_not_fetched: int = 0      # exposed CVEs whose fixed version was not downloaded (tier 3 only)
     upgrade_target: Optional[str] = None       # resolves every tier 1 and 2 CVE
     all_fixes_target: Optional[str] = None     # resolves every listed CVE
     exposed: List[ExposedCve] = field(default_factory=list)
@@ -185,6 +187,7 @@ def run_kernel_auto(
     # 1) lineage per pool and lineages to fetch per adapter
     pool_lineage: Dict[str, Tuple[PoolKernelIdentity, KernelAdvisoryAdapter, str]] = {}
     wanted: Dict[str, Set[str]] = {}
+    lineage_pools: Dict[str, List[PoolKernelIdentity]] = {}
     adapter_by_name: Dict[str, KernelAdvisoryAdapter] = {}
     for pool_id, (identity, reason) in identities.items():
         if identity is None:
@@ -207,13 +210,16 @@ def run_kernel_auto(
             continue
         pool_lineage[pool_id] = (identity, adapter, lineage)
         wanted.setdefault(adapter.name, set()).add(lineage)
+        lineage_pools.setdefault(lineage, []).append(identity)
         adapter_by_name[adapter.name] = adapter
 
     # 2) fetch once per adapter
     fetched: Dict[str, SourceResult] = {}
     for name, lineages in wanted.items():
         try:
-            fetched[name] = adapter_by_name[name].fetch(lineages, offline=offline)
+            fetched[name] = adapter_by_name[name].fetch(
+                lineages, offline=offline, identities={lk: lineage_pools[lk] for lk in lineages}
+            )
         except Exception as e:  # noqa: BLE001 - disclosed
             fetched[name] = SourceResult(adapter=name, errors=[f"{name}: 照会に失敗しました（{e}）"])
         result.errors.extend(fetched[name].errors)
@@ -239,14 +245,31 @@ def run_kernel_auto(
         lp_index: Dict[str, list] = {}
         for lp in src.livepatch_fixes:
             lp_index.setdefault(lp.cve_id, []).append(lp)
-        candidates = []
+        # One fix per CVE: the earliest fixed version wins ("no fix" only if no record has one).
+        by_cve: Dict[str, KernelAdvisoryFix] = {}
         for fix in src.fixes:
             if fix.lineage != lineage or fix.cve_id in manual:
                 continue
+            if fix.applies_to_versions is not None and identity.version not in fix.applies_to_versions:
+                continue  # version-specific answer obtained for another pool's kernel
+            cur = by_cve.get(fix.cve_id)
+            if cur is None:
+                by_cve[fix.cve_id] = fix
+            elif fix.fixed_evr is not None and (
+                cur.fixed_evr is None
+                or (compare_kernel_versions(identity.distro, fix.fixed_evr, cur.fixed_evr) or 0) < 0
+            ):
+                by_cve[fix.cve_id] = fix
+        candidates = []
+        for fix in by_cve.values():
             if fix.fixed_evr is None:
-                candidates.append((fix, True))
+                # No fixed version known: either the distribution has not fixed it yet, or the details
+                # are fetched later (details_pending). Exposed either way.
+                candidates.append((fix, False))
                 continue
             cmp = compare_kernel_versions(identity.distro, identity.evr, fix.fixed_evr)
+            if fix.affected_confirmed and (cmp is None or cmp >= 0):
+                cmp = -1  # the source already answered for this exact version: trust it
             if cmp is not None and cmp >= 0:
                 continue  # already fixed
             if _is_livepatched(identity, fix.cve_id, lp_index):
@@ -277,12 +300,30 @@ def run_kernel_auto(
                 result.epss_available = False
                 result.errors.append(f"EPSS を取得できませんでした（{e}）。層2の判定が不完全です")
 
+    # 4b) fetch details (fixed version, distribution severity) only for what can reach tier 1 / 2
+    def _signal_tier(fix: KernelAdvisoryFix) -> int:
+        score = (epss.get(fix.cve_id) or {}).get("epss")
+        if fix.cve_id in kev:
+            return 1
+        if (score is not None and score >= epss_threshold) or fix.severity == "critical":
+            return 2
+        return 3
+
+    for name, src in fetched.items():
+        pending = [f for f in src.fixes if f.details_pending and _signal_tier(f) in (1, 2)]
+        if pending:
+            result.errors.extend(adapter_by_name[name].enrich(pending, offline=offline))
+
     # 5) tiers, upgrade targets, entries
     for pool_id, candidates in per_pool_candidates.items():
         identity, adapter, lineage = pool_lineage[pool_id]
         summary = result.pools[pool_id]
         exposed: List[ExposedCve] = []
         for fix, _indeterminate in candidates:
+            if fix.details_pending:
+                summary.details_not_fetched += 1   # tier 3 per-CVE records: fixed version not downloaded
+            elif fix.fixed_evr is None:
+                summary.no_fix_available += 1
             in_kev = fix.cve_id in kev
             score = (epss.get(fix.cve_id) or {}).get("epss")
             if in_kev:
@@ -303,25 +344,28 @@ def run_kernel_auto(
 
         tier2_used = 0
         for x in exposed:
-            if x.tier == 3 or not x.fixed_evr:
+            if x.tier == 3:
                 continue
             if x.tier == 2:
                 if tier2_used >= tier2_limit:
                     continue
                 tier2_used += 1
             fix_src = next(f for f, _ in per_pool_candidates[pool_id] if f.cve_id == x.cve_id)
+            ranges = {}
+            if x.fixed_evr:
+                ranges = {
+                    f"{identity.distro}:{identity.release.lower()}:{identity.engine_flavor}": DistroAffectedRange(
+                        package=identity.package, fixed_version=_engine_fixed_version(identity, x.fixed_evr)
+                    )
+                }
             result.entries.append(KernelVulnerabilityEntry(
                 cve_id=x.cve_id,
-                name=f"{x.cve_id}（{adapter.name} 自動照会・層{x.tier}）",
+                name=f"{x.cve_id}（{adapter.name} 自動照会・層{x.tier}{'・修正版なし' if not x.fixed_evr else ''}）",
                 source_url=x.source_url,
                 retrieved_at=(fix_src.retrieved_at or "")[:10],
                 epss_score=x.epss,
                 cisa_kev=x.in_kev,
-                distro_affected_ranges={
-                    f"{identity.distro}:{identity.release.lower()}:{identity.engine_flavor}": DistroAffectedRange(
-                        package=identity.package, fixed_version=_engine_fixed_version(identity, x.fixed_evr)
-                    )
-                },
+                distro_affected_ranges=ranges,  # no range (no fix yet) => the engine reports 要確認 (exposed)
                 applies_to_pools=[pool_id],
                 auto_tier=x.tier,
                 provenance="auto",

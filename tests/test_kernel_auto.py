@@ -196,7 +196,7 @@ class TestKernelAutoClassification(KernelAutoTestCase):
 
     def test_pools_without_adapter_or_identity_are_disclosed(self):
         tel = {
-            "ubu": _tel("ubu", "ubuntu", "24.04", "linux-image-generic", "linux", "6.8.0-40.40", epoch=None),
+            "ubu": _tel("ubu", "opensuse-leap", "15.6", "kernel-default", "kernel-default", "6.4.0-150600.23.25.1", epoch=None),
             "noversion": NodeTelemetry(pool_id="noversion", os_distribution="amzn", os_release="2023"),
             "k618": _tel("k618", "amzn", "2023", "kernel6.18", "kernel6.18", "6.18.20-41.237.amzn2023"),
         }

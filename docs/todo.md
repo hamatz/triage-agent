@@ -301,7 +301,7 @@ v0.4.0 の連鎖評価を、複数マシンからの収集を前提とした運�
 - [ ] **③ 照会元アダプタの共通契約、OSV と ALAS、3 層分類、プールごとの「この版まで上げれば解消」表示**
   - [x] 事前検証（2026-11-02）: ALAS は AL2023（本体・livepatch）と AL2（本体・Extras 5.10/5.15）の `updateinfo.xml` から CVE・修正版・重大度を取得可能。OSV は Ubuntu/Debian で約 1 万件（大半が修正版なし）、Alma/Rocky は勧告単位で約 100 件。
   - [x] 共通契約（`chain/sources/base.py`）、宣言的な登録表（`chain/kernel_sources.toml`）、ALAS アダプタ、3 層分類、`--kernel-auto`、livepatch による解消の判定。
-  - [ ] OSV アダプタ（Ubuntu / Debian / Alma / Rocky）。件数が多いため、更新日時を使った差分キャッシュを前提にする。
+  - [x] OSV アダプタ（Ubuntu / Debian / Alma / Rocky）。件数は ID で数え、層 1・2 のものだけ詳細を取得。照会結果は 24 時間、レコードは更新日時でキャッシュ。
   - [ ] 層 2 の CVSS シグナル（ALAS には CVE 単位の CVSS がないため、別の情報源で補う）。
 - [ ] **④ スナップショットと昇格ルール、`--fail-on promoted`、`--promote`**
 - [ ] **⑤ RHEL 対応**（OSV の `Red Hat` ecosystem で足りるか、CSAF/VEX が要るかの検証から）
