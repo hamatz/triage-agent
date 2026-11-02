@@ -136,8 +136,8 @@ python -m triage_agent.cli --record-remediation DIST-xxxxxxxx-xxxxxx \
 
 ### 4. 攻撃連鎖を評価する（v0.4.0）
 ```bash
-# 各ノード上で実行（読み取りのみ。ホスト名は --include-hostname を付けたときだけ記録）
-sh scripts/collect_kernel_telemetry.sh -p dmz-pool -o triage-output/telemetry/node01.json
+# プールの全ノードから集める（読み取りのみ。ssh / kubectl / AWS SSM 用の補助スクリプトあり）
+sh scripts/collect/collect_via_ssh.sh -p dmz-pool -H hosts/dmz-pool.txt
 
 # 監査を実行
 python -m triage_agent.cli --chain-audit \
@@ -146,7 +146,7 @@ python -m triage_agent.cli --chain-audit \
   --telemetry triage-output/telemetry/ \
   --chain-output triage-output/chain_audit_report.md
 ```
-環境定義と台帳の見本は [`environments.example.yaml`](environments.example.yaml) と [`exploit_chain_ledger.example.json`](exploit_chain_ledger.example.json) です。詳しくは [docs/exploit-chain.md](docs/exploit-chain.md) を参照してください。
+環境定義と台帳の見本は [`environments.example.yaml`](environments.example.yaml) と [`exploit_chain_ledger.example.json`](exploit_chain_ledger.example.json) です。一部のノードしか集まっていないプールは「修正済み」と判定しません。棚卸しから定期実行までの全体の流れは [docs/exploit-chain.md](docs/exploit-chain.md) を参照してください。
 
 ### 5. CI に組み込む
 ```bash
