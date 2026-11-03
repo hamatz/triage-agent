@@ -34,14 +34,19 @@ jobs:
           pip install --no-deps -e .
 
       - name: Execute Self-Triage Audit
+        id: self_triage
+        # The API key is passed to this step only (not job-wide), so that dependency installation and
+        # third-party actions never see it. Later steps read the execution mode from this step's output.
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
         run: |
           chmod +x ./scripts/self_triage.sh
           if [ -n "${GEMINI_API_KEY:-}" ] || [ "${GOOGLE_GENAI_USE_VERTEXAI:-}" = "true" ]; then
+            echo "mode=live" >> "$GITHUB_OUTPUT"
             echo "🚀 GEMINI_API_KEY / Vertex AI を検出したため、ライブモードで自己診断を実行します。"
             ./scripts/self_triage.sh
           else
+            echo "mode=dry-run" >> "$GITHUB_OUTPUT"
             echo "ℹ️ GEMINI_API_KEY 未設定のため、--dry-run（オフラインシミュレーション）で実行します。"
             ./scripts/self_triage.sh --dry-run
           fi
@@ -49,13 +54,19 @@ jobs:
       - name: Output High-Level Status Summary (ADR-013 Attack Map Prevention)
         # Never output specific file paths or vulnerable call details to public step summaries
         if: always()
+        env:
+          RUN_MODE: ${{ steps.self_triage.outputs.mode }}
         run: |
           echo "## 🛡️ triage-agent Self-Triage Execution Summary" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          if [ -z "${GEMINI_API_KEY:-}" ] && [ "${GOOGLE_GENAI_USE_VERTEXAI:-}" != "true" ]; then
+          if [ "${RUN_MODE}" = "live" ]; then
+            echo "> 🚀 **実行モード:** Live（GEMINI_API_KEY / Vertex AI による推論あり）" >> $GITHUB_STEP_SUMMARY
+          elif [ "${RUN_MODE}" = "dry-run" ]; then
             echo "> ℹ️ **実行モード:** Dry-Run（シミュレーション / APIキー未設定のためオフライン静的解析で疎通確認を実施）" >> $GITHUB_STEP_SUMMARY
-            echo "" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "> ⚠️ **実行モード:** 不明（自己診断のステップが開始前に失敗しました）" >> $GITHUB_STEP_SUMMARY
           fi
+          echo "" >> $GITHUB_STEP_SUMMARY
           if [ -f triage_self_audit.md ]; then
             echo "| 監査メトリクス | 件数 |" >> $GITHUB_STEP_SUMMARY
             echo "| :--- | :--- |" >> $GITHUB_STEP_SUMMARY
