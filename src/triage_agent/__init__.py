@@ -4,7 +4,7 @@ from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 import tomllib
 
-__version__ = "0.5.0"  # fallback; kept in sync with pyproject.toml
+__version__ = "0.5.1"  # fallback; kept in sync with pyproject.toml
 
 # 1. Primary: Dynamic sync with repository pyproject.toml when running from source
 _pyproject_file = Path(__file__).resolve().parent.parent.parent / "pyproject.toml"
