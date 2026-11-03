@@ -135,6 +135,15 @@ python -m triage_agent.cli --record-remediation DIST-xxxxxxxx-xxxxxx \
   --remediated-at 2026-12-02T10:30:00+09:00
 ```
 
+カーネルの脆弱性についても、「同じような脆弱性がうちのサーバーに残っていないか」を開発ベンダーに問い合わせられます。ベンダーに聞くのは各サーバーで動いているカーネルの版だけで、悪用が確認されたもの（CISA KEV）と、このツールが警戒を引き上げたもののうち、何が残っていて、どの版まで上げればよいかはツールが割り出します。テレメトリの収集は要りません。
+
+```bash
+# ベンダーに送る記入表を作る
+python -m triage_agent.cli --kernel-inquiry --kernel-inquiry-target "受注システム 本番"
+# 返ってきた記入表から、残っている脆弱性と更新してほしい版を出す
+python -m triage_agent.cli --kernel-inquiry-answers kernel_inquiry_answered.csv
+```
+
 ### 4. 攻撃連鎖を評価する（v0.4.0 / v0.5.0）
 ```bash
 # プールの全ノードから集める（読み取りのみ。ssh / kubectl / AWS SSM 用の補助スクリプトあり）
