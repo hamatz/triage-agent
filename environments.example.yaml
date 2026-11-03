@@ -40,6 +40,17 @@ node_pools:
     kernel_flavor: "linux"
     shared_kernel: true
 
+  # --kernel-auto（v0.5.0）は、実機テレメトリがあればそちらの版で照会します。テレメトリがないプールは、
+  # ここに書いた os_distro / os_release / kernel_flavor / kernel_package_version で照会します
+  # （RPM 系では epoch も含めて書きます。例: Amazon Linux 2023 は "1:"）。
+  - id: "pool-al2023-batch"
+    nodes: ["node-batch-01", "node-batch-02", "node-batch-03"]
+    os_distro: "amzn"
+    os_release: "2023"
+    kernel_package_version: "1:6.1.100-102.172.amzn2023"
+    kernel_flavor: "kernel"
+    shared_kernel: true
+
 workloads:
   - id: "web-frontend"
     namespace: "frontend"

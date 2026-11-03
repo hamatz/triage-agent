@@ -30,6 +30,7 @@ import xml.etree.ElementTree as ET
 from pathlib import Path
 from typing import Dict, List, Optional, Set, Tuple
 
+from triage_agent import user_agent
 from triage_agent.chain.sources.base import (
     SEVERITY_RANK,
     KernelAdvisoryAdapter,
@@ -75,7 +76,7 @@ class AlasAdapter(KernelAdvisoryAdapter):
 
     # -- fetching ------------------------------------------------------------------------------
     def _http(self, url: str) -> bytes:
-        req = urllib.request.Request(url, headers={"User-Agent": "triage-agent (ADR-021 ALAS adapter)"})
+        req = urllib.request.Request(url, headers={"User-Agent": user_agent("kernel advisories: ALAS")})
         with urllib.request.urlopen(req, timeout=self.timeout) as resp:
             return resp.read()
 

@@ -19,6 +19,8 @@ from typing import Any, Dict, List, Optional, Set
 import urllib.error
 import urllib.request
 
+from triage_agent import user_agent
+
 logger = logging.getLogger(__name__)
 
 CISA_KEV_URL = "https://www.cisa.gov/sites/default/files/feeds/known_exploited_vulnerabilities.json"
@@ -143,7 +145,7 @@ class ThreatFeedClient:
         try:
             req = urllib.request.Request(
                 CISA_KEV_URL,
-                headers={"User-Agent": "triage-agent/0.4.0 (Security Triaging Tool)"},
+                headers={"User-Agent": user_agent("Security Triaging Tool")},
             )
             with urllib.request.urlopen(req, timeout=self.timeout) as resp:
                 if resp.status == 200:
@@ -191,7 +193,7 @@ class ThreatFeedClient:
         try:
             req = urllib.request.Request(
                 url,
-                headers={"User-Agent": "triage-agent/0.4.0 (Security Triaging Tool)"},
+                headers={"User-Agent": user_agent("Security Triaging Tool")},
             )
             with urllib.request.urlopen(req, timeout=self.timeout) as resp:
                 if resp.status == 200:
@@ -267,7 +269,7 @@ class ThreatFeedClient:
             try:
                 req = urllib.request.Request(
                     url,
-                    headers={"User-Agent": "triage-agent/0.4.0 (Security Triaging Tool)"},
+                    headers={"User-Agent": user_agent("Security Triaging Tool")},
                 )
                 with urllib.request.urlopen(req, timeout=self.timeout) as resp:
                     if resp.status == 200:

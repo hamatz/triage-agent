@@ -145,7 +145,7 @@ def run_chain_audit_flow(args, console: Console, triage_report: Optional[Any] = 
 
     console.print(
         Panel.fit(
-            "[bold red]【EXPLOIT CHAIN & KERNEL EXPOSURE AUDIT / 連鎖エクスプロイト監査（v0.4.0）】[/bold red]\n"
+            "[bold red]【EXPLOIT CHAIN & KERNEL EXPOSURE AUDIT / 連鎖エクスプロイト監査（v0.5.0）】[/bold red]\n"
             "「外部露出RCE足場」×「共有カーネルノード上のLPE」によるホスト権限奪取および同居マイクロサービスへの\n"
             "水平展開（Lateral Movement / Blast Radius）リスクを網羅的かつ決定論的に監査します。",
             border_style="red",

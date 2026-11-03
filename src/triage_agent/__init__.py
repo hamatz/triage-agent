@@ -4,7 +4,7 @@ from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 import tomllib
 
-__version__ = "0.4.0"
+__version__ = "0.5.0"  # fallback; kept in sync with pyproject.toml
 
 # 1. Primary: Dynamic sync with repository pyproject.toml when running from source
 _pyproject_file = Path(__file__).resolve().parent.parent.parent / "pyproject.toml"
@@ -23,4 +23,6 @@ else:
         pass
 
 
-
+def user_agent(component: str = "") -> str:
+    """User-Agent for requests to public data sources (identifies the tool and version only)."""
+    return f"triage-agent/{__version__}" + (f" ({component})" if component else "")

@@ -69,6 +69,7 @@ Node.js の事前予告や Oracle Critical Patch Update の日程が、時刻付
 | **パッチの日が、前もって予定表に入る** | Node.js と Tomcat の公式フィードを巡回し、Oracle CPU・Microsoft Patch Tuesday・PostgreSQL の定期日程を計算して、iCalendar（`.ics`）で書き出します |
 | **対応にかかった時間を、数字で説明できる** | 公表から、照会、回答、パッチ適用完了までの時刻と、夜間・休日の対応操作の件数を記録します。比較の基準値は、利用者が用意した出典付きの実測値だけを使います |
 | **「ローカルだから後回し」の危険な組み合わせが見える（v0.4.0）** | 外部公開のワークロードの侵入足場（RCE など）と、同じカーネルを共有するノードの未解消の権限昇格（LPE）を突き合わせ、Critical（48時間以内）として知らせます |
+| **台帳に載っていないカーネルの穴も、横展開で見つかる（v0.5.0）** | 全ノードから集めたカーネルの版をディストリの勧告（Amazon Linux、Ubuntu、Debian、AlmaLinux、Rocky Linux、RHEL）と突き合わせ、未修正の脆弱性を KEV・EPSS・CVSS で層に分けます。前回の実行から危険度が上がったものは層 1 に昇格させて知らせ、プールごとに「この版まで上げれば解消する」版を示します |
 
 ---
 
@@ -134,7 +135,7 @@ python -m triage_agent.cli --record-remediation DIST-xxxxxxxx-xxxxxx \
   --remediated-at 2026-12-02T10:30:00+09:00
 ```
 
-### 4. 攻撃連鎖を評価する（v0.4.0）
+### 4. 攻撃連鎖を評価する（v0.4.0 / v0.5.0）
 ```bash
 # プールの全ノードから集める（読み取りのみ。ssh / kubectl / AWS SSM 用の補助スクリプトあり）
 sh scripts/collect/collect_via_ssh.sh -p dmz-pool -H hosts/dmz-pool.txt
@@ -158,6 +159,11 @@ python -m triage_agent.cli --sbom my_sbom.json --fail-on unscanned,yes
 
 # 攻撃連鎖（Critical）があれば非ゼロで終了
 python -m triage_agent.cli --chain-audit --environments triage-output/environments.yaml --fail-on critical_chain
+
+# 毎日の定期実行: 前回から新たに層 1 になったカーネル脆弱性があっても止める
+# （triage-output/kernel_auto/ は実行の間で保持してください）
+python -m triage_agent.cli --chain-audit --kernel-auto --environments triage-output/environments.yaml \
+  --telemetry triage-output/telemetry/ --fail-on critical_chain,promoted
 ```
 GitHub Actions の例は [`.github/workflows/self-triage.yml`](.github/workflows/self-triage.yml) にあります（triage-agent 自身を毎回診断しています）。
 
@@ -203,6 +209,7 @@ triage-agent の出力（レポート、環境定義、CSV、ノード情報）�
 | **評価セット（見逃しと誤検知の測定）** | [docs/benchmark.md](docs/benchmark.md) |
 | **自己診断（Self-Triage）** | [docs/self-triage.md](docs/self-triage.md) |
 | **設計判断の記録（ADR）** | [docs/decision.md](docs/decision.md) |
+| **変更履歴** | [CHANGELOG.md](CHANGELOG.md) |
 | **今後の予定** | [docs/todo.md](docs/todo.md) |
 
 ---

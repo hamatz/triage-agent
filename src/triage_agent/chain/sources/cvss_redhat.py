@@ -32,6 +32,8 @@ import urllib.request
 from pathlib import Path
 from typing import Dict, Iterable, List, Optional
 
+from triage_agent import user_agent
+
 API = "https://access.redhat.com/hydra/rest/securitydata/cve.json"
 CACHE_TTL_SECONDS = 24 * 3600
 CACHE_SCHEMA = 2
@@ -59,7 +61,7 @@ class RedHatSecurityData:
 
     # -- HTTP + cache -----------------------------------------------------------------------------
     def _http_json(self, url: str):
-        req = urllib.request.Request(url, headers={"User-Agent": "triage-agent (ADR-021 CVSS signal)"})
+        req = urllib.request.Request(url, headers={"User-Agent": user_agent("kernel CVE data: Red Hat")})
         with urllib.request.urlopen(req, timeout=self.timeout) as resp:
             return json.loads(resp.read().decode("utf-8"))
 

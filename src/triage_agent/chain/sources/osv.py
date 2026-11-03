@@ -26,6 +26,7 @@ import urllib.request
 from pathlib import Path
 from typing import Dict, List, Optional, Set, Tuple
 
+from triage_agent import user_agent
 from triage_agent.chain.sources.base import (
     KernelAdvisoryAdapter,
     KernelAdvisoryFix,
@@ -88,7 +89,7 @@ class OsvAdapter(KernelAdvisoryAdapter):
     def _http_json(self, url: str, body: Optional[dict] = None) -> dict:
         data = json.dumps(body).encode() if body is not None else None
         req = urllib.request.Request(url, data=data, headers={
-            "User-Agent": "triage-agent (ADR-021 OSV adapter)",
+            "User-Agent": user_agent("kernel advisories: OSV"),
             **({"Content-Type": "application/json"} if data else {}),
         })
         with urllib.request.urlopen(req, timeout=self.timeout) as resp:
