@@ -6,6 +6,11 @@
 #   - internet_facing: パブリックインターネットからリクエストを直接受信する（Ingress / ALB 直下）
 #   - untrusted_code: ユーザー指定のコードやスクリプトをサンドボックス内で実行する（例: CI runner, コード実行基盤）
 #   - internal_only: 組織内ネットワークまたは VPC 内部からのみアクセス可能なマイクロサービス
+#
+# nodes（または nodes_count）は、プールの「期待ノード数」として使われます（ADR-021）。
+#   実機テレメトリがこの台数に満たないプールでは、未収集のノードに古いカーネルが残っている可能性があるため、
+#   「修正済み（SAFE）」「緩和済み」と判定しません。省略した場合は「期待ノード数不明」とレポートに明記されます。
+#   収集マニフェスト（collection_manifest.json）がある場合は、そちらの台数が優先されます。
 
 version: "1.0"
 environment: "production"
@@ -15,7 +20,7 @@ node_pools:
     nodes: ["node-worker-01", "node-worker-02"]
     os_distro: "ubuntu"
     os_release: "24.04"
-    kernel_package: "6.8.0-40.40"
+    kernel_package_version: "6.8.0-40.40"
     kernel_flavor: "linux"
     shared_kernel: true
 
@@ -23,7 +28,7 @@ node_pools:
     nodes: ["node-worker-03", "node-worker-04"]
     os_distro: "ubuntu"
     os_release: "24.04"
-    kernel_package: "6.8.0-1015.16"
+    kernel_package_version: "6.8.0-1015.16"
     kernel_flavor: "linux-aws"
     shared_kernel: true
 
@@ -31,8 +36,19 @@ node_pools:
     nodes: ["node-worker-05", "node-worker-06"]
     os_distro: "ubuntu"
     os_release: "24.04"
-    kernel_package: "6.8.0-47.47"
+    kernel_package_version: "6.8.0-47.47"
     kernel_flavor: "linux"
+    shared_kernel: true
+
+  # --kernel-auto（v0.5.0）は、実機テレメトリがあればそちらの版で照会します。テレメトリがないプールは、
+  # ここに書いた os_distro / os_release / kernel_flavor / kernel_package_version で照会します
+  # （RPM 系では epoch も含めて書きます。例: Amazon Linux 2023 は "1:"）。
+  - id: "pool-al2023-batch"
+    nodes: ["node-batch-01", "node-batch-02", "node-batch-03"]
+    os_distro: "amzn"
+    os_release: "2023"
+    kernel_package_version: "1:6.1.100-102.172.amzn2023"
+    kernel_flavor: "kernel"
     shared_kernel: true
 
 workloads:

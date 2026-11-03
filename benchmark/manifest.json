@@ -10,7 +10,9 @@
       "target_cve": "CVE-2022-23529",
       "test_type": "code",
       "language": "javascript",
-      "search_keywords": ["verify"],
+      "search_keywords": [
+        "verify"
+      ],
       "expected": "YES",
       "expected_status_display": "YES (本番コード内検出・要実地確認)",
       "expected_evidence_file": "src/auth.js",
@@ -218,7 +220,9 @@
       "id": "chain_php2shell_fragnesia_critical",
       "name": "PHP2Shell + Fragnesia DMZ Critical Chain",
       "workload_exposure": "internet_facing",
-      "entry_cves": ["CVE-2026-109618"],
+      "entry_cves": [
+        "CVE-2026-109618"
+      ],
       "kernel_version": "6.8.0-40.40",
       "fixed_version": "6.8.0-47.47",
       "disabled_modules": [],
@@ -232,7 +236,9 @@
       "id": "chain_ubuntu_aws_flavor_indeterminate",
       "name": "Ubuntu AWS Kernel Flavor Distinction (No False Safe)",
       "workload_exposure": "internet_facing",
-      "entry_cves": ["CVE-2026-109618"],
+      "entry_cves": [
+        "CVE-2026-109618"
+      ],
       "kernel_flavor": "linux-aws",
       "kernel_package_name": "linux-image-6.8.0-1015-aws",
       "kernel_version": "6.8.0-1015.16",
@@ -262,7 +268,9 @@
       "id": "chain_web_fresh_rce_unverified",
       "name": "Web Fresh RCE Before Indexing (Safe-by-default Fallback)",
       "workload_exposure": "internet_facing",
-      "entry_cves": ["CVE-2026-99999"],
+      "entry_cves": [
+        "CVE-2026-99999"
+      ],
       "kernel_version": "6.8.0-40.40",
       "fixed_version": "6.8.0-47.47",
       "disabled_modules": [],
@@ -276,11 +284,19 @@
       "id": "chain_fragnesia_loaded_modules_unmitigated",
       "name": "Fragnesia install /bin/false but module loaded in memory",
       "workload_exposure": "internet_facing",
-      "entry_cves": ["CVE-2026-109618"],
+      "entry_cves": [
+        "CVE-2026-109618"
+      ],
       "kernel_version": "6.8.0-40.40",
       "fixed_version": "6.8.0-47.47",
-      "disabled_modules": ["esp4", "esp6", "rxrpc"],
-      "loaded_modules": ["esp4"],
+      "disabled_modules": [
+        "esp4",
+        "esp6",
+        "rxrpc"
+      ],
+      "loaded_modules": [
+        "esp4"
+      ],
       "active_services": [],
       "expected_level": "CRITICAL_CHAIN",
       "expected_deadline": "48時間以内",
@@ -290,10 +306,16 @@
       "id": "chain_fragnesia_mitigated_30d",
       "name": "Fragnesia Fully Mitigated on DMZ",
       "workload_exposure": "internet_facing",
-      "entry_cves": ["CVE-2026-109618"],
+      "entry_cves": [
+        "CVE-2026-109618"
+      ],
       "kernel_version": "6.8.0-40.40",
       "fixed_version": "6.8.0-47.47",
-      "disabled_modules": ["esp4", "esp6", "rxrpc"],
+      "disabled_modules": [
+        "esp4",
+        "esp6",
+        "rxrpc"
+      ],
       "loaded_modules": [],
       "active_services": [],
       "expected_level": "MITIGATED_NEEDS_PATCH",
@@ -304,12 +326,20 @@
       "id": "chain_fragnesia_side_effect_conflict",
       "name": "Fragnesia Blocked by IPsec Side-Effect Conflict",
       "workload_exposure": "internet_facing",
-      "entry_cves": ["CVE-2026-109618"],
+      "entry_cves": [
+        "CVE-2026-109618"
+      ],
       "kernel_version": "6.8.0-40.40",
       "fixed_version": "6.8.0-47.47",
-      "disabled_modules": ["esp4", "esp6", "rxrpc"],
+      "disabled_modules": [
+        "esp4",
+        "esp6",
+        "rxrpc"
+      ],
       "loaded_modules": [],
-      "active_services": ["ipsec"],
+      "active_services": [
+        "ipsec"
+      ],
       "expected_level": "CRITICAL_CHAIN",
       "expected_deadline": "48時間以内",
       "description": "Active IPsec service makes disabling modules impossible; must evaluate as unmitigated and trigger CRITICAL_CHAIN."
@@ -332,7 +362,9 @@
       "id": "chain_aws_kernel_flavor_indeterminate",
       "name": "Ubuntu AWS Kernel 6.8.0-1015.16 Indeterminate Flavor Lookup",
       "workload_exposure": "internet_facing",
-      "entry_cves": ["CVE-2026-109618"],
+      "entry_cves": [
+        "CVE-2026-109618"
+      ],
       "kernel_version": "6.8.0-1015.16",
       "kernel_package_name": "linux-aws",
       "kernel_flavor": "linux-aws",
@@ -388,6 +420,440 @@
       "expected_level": "CRITICAL_CHAIN",
       "expected_deadline": "48時間以内",
       "description": "Critical exploit chain detected via SBOM components and TriageReport check points (not entry_cves), normalized and enriched by KEV feed."
+    }
+  ],
+  "kernel_auto_cases": [
+    {
+      "id": "kauto_kev_untrusted_critical",
+      "name": "KEV-listed kernel CVE on a CI runner pool",
+      "polarity": "positive",
+      "description": "An automatically found, unfixed KEV-listed LPE on a pool running untrusted code must be CRITICAL_CHAIN.",
+      "pool": {
+        "distro": "amzn",
+        "release": "2023",
+        "package": "kernel",
+        "version": "6.1.100-102.172.amzn2023",
+        "epoch": "1"
+      },
+      "fixes": [
+        {
+          "cve": "CVE-2026-90101",
+          "series": "6.1",
+          "fixed": "1:6.1.150-170.1.amzn2023"
+        }
+      ],
+      "kev": [
+        "CVE-2026-90101"
+      ],
+      "target_cve": "CVE-2026-90101",
+      "expected_level": "CRITICAL_CHAIN",
+      "expected_pool_status": "ok"
+    },
+    {
+      "id": "kauto_tier2_epss_capped",
+      "name": "Tier 2 (EPSS only) is capped at HIGH_UNVERIFIED",
+      "polarity": "positive",
+      "description": "A suspected LPE (EPSS above the threshold, not in KEV) is flagged but capped at HIGH_UNVERIFIED, not CRITICAL.",
+      "pool": {
+        "distro": "amzn",
+        "release": "2023",
+        "package": "kernel",
+        "version": "6.1.100-102.172.amzn2023",
+        "epoch": "1"
+      },
+      "fixes": [
+        {
+          "cve": "CVE-2026-90101",
+          "series": "6.1",
+          "fixed": "1:6.1.150-170.1.amzn2023"
+        }
+      ],
+      "epss": {
+        "CVE-2026-90101": 0.5
+      },
+      "target_cve": "CVE-2026-90101",
+      "expected_level": "HIGH_UNVERIFIED"
+    },
+    {
+      "id": "kauto_epss_jump_promoted",
+      "name": "EPSS jump since the previous run promotes to tier 1",
+      "polarity": "positive",
+      "description": "EPSS rising from 0.01 to 0.30 between daily runs promotes the CVE to tier 1 (CRITICAL_CHAIN on a foothold).",
+      "pool": {
+        "distro": "amzn",
+        "release": "2023",
+        "package": "kernel",
+        "version": "6.1.100-102.172.amzn2023",
+        "epoch": "1"
+      },
+      "fixes": [
+        {
+          "cve": "CVE-2026-90101",
+          "series": "6.1",
+          "fixed": "1:6.1.150-170.1.amzn2023"
+        }
+      ],
+      "epss": {
+        "CVE-2026-90101": 0.3
+      },
+      "previous": {
+        "epss": {
+          "CVE-2026-90101": 0.01
+        },
+        "tiers": {
+          "3": [
+            "CVE-2026-90101"
+          ]
+        }
+      },
+      "target_cve": "CVE-2026-90101",
+      "expected_level": "CRITICAL_CHAIN",
+      "expected_promoted": [
+        "CVE-2026-90101"
+      ]
+    },
+    {
+      "id": "kauto_cvss_first_score_not_promoted",
+      "name": "A first CVSS score is not a revision",
+      "polarity": "negative",
+      "description": "A CVE scored 7.8 (LPE shape) for the first time is not promoted; most kernel CVEs get such a score.",
+      "pool": {
+        "distro": "amzn",
+        "release": "2023",
+        "package": "kernel",
+        "version": "6.1.100-102.172.amzn2023",
+        "epoch": "1"
+      },
+      "fixes": [
+        {
+          "cve": "CVE-2026-90101",
+          "series": "6.1",
+          "fixed": "1:6.1.150-170.1.amzn2023"
+        }
+      ],
+      "epss": {
+        "CVE-2026-90101": 0.01
+      },
+      "cvss": {
+        "CVE-2026-90101": {
+          "vector": "CVSS:3.1/AV:L/AC:L/PR:L/UI:N/S:U/C:H/I:H/A:H",
+          "score": 7.8,
+          "source": "bench"
+        }
+      },
+      "previous": {
+        "epss": {
+          "CVE-2026-90101": 0.01
+        },
+        "tiers": {
+          "3": [
+            "CVE-2026-90101"
+          ]
+        }
+      },
+      "target_cve": "CVE-2026-90101",
+      "expected_level": "NONE",
+      "expected_promoted": []
+    },
+    {
+      "id": "kauto_cvss_upward_revision_promoted",
+      "name": "CVSS revised upwards into the LPE shape promotes",
+      "polarity": "positive",
+      "description": "A CVE re-scored from 5.5 (DoS) to 7.8 (local privilege escalation) is promoted to tier 1.",
+      "pool": {
+        "distro": "amzn",
+        "release": "2023",
+        "package": "kernel",
+        "version": "6.1.100-102.172.amzn2023",
+        "epoch": "1"
+      },
+      "fixes": [
+        {
+          "cve": "CVE-2026-90101",
+          "series": "6.1",
+          "fixed": "1:6.1.150-170.1.amzn2023"
+        }
+      ],
+      "epss": {
+        "CVE-2026-90101": 0.01
+      },
+      "cvss": {
+        "CVE-2026-90101": {
+          "vector": "CVSS:3.1/AV:L/AC:L/PR:L/UI:N/S:U/C:H/I:H/A:H",
+          "score": 7.8,
+          "source": "bench"
+        }
+      },
+      "previous": {
+        "epss": {
+          "CVE-2026-90101": 0.01
+        },
+        "cvss": {
+          "CVE-2026-90101": {
+            "vector": "CVSS:3.1/AV:L/AC:L/PR:L/UI:N/S:U/C:N/I:N/A:H",
+            "score": 5.5,
+            "source": "bench"
+          }
+        },
+        "tiers": {
+          "3": [
+            "CVE-2026-90101"
+          ]
+        }
+      },
+      "target_cve": "CVE-2026-90101",
+      "expected_level": "CRITICAL_CHAIN",
+      "expected_promoted": [
+        "CVE-2026-90101"
+      ]
+    },
+    {
+      "id": "kauto_lineage_other_line_fix_ignored",
+      "name": "A fix for another kernel line is not applied",
+      "polarity": "positive",
+      "description": "Amazon Linux 2 5.10.200 is still exposed even though the 4.14 line's fix (4.14.350) sorts lower than the installed version.",
+      "pool": {
+        "distro": "amzn",
+        "release": "2",
+        "package": "kernel",
+        "version": "5.10.200-194.787.amzn2",
+        "epoch": "0"
+      },
+      "fixes": [
+        {
+          "cve": "CVE-2026-90101",
+          "series": "4.14",
+          "fixed": "0:4.14.350-266.564.amzn2"
+        },
+        {
+          "cve": "CVE-2026-90101",
+          "series": "5.10",
+          "fixed": "0:5.10.250-238.999.amzn2"
+        }
+      ],
+      "kev": [
+        "CVE-2026-90101"
+      ],
+      "target_cve": "CVE-2026-90101",
+      "expected_level": "CRITICAL_CHAIN"
+    },
+    {
+      "id": "kauto_lineage_other_line_only",
+      "name": "A CVE listed only for another kernel line does not leak in",
+      "polarity": "negative",
+      "description": "On Amazon Linux 2023, a CVE fixed only in the kernel6.12 line (1:6.12.50) must not be reported for a pool running the 'kernel' 6.1 line, even though 6.1.100 sorts below 6.12.50.",
+      "pool": {
+        "distro": "amzn",
+        "release": "2023",
+        "package": "kernel",
+        "version": "6.1.100-102.172.amzn2023",
+        "epoch": "1"
+      },
+      "fixes": [
+        {
+          "cve": "CVE-2026-90101",
+          "series": "6.12",
+          "package": "kernel6.12",
+          "fixed": "1:6.12.50-70.1.amzn2023"
+        },
+        {
+          "cve": "CVE-2026-90202",
+          "series": "6.1",
+          "fixed": "1:6.1.90-99.1.amzn2023"
+        }
+      ],
+      "kev": [
+        "CVE-2026-90101"
+      ],
+      "target_cve": "CVE-2026-90101",
+      "expected_level": "NONE",
+      "expected_pool_status": "ok"
+    },
+    {
+      "id": "kauto_livepatch_exact_build_resolves",
+      "name": "Livepatch for the running build resolves the CVE",
+      "polarity": "negative",
+      "description": "An installed livepatch built for exactly the running kernel, at or above the advisory's version, resolves the CVE.",
+      "pool": {
+        "distro": "amzn",
+        "release": "2023",
+        "package": "kernel6.12",
+        "version": "6.12.40-63.114.amzn2023",
+        "epoch": "1",
+        "livepatch": [
+          "kernel-livepatch-6.12.40-63.114=1:1.0-3.amzn2023"
+        ]
+      },
+      "fixes": [
+        {
+          "cve": "CVE-2026-90101",
+          "series": "6.12",
+          "package": "kernel6.12",
+          "fixed": "1:6.12.50-70.1.amzn2023"
+        }
+      ],
+      "livepatch_fixes": [
+        {
+          "cve": "CVE-2026-90101",
+          "target": "6.12.40-63.114",
+          "package": "kernel-livepatch-6.12.40-63.114",
+          "fixed": "1:1.0-2.amzn2023"
+        }
+      ],
+      "kev": [
+        "CVE-2026-90101"
+      ],
+      "target_cve": "CVE-2026-90101",
+      "expected_level": "NONE"
+    },
+    {
+      "id": "kauto_livepatch_other_build_does_not_count",
+      "name": "Livepatch for another build does not count",
+      "polarity": "positive",
+      "description": "A livepatch package built for a different kernel build does not resolve the CVE on this one.",
+      "pool": {
+        "distro": "amzn",
+        "release": "2023",
+        "package": "kernel6.12",
+        "version": "6.12.40-63.114.amzn2023",
+        "epoch": "1",
+        "livepatch": [
+          "kernel-livepatch-6.12.40-63.100=1:1.0-9.amzn2023"
+        ]
+      },
+      "fixes": [
+        {
+          "cve": "CVE-2026-90101",
+          "series": "6.12",
+          "package": "kernel6.12",
+          "fixed": "1:6.12.50-70.1.amzn2023"
+        }
+      ],
+      "livepatch_fixes": [
+        {
+          "cve": "CVE-2026-90101",
+          "target": "6.12.40-63.100",
+          "package": "kernel-livepatch-6.12.40-63.100",
+          "fixed": "1:1.0-2.amzn2023"
+        }
+      ],
+      "kev": [
+        "CVE-2026-90101"
+      ],
+      "target_cve": "CVE-2026-90101",
+      "expected_level": "CRITICAL_CHAIN"
+    },
+    {
+      "id": "kauto_no_fix_kev_still_exposed",
+      "name": "A KEV-listed CVE without a fix stays exposed",
+      "polarity": "positive",
+      "description": "When the distribution has not shipped a fix, the CVE is exposed (never SAFE) and still forms a chain.",
+      "pool": {
+        "distro": "amzn",
+        "release": "2023",
+        "package": "kernel",
+        "version": "6.1.100-102.172.amzn2023",
+        "epoch": "1"
+      },
+      "fixes": [
+        {
+          "cve": "CVE-2026-90101",
+          "series": "6.1",
+          "fixed": null
+        }
+      ],
+      "kev": [
+        "CVE-2026-90101"
+      ],
+      "target_cve": "CVE-2026-90101",
+      "expected_level": "CRITICAL_CHAIN"
+    },
+    {
+      "id": "kauto_no_source_not_clean",
+      "name": "A distribution without a source is not reported as clean",
+      "polarity": "positive",
+      "description": "A pool whose distribution has no registered source is disclosed as 'no source', never as having no unfixed CVEs.",
+      "pool": {
+        "distro": "sles",
+        "release": "15.6",
+        "package": "kernel-default",
+        "version": "6.4.0-150600.23.25.1",
+        "epoch": null
+      },
+      "adapter": "none",
+      "expected_pool_status": "no_adapter"
+    },
+    {
+      "id": "kauto_unreachable_source_not_clean",
+      "name": "An unreachable source is not reported as clean",
+      "polarity": "positive",
+      "description": "When the source cannot be reached, the pool is a lookup failure, never 'no unfixed CVEs'.",
+      "pool": {
+        "distro": "amzn",
+        "release": "2023",
+        "package": "kernel",
+        "version": "6.1.100-102.172.amzn2023",
+        "epoch": "1"
+      },
+      "adapter": "unreachable",
+      "expected_pool_status": "source_error"
+    },
+    {
+      "id": "kauto_partial_coverage_flagged",
+      "name": "Partially collected pool is flagged even when nothing is exposed",
+      "polarity": "positive",
+      "description": "With telemetry from 1 of 3 nodes, a clean-looking result must say other nodes may run older kernels.",
+      "pool": {
+        "distro": "amzn",
+        "release": "2023",
+        "package": "kernel",
+        "version": "6.1.160-180.1.amzn2023",
+        "epoch": "1",
+        "observed_nodes": 1,
+        "expected_nodes": 3
+      },
+      "fixes": [
+        {
+          "cve": "CVE-2026-90101",
+          "series": "6.1",
+          "fixed": "1:6.1.150-170.1.amzn2023"
+        }
+      ],
+      "kev": [
+        "CVE-2026-90101"
+      ],
+      "target_cve": "CVE-2026-90101",
+      "expected_level": "NONE",
+      "expected_coverage_note": true
+    },
+    {
+      "id": "kauto_fixed_kernel_quiet",
+      "name": "A fully collected, fixed pool stays quiet",
+      "polarity": "negative",
+      "description": "A pool whose every node runs a kernel at or above the fix reports nothing for that CVE and no coverage warning.",
+      "pool": {
+        "distro": "amzn",
+        "release": "2023",
+        "package": "kernel",
+        "version": "6.1.160-180.1.amzn2023",
+        "epoch": "1",
+        "observed_nodes": 3,
+        "expected_nodes": 3
+      },
+      "fixes": [
+        {
+          "cve": "CVE-2026-90101",
+          "series": "6.1",
+          "fixed": "1:6.1.150-170.1.amzn2023"
+        }
+      ],
+      "kev": [
+        "CVE-2026-90101"
+      ],
+      "target_cve": "CVE-2026-90101",
+      "expected_level": "NONE",
+      "expected_pool_status": "ok",
+      "expected_coverage_note": false
     }
   ]
 }

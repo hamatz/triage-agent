@@ -330,6 +330,10 @@ triage-agent/
         ├── web_ui.py         # Web GUI エントリポイント
         ├── chain/            # 連鎖エクスプロイト監査エンジン (v0.4.0)
         │   ├── engine.py     # 連鎖判定コア＆レポート生成
+        │   ├── kernel_exposure.py # カーネル脆弱性の自動照会と 3 層分類 (v0.5.0 / ADR-021)
+        │   ├── kernel_history.py  # 前回の実行との比較と昇格 (v0.5.0)
+        │   ├── kernel_sources.toml # 照会元アダプタの登録表 (v0.5.0)
+        │   ├── sources/      # 照会元アダプタ（ALAS / OSV / RHEL、Red Hat の CVSS）(v0.5.0)
         │   ├── foothold.py   # アプリ層侵入足場（RCE）多層判定
         │   ├── mitigations.py# カーネル緩和策＆副作用判定
         │   ├── feeds.py      # CISA KEV / FIRST EPSS / OSV クライアント

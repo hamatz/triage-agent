@@ -69,6 +69,7 @@ Node.js の事前予告や Oracle Critical Patch Update の日程が、時刻付
 | **パッチの日が、前もって予定表に入る** | Node.js と Tomcat の公式フィードを巡回し、Oracle CPU・Microsoft Patch Tuesday・PostgreSQL の定期日程を計算して、iCalendar（`.ics`）で書き出します |
 | **対応にかかった時間を、数字で説明できる** | 公表から、照会、回答、パッチ適用完了までの時刻と、夜間・休日の対応操作の件数を記録します。比較の基準値は、利用者が用意した出典付きの実測値だけを使います |
 | **「ローカルだから後回し」の危険な組み合わせが見える（v0.4.0）** | 外部公開のワークロードの侵入足場（RCE など）と、同じカーネルを共有するノードの未解消の権限昇格（LPE）を突き合わせ、Critical（48時間以内）として知らせます |
+| **台帳に載っていないカーネルの穴も、横展開で見つかる（v0.5.0）** | 全ノードから集めたカーネルの版をディストリの勧告（Amazon Linux、Ubuntu、Debian、AlmaLinux、Rocky Linux、RHEL）と突き合わせ、未修正の脆弱性を KEV・EPSS・CVSS で層に分けます。前回の実行から危険度が上がったものは層 1 に昇格させて知らせ、プールごとに「この版まで上げれば解消する」版を示します |
 
 ---
 
@@ -134,19 +135,22 @@ python -m triage_agent.cli --record-remediation DIST-xxxxxxxx-xxxxxx \
   --remediated-at 2026-12-02T10:30:00+09:00
 ```
 
-### 4. 攻撃連鎖を評価する（v0.4.0）
+### 4. 攻撃連鎖を評価する（v0.4.0 / v0.5.0）
 ```bash
-# 各ノード上で実行（読み取りのみ。ホスト名は --include-hostname を付けたときだけ記録）
-sh scripts/collect_kernel_telemetry.sh -p dmz-pool -o triage-output/telemetry/node01.json
+# プールの全ノードから集める（読み取りのみ。ssh / kubectl / AWS SSM 用の補助スクリプトあり）
+sh scripts/collect/collect_via_ssh.sh -p dmz-pool -H hosts/dmz-pool.txt
 
 # 監査を実行
 python -m triage_agent.cli --chain-audit \
   --environments environments.example.yaml \
   --chain-ledger exploit_chain_ledger.example.json \
   --telemetry triage-output/telemetry/ \
+  --kernel-auto \
   --chain-output triage-output/chain_audit_report.md
 ```
-環境定義と台帳の見本は [`environments.example.yaml`](environments.example.yaml) と [`exploit_chain_ledger.example.json`](exploit_chain_ledger.example.json) です。詳しくは [docs/exploit-chain.md](docs/exploit-chain.md) を参照してください。
+`--kernel-auto` を付けると、台帳に載っていないカーネルの脆弱性も、実機のカーネル版とディストリの勧告から自動で引きます（Amazon Linux、Ubuntu、Debian、AlmaLinux、Rocky Linux、RHEL。[対応表](docs/kernel-sources.md)）。毎日実行すると、前回から危険度が上がったもの（KEV 掲載、EPSS 急上昇、CVSS の引き上げ）を層 1 に昇格させて知らせます（`--fail-on promoted`）。
+
+環境定義と台帳の見本は [`environments.example.yaml`](environments.example.yaml) と [`exploit_chain_ledger.example.json`](exploit_chain_ledger.example.json) です。一部のノードしか集まっていないプールは「修正済み」と判定しません。棚卸しから定期実行までの全体の流れは [docs/exploit-chain.md](docs/exploit-chain.md) を参照してください。
 
 ### 5. CI に組み込む
 ```bash
@@ -155,6 +159,11 @@ python -m triage_agent.cli --sbom my_sbom.json --fail-on unscanned,yes
 
 # 攻撃連鎖（Critical）があれば非ゼロで終了
 python -m triage_agent.cli --chain-audit --environments triage-output/environments.yaml --fail-on critical_chain
+
+# 毎日の定期実行: 前回から新たに層 1 になったカーネル脆弱性があっても止める
+# （triage-output/kernel_auto/ は実行の間で保持してください）
+python -m triage_agent.cli --chain-audit --kernel-auto --environments triage-output/environments.yaml \
+  --telemetry triage-output/telemetry/ --fail-on critical_chain,promoted
 ```
 GitHub Actions の例は [`.github/workflows/self-triage.yml`](.github/workflows/self-triage.yml) にあります（triage-agent 自身を毎回診断しています）。
 
@@ -195,10 +204,12 @@ triage-agent の出力（レポート、環境定義、CSV、ノード情報）�
 | **サインオフの形式と運用、正本の管理** | [docs/signoff.md](docs/signoff.md) |
 | **事前予告カレンダーと監視先の追加方法** | [docs/early-warning-calendar.md](docs/early-warning-calendar.md) |
 | **攻撃連鎖の評価（環境定義、台帳、ノード情報）** | [docs/exploit-chain.md](docs/exploit-chain.md) |
+| **カーネル脆弱性の自動照会：ディストリ対応表と照会元の追加方法** | [docs/kernel-sources.md](docs/kernel-sources.md) |
 | **ベンダーとの往復と、対応時間の計測** | [docs/vendor-workflow.md](docs/vendor-workflow.md) |
 | **評価セット（見逃しと誤検知の測定）** | [docs/benchmark.md](docs/benchmark.md) |
 | **自己診断（Self-Triage）** | [docs/self-triage.md](docs/self-triage.md) |
 | **設計判断の記録（ADR）** | [docs/decision.md](docs/decision.md) |
+| **変更履歴** | [CHANGELOG.md](CHANGELOG.md) |
 | **今後の予定** | [docs/todo.md](docs/todo.md) |
 
 ---
@@ -210,6 +221,18 @@ triage-agent の出力（レポート、環境定義、CSV、ノード情報）�
 - **「この OSS は、ここで予告を出している」**: [`advisory_sources.toml`](src/triage_agent/data/advisory_sources.toml) に監視先を追加する Pull Request。公式の情報源に限り、定期日程の場合は根拠となる公式ページの URL を添えてください
 - **「この確認ポイントはベンダーに伝わらなかった」**: 確認ポイントの書き方の改善提案を Issue でお寄せください
 - **見逃しや誤検知のケース**: 評価セット（`benchmark/`）に追加できる再現ケース
+- **「このディストリのカーネル勧告は、ここから取れる」**: カーネル脆弱性の自動照会（`--kernel-auto`）の照会元を、[`kernel_sources.toml`](src/triage_agent/chain/kernel_sources.toml) に登録する Pull Request。手順は [ディストリ対応表と寄稿の手引き](docs/kernel-sources.md) にあります
+
+### 開発に参加する場合
+
+テストには pytest を使います。開発用の依存ごと入れてから実行してください。
+
+```bash
+pip install -e ".[dev]"
+python -m pytest -q
+```
+
+テストは外部へ通信せず、一時ディレクトリの中だけで動きます。万一テストが `triage-output/` の実データ（KEV のキャッシュや計測記録など）を書き換えた場合は、`tests/conftest.py` の確認でテスト全体が失敗します。pytest を使わずに実行すると、この確認が働きません。
 
 ---
 

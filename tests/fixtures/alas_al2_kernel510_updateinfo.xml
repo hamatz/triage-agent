@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Test fixture: one real Amazon Linux 2 Extras kernel-5.10 advisory (retrieved 2026-11-02), trimmed;
+     plus a SYNTHETIC core 4.14 advisory showing that both lines are named 'kernel'. -->
+<updates>
+<update status="final" version="1.4" author="linux-security@amazon.com" type="security" from="linux-security@amazon.com"><id>ALAS2KERNEL-5.10-2026-137</id><title>Amazon Linux 2 - Kernel-5.10 2.0 - ALAS2KERNEL-5.10-2026-137: important priority package update for kernel</title><issued date="2026-11-02 09:00:00" /><updated date="2026-11-02 09:00:00" /><severity>important</severity><description>(trimmed)</description><references><reference href="http://cve.mitre.org/cgi-bin/cvename.cgi?name=CVE-2026-98432" title="" id="CVE-2026-98432" type="cve" /></references><pkglist><collection short="amazon-linux-2---kernel-5.10"><name>Amazon Linux 2 - Kernel-5.10</name><package name="kernel" version="5.10.271" release="272.1121.amzn2" epoch="0" arch="x86_64" /></collection></pkglist></update>
+<update status="final" version="1.4" author="test" type="security" from="test"><id>ALAS2-2026-9003</id><title>SYNTHETIC</title><issued date="2026-10-03 09:00:00" /><severity>important</severity><references><reference href="h" id="CVE-2026-98432" type="cve" /></references><pkglist><collection short="amazon-linux-2-core"><name>Amazon Linux 2</name><package name="kernel" version="4.14.360" release="300.500.amzn2" epoch="0" arch="x86_64" /></collection></pkglist></update>
+</updates>

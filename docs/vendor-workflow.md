@@ -55,6 +55,8 @@ python -m triage_agent.cli --record-remediation DIST-xxxxxxxx-xxxxxx \
 ```
 
 ### 計測されるメトリクス (`triage-output/workflow_metrics.json`)
+
+保存先は環境変数 `TRIAGE_WORKFLOW_METRICS_FILE` で変更できます（テストは一時ファイルに記録し、実績データには書き込みません）。
 - **配布までの時間 (Lead Time to Distribution)**: 公表からベンダーへチェックリストを送付するまでの時間
 - **回答までの時間 (Lead Time to Response)**: 送付からベンダーが回答するまでの時間
 - **完了までの時間 (Lead Time to Remediation)**: パッチ適用が完了するまでの総所要時間

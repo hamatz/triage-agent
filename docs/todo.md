@@ -291,6 +291,32 @@ Kubernetes マニフェスト（Pod/Deployment）や Compose の設定を走査�
 ### 柱 D: 実地試行現場フィードバック吸収枠（2〜3割）
 - [ ] 現場やベンダーからの「この確認ポイントが伝わらなかった」「この設定記述に対応してほしい」という声に応じた `config_check` 語彙の追加・微調整枠の確保。
 
+### 柱 E: 攻撃連鎖評価の運用手順化とカーネル脆弱性の自動照会（ADR-021）
+v0.4.0 の連鎖評価を、複数マシンからの収集を前提とした運用に耐える形にし、手動台帳に載っていないカーネル LPE も横展開で見つけられるようにします。特定のクラウドやディストリを前提にしない（ディストリ中立）ことを原則とします。
+
+- [x] **① 収集カバレッジ・鮮度・プール不一致の検出と付随修正**
+  - 期待ノード数に満たないプールでは SAFE / 緩和済みを出さない。`--telemetry-max-age`、`pool_id` 必須、安定した匿名ノード ID、`collection_manifest.json` の読み込み。
+- [x] **② 手順書の書き直しと収集マニフェストの補助スクリプト**
+  - `docs/exploit-chain.md` を 6 段構成に再編。ssh / kubectl / AWS SSM 向けの補助スクリプト（`scripts/collect/`）。
+- [ ] **③ 照会元アダプタの共通契約、OSV と ALAS、3 層分類、プールごとの「この版まで上げれば解消」表示**
+  - [x] 事前検証（2026-11-02）: ALAS は AL2023（本体・livepatch）と AL2（本体・Extras 5.10/5.15）の `updateinfo.xml` から CVE・修正版・重大度を取得可能。OSV は Ubuntu/Debian で約 1 万件（大半が修正版なし）、Alma/Rocky は勧告単位で約 100 件。
+  - [x] 共通契約（`chain/sources/base.py`）、宣言的な登録表（`chain/kernel_sources.toml`）、ALAS アダプタ、3 層分類、`--kernel-auto`、livepatch による解消の判定。
+  - [x] OSV アダプタ（Ubuntu / Debian / Alma / Rocky）。件数は ID で数え、層 1・2 のものだけ詳細を取得。照会結果は 24 時間、レコードは更新日時でキャッシュ。
+  - [x] CVSS シグナル（`chain/sources/cvss_redhat.py`、`[signals.cvss]`）。事前検証（2026-11-02）で Red Hat（網羅率 94%・14 秒）を NVD（73%・31 分）より優先。並び順と昇格（引き上げの検知）に使い、LPE 型であること自体は層 2 の条件にしない。
+  - [ ] NVD を CVSS の別の照会元として選べるようにする（API キーと `lastModStartDate` による差分取得が前提）。
+- [x] **④ スナップショットと昇格ルール、`--fail-on promoted`、`--promote`**
+  - `chain/kernel_history.py`。EPSS 急上昇・CVSS の引き上げ・手動昇格（`promotions.json`、出典 URL 必須）。昇格は露出が続く限り維持。レポートに「前回の実行からの変化」と昇格の一覧。
+- [x] **⑤ RHEL 対応**（`chain/sources/rhel.py`）
+  - 事前検証（2026-11-03）: OSV の `Red Hat:enterprise_linux:<major>::baseos` で RHEL 9.4 の版に 117 件、8.10 に 94 件の勧告が返る（`Red Hat` だけを指定すると EUS などの系列が混ざり 392 件・651 件）。Red Hat Security Data API の `include_package_state` で、CVE ごとの未修正の状態が一括で取れる。
+  - 修正版は OSV、修正版がまだない CVE（Affected・Fix deferred・Will not fix・New）と CVE ごとの重大度は Red Hat API から。CVSS と同じ一括取得を使い回す。
+  - OSV が知らないパッケージにも空で答える問題に対処（全ディストリ共通）: 1 件も返らなければ記録の有無を確かめ、なければ照会不全。
+  - [ ] EUS / AUS の系列を選べるようにする（環境定義で系列を指定し、`enterprise_linux_eus:<minor>` の ecosystem を照会）。
+  - [ ] RHEL の kpatch（`kpatch-patch-*`）による解消の対応付け。
+  - [ ] `kernel-rt`（`::realtime` / `::nfv` の ecosystem）。
+- [x] **⑥ ディストリ対応表の公開とアダプタ寄稿の手引き**（[docs/kernel-sources.md](kernel-sources.md)。登録したアダプタが表に載っているかをテストで確認）
+- [x] **⑦ ベンチマークへの追加**（`kernel_auto_cases` 14 件。層の昇格、収集の欠けたプール、系統違い、livepatch、照会元の無いディストリ、照会不全、修正版なし）
+  - 付随修正: 一部のノードしか集まっていないプールでは、自動照会の結果にも「未収集のノードにさらに古い版が残っている可能性」を表示する（`--kernel-auto` は集まったノードの最も古い版で照会するため）。
+
 ### ④ 対応ライフサイクルの時間測定とROI可視化（Lifecycle Metrics / MTTR / v0.3.1先行対応完了）
 - [x] **ライフサイクル・タイムスタンプ自動記録（`src/triage_agent/tools/lifecycle_metrics.py`）**
   - **公表起点 T(-1) からの総リードタイム測定:**

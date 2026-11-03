@@ -86,6 +86,38 @@ python -m triage_agent.cli --sbom my_sbom.json --fail-on unscanned,yes
 python -m triage_agent.cli --sbom my_sbom.json --fail-on excluded,yes
 ```
 
+### 攻撃連鎖の評価とカーネル脆弱性の自動照会
+
+手順の全体は [攻撃連鎖の評価](exploit-chain.md) を参照してください。ここではオプションだけをまとめます。
+
+```bash
+python -m triage_agent.cli --chain-audit \
+  --environments triage-output/environments.yaml \
+  --telemetry triage-output/telemetry/ \
+  --kernel-auto \
+  --chain-output triage-output/chain_audit_report.md \
+  --fail-on critical_chain,promoted
+```
+
+| オプション | 既定値 | 内容 |
+| :--- | :--- | :--- |
+| `--chain-audit` | — | 攻撃連鎖の評価を実行します |
+| `--environments` | `triage-output/environments.yaml` など | 環境定義（ノードプールとワークロード） |
+| `--telemetry` | `triage-output/telemetry` | ノードのテレメトリ（ファイルまたはディレクトリ）。`collection_manifest.json` も読みます |
+| `--telemetry-max-age` | `7` | これより古い（日数）テレメトリは根拠に数えません。`0` で無効 |
+| `--chain-ledger` | `triage-output/exploit_chain_ledger.json` など | 手動のカーネル脆弱性台帳（出典付き） |
+| `--chain-output` | `chain_audit_report.md` | レポートの出力先 |
+| `--kernel-auto` | 無効 | 実機のカーネル版とディストリの勧告から、カーネル脆弱性を自動で引きます（[対応表](kernel-sources.md)） |
+| `--kernel-auto-epss` | `0.1` | EPSS がこの値以上の CVE を層 2 にします |
+| `--kernel-auto-tier2-limit` | `10` | 連鎖評価にかける層 2 の件数（プールごと）。残りは件数だけ示します |
+| `--kernel-auto-state` | `triage-output/kernel_auto` | 前回の実行との比較に使うスナップショットと、手動昇格の台帳の置き場所。定期実行の間で保持してください |
+| `--epss-threshold` | `0.15` | 前回からの EPSS の上昇がこの値以上なら昇格します |
+| `--promote CVE` / `--promote-source URL` / `--promote-reason TEXT` | — | 人の判断でカーネルの CVE を層 1 に昇格させます（出典 URL 必須） |
+| `--unpromote CVE` | — | 手動昇格の台帳から外します |
+| `--dry-run` | — | 外部に照会せず、キャッシュだけで評価します（スナップショットは更新しません） |
+
+`--fail-on` に指定できる条件のうち、攻撃連鎖に関するものは `critical_chain`（未緩和の Critical な連鎖がある）と `promoted`（前回の実行から新たに層 1 になったカーネル脆弱性がある。変化の通知で、`any` には含まれません）です。
+
 ---
 
 ## 3. Web GUI ダッシュボード (DAWN Studio)

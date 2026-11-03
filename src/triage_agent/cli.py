@@ -133,9 +133,11 @@ def run_chain_audit_flow(args, console: Console, triage_report: Optional[Any] = 
     """Execute the Exploit Chain & Linux Kernel Exposure audit (v0.4.0)."""
     import re
     from triage_agent.chain.engine import (
+        build_pool_coverage,
+        find_pool_mismatches,
         format_chain_audit_markdown,
         load_environment_definition,
-        load_node_telemetries,
+        load_node_telemetries_with_report,
         run_exploit_chain_audit,
     )
     from triage_agent.chain.feeds import ThreatFeedClient
@@ -143,7 +145,7 @@ def run_chain_audit_flow(args, console: Console, triage_report: Optional[Any] = 
 
     console.print(
         Panel.fit(
-            "[bold red]【EXPLOIT CHAIN & KERNEL EXPOSURE AUDIT / 連鎖エクスプロイト監査（v0.4.0）】[/bold red]\n"
+            "[bold red]【EXPLOIT CHAIN & KERNEL EXPOSURE AUDIT / 連鎖エクスプロイト監査（v0.5.0）】[/bold red]\n"
             "「外部露出RCE足場」×「共有カーネルノード上のLPE」によるホスト権限奪取および同居マイクロサービスへの\n"
             "水平展開（Lateral Movement / Blast Radius）リスクを網羅的かつ決定論的に監査します。",
             border_style="red",
@@ -165,15 +167,32 @@ def run_chain_audit_flow(args, console: Console, triage_report: Optional[Any] = 
     env_def = load_environment_definition(env_path)
 
     telemetries = {}
-    if args.telemetry:
-        telemetries = load_node_telemetries(args.telemetry)
-        console.print(f"ℹ️ 実機ノードテレメトリを読み込みました: [cyan]{len(telemetries)} ノード[/cyan]")
-    else:
-        # Check standard output directory
-        std_telemetry_dir = Path("triage-output/telemetry")
-        if std_telemetry_dir.exists():
-            telemetries = load_node_telemetries(std_telemetry_dir)
-            console.print(f"ℹ️ 標準ディレクトリ（triage-output/telemetry）からテレメトリを読み込みました: [cyan]{len(telemetries)} ノード[/cyan]")
+    telemetry_issues = []
+    max_age = getattr(args, "telemetry_max_age", 7)
+    telemetry_source = args.telemetry
+    if not telemetry_source and Path("triage-output/telemetry").exists():
+        telemetry_source = "triage-output/telemetry"
+    if telemetry_source:
+        telemetries, telemetry_issues = load_node_telemetries_with_report(
+            str(telemetry_source), max_age_days=max_age if max_age and max_age > 0 else None
+        )
+        total_nodes = sum(t.observed_nodes_count for t in telemetries.values())
+        console.print(
+            f"ℹ️ 実機ノードテレメトリを読み込みました（{telemetry_source}）: "
+            f"[cyan]{len(telemetries)} プール / {total_nodes} ノード[/cyan]"
+        )
+    telemetry_issues.extend(find_pool_mismatches(env_def, telemetries))
+    for issue in telemetry_issues:
+        if issue.severity == "warning":
+            suffix = f"（{Path(issue.source).name}）" if issue.source.endswith(".json") else ""
+            console.print(f"[bold yellow]⚠️ テレメトリ: {issue.message}{suffix}[/bold yellow]")
+    pool_coverage = build_pool_coverage(env_def, telemetries)
+    for cov in pool_coverage.values():
+        if cov.is_known_incomplete:
+            console.print(
+                f"[bold yellow]⚠️ プール {cov.pool_id}: 実機テレメトリが一部のノードのみです（{cov.describe()}）。"
+                f"このプールでは SAFE / 緩和済みと判定しません。[/bold yellow]"
+            )
 
     # Build kernel vulnerability targets from external ledger or OSV feed (No synthetic hardcoded entries)
     vulnerabilities: List[KernelVulnerabilityEntry] = []
@@ -235,7 +254,85 @@ def run_chain_audit_flow(args, console: Console, triage_report: Optional[Any] = 
             except Exception as e:
                 console.print(f"[bold yellow]⚠️ 外部台帳読み込み警告: {e}[/bold yellow]")
 
-    if not vulnerabilities:
+    # ADR-021: automatic kernel advisory lookup (lateral discovery of LPEs missing from the manual ledger)
+    kernel_auto_result = None
+    if getattr(args, "kernel_auto", False):
+        from triage_agent.chain.kernel_exposure import run_kernel_auto
+        from triage_agent.chain.kernel_history import load_manual_promotions, load_snapshot, save_snapshot
+        from triage_agent.chain.sources import build_adapters, build_cvss_source, load_registry, load_signal_registry
+
+        auto_feed = ThreatFeedClient(epss_jump_threshold=args.epss_threshold)
+        offline = bool(args.dry_run)
+
+        def _kev_lookup():
+            return auto_feed.load_cached_kev_catalog() if offline else auto_feed.fetch_cisa_kev_catalog()
+
+        state_dir = args.kernel_auto_state
+        previous_snapshot, snapshot_problem = load_snapshot(state_dir)
+        if snapshot_problem:
+            console.print(f"[bold yellow]⚠️ {snapshot_problem}[/bold yellow]")
+        try:
+            manual_promotions = load_manual_promotions(state_dir)
+        except Exception as e:  # noqa: BLE001 - a broken ledger must not silently drop promotions
+            console.print(f"[bold red]❌ 手動昇格の台帳（{state_dir}/promotions.json）を読めません: {e}[/bold red]")
+            sys.exit(1)
+
+        cvss_source = build_cvss_source(load_signal_registry(), cache_dir=str(auto_feed.cache_dir))
+
+        console.print("ℹ️ カーネル脆弱性を自動照会しています（ディストリの勧告 × 実機のカーネル版）...")
+        kernel_auto_result = run_kernel_auto(
+            environment=env_def,
+            telemetries=telemetries,
+            adapters=build_adapters(load_registry(), cache_dir=str(auto_feed.cache_dir)),
+            kev_lookup=_kev_lookup,
+            epss_lookup=auto_feed.fetch_epss_scores,
+            manual_cve_ids={v.cve_id for v in vulnerabilities},
+            offline=offline,
+            epss_threshold=args.kernel_auto_epss,
+            tier2_limit=args.kernel_auto_tier2_limit,
+            previous_snapshot=previous_snapshot,
+            manual_promotions=manual_promotions,
+            epss_jump=args.epss_threshold,
+            cvss_lookup=(lambda ids: cvss_source.lookup(ids, offline=offline)) if cvss_source else None,
+            coverage=pool_coverage,
+        )
+        if cvss_source is not None:
+            kernel_auto_result.cvss_source = cvss_source.label
+            kernel_auto_result.errors.extend(cvss_source.notes)
+        kernel_auto_result.kev_catalog_info = auto_feed.kev_catalog_info
+        if auto_feed.kev_catalog_info:
+            info = auto_feed.kev_catalog_info
+            console.print(f"ℹ️ CISA KEV カタログ: 版 {info['catalogVersion']}（公開 {info['dateReleased']}・{info['count']} 件）")
+        for pid, summary in sorted(kernel_auto_result.pools.items()):
+            if summary.status == "ok":
+                c = summary.tier_counts
+                console.print(
+                    f"   - {pid}: 層1 {c[1]} 件 / 層2 {c[2]} 件 / 層3 {c[3]} 件"
+                    + (f"（{summary.upgrade_target} 以上で層1・2 を解消）" if summary.upgrade_target else "")
+                )
+            else:
+                console.print(f"[yellow]   - {pid}: {summary.reason}[/yellow]")
+        for err in kernel_auto_result.errors:
+            console.print(f"[bold yellow]⚠️ 自動照会: {err}[/bold yellow]")
+        if kernel_auto_result.previous_taken_at is None:
+            console.print("ℹ️ 前回のスナップショットがないため、今回の結果を比較の基準にします（次回から変化と昇格を判定）")
+        else:
+            new_promos = [p for p in kernel_auto_result.promotions.values() if p.new]
+            console.print(
+                f"ℹ️ 前回（{kernel_auto_result.previous_taken_at}）からの変化: 新たに層1 {kernel_auto_result.new_tier1_total} 件"
+                f"（うち今回の昇格 {len(new_promos)} 件）"
+            )
+            for p in new_promos:
+                console.print(f"[bold red]   ⬆ 昇格: {p.cve_id}（{p.label}: {p.detail}）[/bold red]")
+        if kernel_auto_result.snapshot is not None:
+            snap_path = save_snapshot(kernel_auto_result.snapshot, state_dir)
+            console.print(f"ℹ️ 次回の比較用にスナップショットを保存しました: {snap_path}")
+        elif offline:
+            console.print("ℹ️ オフライン実行のため、スナップショットは更新していません")
+        args.kernel_auto_result = kernel_auto_result
+        vulnerabilities.extend(kernel_auto_result.entries)
+
+    if not vulnerabilities and kernel_auto_result is None:
         console.print("[yellow]ℹ️ カーネル脆弱性台帳（--chain-ledger または exploit_chain_ledger.json）に対象エントリがないため、連鎖評価をスキップします。[/yellow]")
         return []
 
@@ -257,9 +354,12 @@ def run_chain_audit_flow(args, console: Console, triage_report: Optional[Any] = 
     # Sync with threat feeds (CISA KEV / EPSS sudden jumps)
     feed_client = ThreatFeedClient(epss_jump_threshold=args.epss_threshold)
     target_cves = [v.cve_id for v in vulnerabilities]
+    # Only CVE/GHSA identifiers are sent to external feeds. Component names (which may be internal
+    # package names) must never leave the machine (docs/data-handling.md, ADR-021 decision 5).
+    vuln_id_pattern = re.compile(r"^(CVE-\d{4}-\d{4,7}|GHSA-[\w-]+)$", re.IGNORECASE)
     for wl in env_def.workloads:
-        target_cves.extend(wl.components)
-        target_cves.extend(wl.entry_cves)
+        target_cves.extend(c for c in wl.components if vuln_id_pattern.match(c.strip()))
+        target_cves.extend(c for c in wl.entry_cves if vuln_id_pattern.match(c.strip()))
 
     # Extract CVEs/GHSAs from triage_report notices and checkpoints using regex
     if triage_report and hasattr(triage_report, "notices"):
@@ -318,6 +418,9 @@ def run_chain_audit_flow(args, console: Console, triage_report: Optional[Any] = 
         audit_items,
         environment_name=env_def.environment_name,
         feed_results=feed_results,
+        coverage=pool_coverage,
+        load_issues=telemetry_issues,
+        kernel_auto=kernel_auto_result,
     )
     out_path = Path(args.chain_output)
     out_path.parent.mkdir(parents=True, exist_ok=True)
@@ -348,6 +451,16 @@ def run_chain_audit_flow(args, console: Console, triage_report: Optional[Any] = 
         console.print("[bold green]✓ Critical な連鎖エクスプロイト（RCE足場＋未緩和LPE）は検出されませんでした。[/bold green]")
 
     return audit_items
+
+
+def _kernel_promotion_reason(args) -> Optional[str]:
+    """--fail-on promoted: a kernel CVE became tier 1 since the previous --kernel-auto run."""
+    ka = getattr(args, "kernel_auto_result", None)
+    if ka is None or ka.previous_taken_at is None or ka.new_tier1_total == 0:
+        return None
+    new_promos = sorted(c for c, p in ka.promotions.items() if p.new)
+    detail = f"（今回の昇格: {', '.join(new_promos)}）" if new_promos else ""
+    return f"前回の実行から新たに層1 になったカーネル脆弱性が {ka.new_tier1_total} 件あります{detail}"
 
 
 def main():
@@ -417,8 +530,10 @@ def main():
         default=None,
         help="Comma-separated conditions to exit with non-zero status code (e.g. 'unscanned,yes' or 'any'). "
              "Supported: unscanned (investigation failed/error), excluded (packages omitted via --exclude), "
-             "yes (vulnerable code confirmed), unconfirmed (unverified external settings), critical_chain, any. "
-             "(Note: 'any' matches unscanned, yes, unconfirmed, and critical_chain, but does not match 'excluded' unless explicitly specified).",
+             "yes (vulnerable code confirmed), unconfirmed (unverified external settings), critical_chain, "
+             "promoted (--kernel-auto: a kernel CVE became tier 1 since the previous run), any. "
+             "(Note: 'any' matches unscanned, yes, unconfirmed, and critical_chain, but does not match 'excluded' "
+             "or 'promoted' unless explicitly specified).",
     )
     parser.add_argument(
         "--calendar",
@@ -494,6 +609,64 @@ def main():
         type=str,
         default=None,
         help="Path to node telemetry JSON file or directory containing telemetry files (v0.4.0)",
+    )
+    parser.add_argument(
+        "--kernel-auto",
+        action="store_true",
+        help="Look up kernel advisories automatically for each node pool's running kernel (ADR-021). "
+             "Uses the adapters in chain/kernel_sources.toml; with --dry-run only cached data is used.",
+    )
+    parser.add_argument(
+        "--kernel-auto-epss",
+        type=float,
+        default=0.1,
+        help="EPSS score at or above which an automatically found kernel CVE is tier 2 (default: 0.1)",
+    )
+    parser.add_argument(
+        "--kernel-auto-tier2-limit",
+        type=int,
+        default=10,
+        help="Maximum tier 2 CVEs per pool included in the chain evaluation (default: 10; the rest are counted)",
+    )
+    parser.add_argument(
+        "--kernel-auto-state",
+        type=str,
+        default="triage-output/kernel_auto",
+        help="Directory for the --kernel-auto snapshot (run-to-run comparison) and the manual promotion ledger "
+             "(default: triage-output/kernel_auto). Keep it between scheduled runs (ADR-021).",
+    )
+    parser.add_argument(
+        "--promote",
+        type=str,
+        default=None,
+        metavar="CVE_ID",
+        help="Promote a kernel CVE found by --kernel-auto to tier 1 (treated like a KEV-listed LPE). "
+             "Requires --promote-source (ADR-021).",
+    )
+    parser.add_argument(
+        "--promote-source",
+        type=str,
+        default=None,
+        help="Source URL that justifies --promote (e.g. a PoC write-up or a vendor advisory)",
+    )
+    parser.add_argument(
+        "--promote-reason",
+        type=str,
+        default=None,
+        help="Short reason recorded with --promote",
+    )
+    parser.add_argument(
+        "--unpromote",
+        type=str,
+        default=None,
+        metavar="CVE_ID",
+        help="Remove a CVE from the manual promotion ledger",
+    )
+    parser.add_argument(
+        "--telemetry-max-age",
+        type=int,
+        default=7,
+        help="Telemetry older than this many days is excluded from the evidence (default: 7, 0 disables) (ADR-021)",
     )
     parser.add_argument(
         "--chain-audit",
@@ -576,6 +749,24 @@ def main():
             sys.exit(1)
         return
 
+    # Manual promotion ledger for --kernel-auto (ADR-021 decision 2)
+    if args.promote or args.unpromote:
+        from triage_agent.chain.kernel_history import add_manual_promotion, remove_manual_promotion
+        try:
+            if args.promote:
+                path = add_manual_promotion(args.promote, args.promote_source, args.promote_reason, state_dir=args.kernel_auto_state)
+                console.print(f"[bold green]✓ {args.promote.upper()} を層1 に昇格させました（台帳: {path}）。次の --kernel-auto 実行から反映されます。[/bold green]")
+            if args.unpromote:
+                if remove_manual_promotion(args.unpromote, state_dir=args.kernel_auto_state):
+                    console.print(f"[bold green]✓ {args.unpromote.upper()} を手動昇格の台帳から外しました。[/bold green]")
+                else:
+                    console.print(f"[yellow]ℹ️ {args.unpromote.upper()} は手動昇格の台帳にありません。[/yellow]")
+        except ValueError as e:
+            console.print(f"[bold red]❌ {e}[/bold red]")
+            sys.exit(1)
+        if not args.chain_audit and args.verify_code is None and not args.self_triage and args.sbom == "sample_sbom.json" and not args.output:
+            return
+
     # Standalone Exploit Chain audit (v0.4.0)
     chain_audit_items = None
     if args.chain_audit:
@@ -590,6 +781,15 @@ def main():
                         Panel(
                             "[bold red]❌ 【CI/CD ガードレール違反: --fail-on 条件発火 (Critical Exploit Chain 検知)】[/bold red]\n"
                             "未緩和のカーネルLPEと外部露出RCE足場による連鎖エクスプロイトが検知されたため、終了コード 2 で停止します。",
+                            border_style="red",
+                        )
+                    )
+                    sys.exit(2)
+                promoted_reason = _kernel_promotion_reason(args) if "promoted" in triggers else None
+                if promoted_reason:
+                    console.print(
+                        Panel(
+                            "[bold red]❌ 【CI/CD ガードレール違反: --fail-on 条件発火 (promoted)】[/bold red]\n" + promoted_reason,
                             border_style="red",
                         )
                     )
@@ -886,6 +1086,11 @@ def main():
 
         if ("chain" in triggers or "critical_chain" in triggers or "any" in triggers) and has_critical_chain:
             triggered_reasons.append("未緩和のカーネルLPEと外部露出RCE足場による連鎖エクスプロイト（Critical Exploit Chain）が検知されました")
+
+        if "promoted" in triggers:
+            promoted_reason = _kernel_promotion_reason(args)
+            if promoted_reason:
+                triggered_reasons.append(promoted_reason)
 
         if triggered_reasons:
             console.print(

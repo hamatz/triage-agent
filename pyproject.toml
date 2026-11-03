@@ -1,6 +1,6 @@
 [project]
 name = "triage-agent"
-version = "0.4.0"
+version = "0.5.0"
 description = "Autonomous SBOM Vulnerability Intelligence and Triage Multi-Agent System"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -10,6 +10,12 @@ dependencies = [
     "httpx>=0.28.0",
     "python-dotenv>=1.2.4",
     "rich>=13.0.0",
+]
+
+[project.optional-dependencies]
+# Development: pip install -e ".[dev]"
+dev = [
+    "pytest>=8.0",
 ]
 
 [project.scripts]
@@ -25,5 +31,5 @@ build-backend = "setuptools.build_meta"
 where = ["src"]
 
 [tool.setuptools.package-data]
-"triage_agent" = ["data/*.toml", "data/*.json"]
+"triage_agent" = ["data/*.toml", "data/*.json", "chain/*.toml"]
 "triage_agent.ui" = ["templates/*.html", "static/*.css", "static/*.js"]

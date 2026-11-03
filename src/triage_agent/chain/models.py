@@ -58,7 +58,13 @@ class NodePoolDefinition(BaseModel):
         description="Uname release string (e.g. '6.8.0-40-generic')"
     )
     livepatch_active: bool = Field(default=False, description="True if Canonical Livepatch / kpatch is active")
-    nodes_count: int = Field(default=1, description="Number of nodes in this pool sharing this configuration")
+    nodes_count: Optional[int] = Field(
+        default=None,
+        description=(
+            "Expected number of nodes in this pool (from 'nodes' list or 'nodes_count'). "
+            "None means the expected count is unknown, so telemetry coverage cannot be verified."
+        ),
+    )
 
 
 class EnvironmentDefinition(BaseModel):
@@ -88,6 +94,14 @@ class KernelVulnerabilityEntry(BaseModel):
         default_factory=dict,
         description="Distro key (e.g. 'ubuntu') to affected package range"
     )
+    # ADR-021: entries produced by the automatic advisory lookup
+    applies_to_pools: Optional[List[str]] = Field(
+        default=None, description="If set, the entry is evaluated only for these node pools (lineage specific fix)"
+    )
+    auto_tier: Optional[int] = Field(
+        default=None, description="1 = confirmed (KEV), 2 = suspected LPE (capped at HIGH_UNVERIFIED); None for manual entries"
+    )
+    provenance: str = Field(default="manual", description="'manual' (sourced ledger) or 'auto' (advisory adapter)")
 
 
 class FootholdResult(BaseModel):
@@ -112,6 +126,62 @@ class NodeTelemetry(BaseModel):
     active_services: List[str] = Field(default_factory=list)
     xfrm_active: bool = Field(default=False, description="True if IPsec xfrm state/policy is configured (e.g. Cilium/Calico)")
     livepatch_modules: List[str] = Field(default_factory=list)
+    # Exact running kernel package identity (ADR-021 decision 3), used by advisory adapters.
+    kernel_package_epoch: Optional[str] = Field(default=None, description="RPM epoch of the running kernel package ('0' when none)")
+    kernel_binary_package: Optional[str] = Field(
+        default=None, description="Binary package that owns the running kernel image (e.g. 'kernel', 'kernel6.12', 'kernel-core')"
+    )
+    livepatch_packages: List[str] = Field(
+        default_factory=list,
+        description="Installed livepatch packages as 'name=epoch:version-release' (e.g. 'kernel-livepatch-6.12.94-123.174=1:1.0-9.amzn2023')",
+    )
+    # Collection provenance (ADR-021 decision 4): how many nodes back this (possibly aggregated) telemetry.
+    node_ids: List[str] = Field(
+        default_factory=list,
+        description="Identifiers of the nodes aggregated into this telemetry (anonymized, stable when collected with v0.5+ script)",
+    )
+    observed_nodes_count: int = Field(default=1, description="Number of distinct node telemetry records aggregated")
+    oldest_collected_at: Optional[str] = Field(
+        default=None, description="Oldest collected_at (ISO 8601 UTC) among aggregated nodes; None if unknown"
+    )
+    expected_nodes_count: Optional[int] = Field(
+        default=None,
+        description="Expected node count declared by a collection manifest for this pool (overrides environments.yaml)",
+    )
+
+
+class PoolCoverage(BaseModel):
+    """Telemetry collection coverage for one node pool (ADR-021 decision 4)."""
+    pool_id: str
+    expected_nodes: Optional[int] = Field(default=None, description="Expected node count; None if unknown")
+    expected_source: str = Field(default="unknown", description="'manifest', 'environments.yaml' or 'unknown'")
+    observed_nodes: int = 0
+    oldest_collected_at: Optional[str] = None
+    has_telemetry: bool = False
+    in_environment: bool = Field(default=True, description="False if the pool appears only in telemetry")
+
+    @property
+    def is_complete(self) -> bool:
+        """True only when the expected count is known and every expected node was observed."""
+        return self.has_telemetry and self.expected_nodes is not None and self.observed_nodes >= self.expected_nodes
+
+    @property
+    def is_known_incomplete(self) -> bool:
+        return self.has_telemetry and self.expected_nodes is not None and self.observed_nodes < self.expected_nodes
+
+    def describe(self) -> str:
+        if not self.has_telemetry:
+            return "実機テレメトリなし"
+        if self.expected_nodes is None:
+            return f"{self.observed_nodes} 台分（期待ノード数不明）"
+        return f"{self.observed_nodes}/{self.expected_nodes} 台"
+
+
+class TelemetryLoadIssue(BaseModel):
+    """A telemetry file or record that was excluded or needs attention while loading."""
+    severity: str = Field(description="'warning' or 'info'")
+    source: str = Field(description="File path (or pool id) the issue concerns")
+    message: str
 
 
 class ChainAuditItem(BaseModel):

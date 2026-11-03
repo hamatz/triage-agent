@@ -204,6 +204,38 @@ def compare_rpm_versions(v1: str, v2: str) -> int:
     return 0
 
 
+# os-release IDs whose packages follow RPM version ordering
+RPM_DISTROS = {
+    "rhel", "almalinux", "rocky", "centos", "fedora", "ol",
+    "amzn",            # Amazon Linux 2 / 2023
+    "sles", "sled", "opensuse-leap", "opensuse-tumbleweed",
+    "azurelinux", "mariner",
+}
+DEB_DISTROS = {"ubuntu", "debian"}
+
+
+def compare_rpm_evr(v1: str, v2: str) -> Optional[int]:
+    """Compare RPM [epoch:]version-release strings.
+
+    The epoch is compared first when both sides carry one. When exactly one side has an epoch the
+    result is indeterminate (None): guessing the missing epoch could declare a vulnerable kernel fixed.
+    """
+    e1, has1 = (v1.split(":", 1)[0], True) if ":" in v1 else ("", False)
+    e2, has2 = (v2.split(":", 1)[0], True) if ":" in v2 else ("", False)
+    r1 = v1.split(":", 1)[1] if has1 else v1
+    r2 = v2.split(":", 1)[1] if has2 else v2
+    if has1 != has2:
+        return None
+    if has1:
+        try:
+            i1, i2 = int(e1 or 0), int(e2 or 0)
+        except ValueError:
+            return None
+        if i1 != i2:
+            return -1 if i1 < i2 else 1
+    return compare_rpm_versions(r1, r2)
+
+
 def compare_kernel_versions(
     distro: Optional[str],
     v1: str,
@@ -221,10 +253,10 @@ def compare_kernel_versions(
         return None
     d_clean = (distro or "").strip().lower()
     try:
-        if d_clean in ("ubuntu", "debian"):
+        if d_clean in DEB_DISTROS:
             return compare_debian_versions(v1, v2)
-        elif d_clean in ("rhel", "almalinux", "rocky", "centos", "fedora"):
-            return compare_rpm_versions(v1, v2)
+        elif d_clean in RPM_DISTROS:
+            return compare_rpm_evr(v1, v2)
         return None
     except Exception:
         return None
@@ -253,14 +285,14 @@ def is_kernel_package_vulnerable(
     d_clean = (distro or "").strip().lower()
     
     try:
-        if d_clean in ("ubuntu", "debian"):
+        if d_clean in DEB_DISTROS:
             # Debian/Ubuntu dpkg version rules
             res = compare_debian_versions(installed_version, fixed_version)
             return res < 0
-        elif d_clean in ("rhel", "almalinux", "rocky", "centos", "fedora"):
-            # RPM style version compare
-            res = compare_rpm_versions(installed_version, fixed_version)
-            return res < 0
+        elif d_clean in RPM_DISTROS:
+            # RPM style [epoch:]version-release compare
+            res = compare_rpm_evr(installed_version, fixed_version)
+            return None if res is None else res < 0
         else:
             # Unknown / unsupported distribution: NEVER guess or assume safe!
             return None

@@ -28,6 +28,9 @@ class TestThreatFeedClient(unittest.TestCase):
     def test_cisa_kev_fetch_and_cache(self, mock_urlopen):
         sample_kev = {
             "title": "CISA KEV Catalog",
+            "catalogVersion": "2026.10.24",
+            "dateReleased": "2026-10-24T00:00:00.000Z",
+            "count": 1,
             "vulnerabilities": [
                 {
                     "cveID": "CVE-2026-109618",
@@ -116,6 +119,60 @@ class TestThreatFeedClient(unittest.TestCase):
         self.assertIn("unavailable", res.error)
         self.assertIsNone(res.in_cisa_kev)
         self.assertIsNone(res.epss_score)
+
+
+class TestKevCatalogValidation(unittest.TestCase):
+    """A file that is not a genuine CISA KEV catalog must never be used (ADR-021 follow-up)."""
+
+    def setUp(self):
+        self.temp_dir = tempfile.TemporaryDirectory()
+        self.cache_dir = Path(self.temp_dir.name) / "cache"
+        self.cache_dir.mkdir(parents=True)
+        self.client = ThreatFeedClient(cache_dir=self.cache_dir, history_path=Path(self.temp_dir.name) / "h.json")
+
+    def tearDown(self):
+        self.temp_dir.cleanup()
+
+    def _write_cache(self, data):
+        (self.cache_dir / "cisa_kev_catalog.json").write_text(json.dumps(data), encoding="utf-8")
+
+    def test_fixture_like_cache_is_rejected_offline(self):
+        self._write_cache({"vulnerabilities": [{"cveID": "CVE-2026-109618"}]})
+        with self.assertRaises(RuntimeError) as ctx:
+            self.client.load_cached_kev_catalog()
+        self.assertIn("catalogVersion", str(ctx.exception))
+        res = self.client.analyze_cves(["CVE-2026-109618"], offline=True)
+        self.assertIsNone(res["CVE-2026-109618"].in_cisa_kev)
+        self.assertIn("KEV", res["CVE-2026-109618"].error)
+
+    def test_count_mismatch_is_rejected(self):
+        self._write_cache({"catalogVersion": "x", "dateReleased": "y", "count": 1500, "vulnerabilities": [{"cveID": "CVE-1"}]})
+        with self.assertRaises(RuntimeError):
+            self.client.load_cached_kev_catalog()
+
+    @patch("urllib.request.urlopen")
+    def test_fresh_invalid_cache_is_ignored_and_refetched(self, mock_urlopen):
+        self._write_cache({"vulnerabilities": [{"cveID": "CVE-2026-109618"}]})
+        genuine = {"catalogVersion": "2026.11.01", "dateReleased": "2026-11-01T00:00:00.000Z", "count": 1,
+                   "vulnerabilities": [{"cveID": "CVE-2024-1086"}]}
+        mock_resp = MagicMock()
+        mock_resp.status = 200
+        mock_resp.read.return_value = json.dumps(genuine).encode("utf-8")
+        mock_urlopen.return_value.__enter__.return_value = mock_resp
+        catalog = self.client.fetch_cisa_kev_catalog()
+        self.assertIn("CVE-2024-1086", catalog)
+        self.assertNotIn("CVE-2026-109618", catalog)
+        self.assertEqual(self.client.kev_catalog_info["catalogVersion"], "2026.11.01")
+
+    @patch("urllib.request.urlopen")
+    def test_invalid_download_is_not_cached(self, mock_urlopen):
+        mock_resp = MagicMock()
+        mock_resp.status = 200
+        mock_resp.read.return_value = b'{"vulnerabilities": []}'
+        mock_urlopen.return_value.__enter__.return_value = mock_resp
+        with self.assertRaises(RuntimeError):
+            self.client.fetch_cisa_kev_catalog()
+        self.assertFalse((self.cache_dir / "cisa_kev_catalog.json").exists())
 
 
 if __name__ == "__main__":

@@ -46,7 +46,10 @@ class TestBenchmarkSuite(unittest.TestCase):
     def test_benchmark_runner_full_suite(self):
         """Benchmark runner module must execute cleanly with 100% accuracy and produce headline summary."""
         from triage_agent.benchmark import run_benchmark_suite
-        summary = run_benchmark_suite(benchmark_dir=BENCHMARK_DIR)
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            # Write results to a temporary file, never to the repository's triage-output/.
+            summary = run_benchmark_suite(benchmark_dir=BENCHMARK_DIR, output_file=Path(d) / "benchmark_results.json")
         self.assertEqual(summary["failed_cases"], 0)
         self.assertEqual(summary["accuracy_rate"], 100.0)
         self.assertGreaterEqual(summary["total_cases"], 17)
