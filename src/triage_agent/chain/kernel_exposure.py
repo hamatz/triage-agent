@@ -77,6 +77,7 @@ class PoolAutoSummary:
     all_fixes_target: Optional[str] = None     # resolves every listed CVE
     exposed: List[ExposedCve] = field(default_factory=list)
     tier2_itemized: int = 0
+    coverage_note: Optional[str] = None   # telemetry from only part of the pool: other nodes may run older kernels
 
 
 @dataclass
@@ -207,6 +208,7 @@ def run_kernel_auto(
     epss_jump: float = DEFAULT_EPSS_JUMP,
     cvss_lookup: Optional[Callable[[List[str]], Dict[str, dict]]] = None,
     now: Optional[str] = None,
+    coverage: Optional[Dict[str, object]] = None,
 ) -> KernelAutoResult:
     result = KernelAutoResult(epss_threshold=epss_threshold, tier2_limit=tier2_limit, epss_jump=epss_jump)
     result.manual_promotions = {k.upper(): v for k, v in (manual_promotions or {}).items()}
@@ -421,6 +423,18 @@ def run_kernel_auto(
                 provenance="auto",
             ))
         summary.tier2_itemized = tier2_used
+
+    # 5b) partial collection: the exposure is that of the collected nodes only (ADR-021 decision 4)
+    for pool_id, summary in result.pools.items():
+        cov = (coverage or {}).get(pool_id)
+        if cov is None or not summary.grounded_in_telemetry:
+            continue
+        if getattr(cov, "is_known_incomplete", False):
+            summary.coverage_note = (
+                f"実機テレメトリが一部のノードのみです（{cov.describe()}）。未収集のノードには、さらに古い版のカーネルが残っている可能性があります"
+            )
+        elif getattr(cov, "expected_nodes", 0) is None:
+            summary.coverage_note = f"期待ノード数が不明です（{cov.describe()}）。全ノード分かどうかを確認できません"
 
     # 6) run-to-run changes and the snapshot for the next run
     result.changes = compute_changes(result, previous_snapshot)

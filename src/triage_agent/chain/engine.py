@@ -1224,6 +1224,8 @@ def _format_kernel_auto_section(ka: Any) -> List[str]:
             state += f"：{p.reason}"
         if p.status == "ok" and not p.grounded_in_telemetry:
             state += "（構成定義上の版で照会）"
+        if getattr(p, "coverage_note", None):
+            state += f" ⚠️ {p.coverage_note}"
         lines.append(
             f"| `{pid}` | {f'`{p.lineage}`' if p.lineage else '—'} | {f'`{p.installed}`' if p.installed else '—'} "
             f"| {counts[0]} | {counts[1]} | {counts[2]} | {nofix} | {lp} | {target} | {state} |"

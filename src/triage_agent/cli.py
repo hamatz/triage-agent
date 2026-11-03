@@ -294,6 +294,7 @@ def run_chain_audit_flow(args, console: Console, triage_report: Optional[Any] = 
             manual_promotions=manual_promotions,
             epss_jump=args.epss_threshold,
             cvss_lookup=(lambda ids: cvss_source.lookup(ids, offline=offline)) if cvss_source else None,
+            coverage=pool_coverage,
         )
         if cvss_source is not None:
             kernel_auto_result.cvss_source = cvss_source.label

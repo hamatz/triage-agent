@@ -313,8 +313,9 @@ v0.4.0 の連鎖評価を、複数マシンからの収集を前提とした運�
   - [ ] EUS / AUS の系列を選べるようにする（環境定義で系列を指定し、`enterprise_linux_eus:<minor>` の ecosystem を照会）。
   - [ ] RHEL の kpatch（`kpatch-patch-*`）による解消の対応付け。
   - [ ] `kernel-rt`（`::realtime` / `::nfv` の ecosystem）。
-- [ ] **⑥ ディストリ対応表の公開とアダプタ寄稿の手引き**
-- [ ] **⑦ ベンチマークへの追加**（層の昇格、収集の欠けたプール、系統違い、livepatch、照会元の無いディストリ）
+- [x] **⑥ ディストリ対応表の公開とアダプタ寄稿の手引き**（[docs/kernel-sources.md](kernel-sources.md)。登録したアダプタが表に載っているかをテストで確認）
+- [x] **⑦ ベンチマークへの追加**（`kernel_auto_cases` 14 件。層の昇格、収集の欠けたプール、系統違い、livepatch、照会元の無いディストリ、照会不全、修正版なし）
+  - 付随修正: 一部のノードしか集まっていないプールでは、自動照会の結果にも「未収集のノードにさらに古い版が残っている可能性」を表示する（`--kernel-auto` は集まったノードの最も古い版で照会するため）。
 
 ### ④ 対応ライフサイクルの時間測定とROI可視化（Lifecycle Metrics / MTTR / v0.3.1先行対応完了）
 - [x] **ライフサイクル・タイムスタンプ自動記録（`src/triage_agent/tools/lifecycle_metrics.py`）**

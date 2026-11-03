@@ -144,8 +144,11 @@ python -m triage_agent.cli --chain-audit \
   --environments environments.example.yaml \
   --chain-ledger exploit_chain_ledger.example.json \
   --telemetry triage-output/telemetry/ \
+  --kernel-auto \
   --chain-output triage-output/chain_audit_report.md
 ```
+`--kernel-auto` を付けると、台帳に載っていないカーネルの脆弱性も、実機のカーネル版とディストリの勧告から自動で引きます（Amazon Linux、Ubuntu、Debian、AlmaLinux、Rocky Linux、RHEL。[対応表](docs/kernel-sources.md)）。毎日実行すると、前回から危険度が上がったもの（KEV 掲載、EPSS 急上昇、CVSS の引き上げ）を層 1 に昇格させて知らせます（`--fail-on promoted`）。
+
 環境定義と台帳の見本は [`environments.example.yaml`](environments.example.yaml) と [`exploit_chain_ledger.example.json`](exploit_chain_ledger.example.json) です。一部のノードしか集まっていないプールは「修正済み」と判定しません。棚卸しから定期実行までの全体の流れは [docs/exploit-chain.md](docs/exploit-chain.md) を参照してください。
 
 ### 5. CI に組み込む
@@ -195,6 +198,7 @@ triage-agent の出力（レポート、環境定義、CSV、ノード情報）�
 | **サインオフの形式と運用、正本の管理** | [docs/signoff.md](docs/signoff.md) |
 | **事前予告カレンダーと監視先の追加方法** | [docs/early-warning-calendar.md](docs/early-warning-calendar.md) |
 | **攻撃連鎖の評価（環境定義、台帳、ノード情報）** | [docs/exploit-chain.md](docs/exploit-chain.md) |
+| **カーネル脆弱性の自動照会：ディストリ対応表と照会元の追加方法** | [docs/kernel-sources.md](docs/kernel-sources.md) |
 | **ベンダーとの往復と、対応時間の計測** | [docs/vendor-workflow.md](docs/vendor-workflow.md) |
 | **評価セット（見逃しと誤検知の測定）** | [docs/benchmark.md](docs/benchmark.md) |
 | **自己診断（Self-Triage）** | [docs/self-triage.md](docs/self-triage.md) |
@@ -210,6 +214,7 @@ triage-agent の出力（レポート、環境定義、CSV、ノード情報）�
 - **「この OSS は、ここで予告を出している」**: [`advisory_sources.toml`](src/triage_agent/data/advisory_sources.toml) に監視先を追加する Pull Request。公式の情報源に限り、定期日程の場合は根拠となる公式ページの URL を添えてください
 - **「この確認ポイントはベンダーに伝わらなかった」**: 確認ポイントの書き方の改善提案を Issue でお寄せください
 - **見逃しや誤検知のケース**: 評価セット（`benchmark/`）に追加できる再現ケース
+- **「このディストリのカーネル勧告は、ここから取れる」**: カーネル脆弱性の自動照会（`--kernel-auto`）の照会元を、[`kernel_sources.toml`](src/triage_agent/chain/kernel_sources.toml) に登録する Pull Request。手順は [ディストリ対応表と寄稿の手引き](docs/kernel-sources.md) にあります
 
 ### 開発に参加する場合
 

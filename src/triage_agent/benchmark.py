@@ -420,6 +420,18 @@ def run_benchmark_suite(benchmark_dir: Optional[Path] = None, output_file: Optio
             "reasoning": f"Level match: {level_match}, Deadline match: {deadline_match}, Mitigation: {item.mitigation_status}",
         })
 
+    # 6. Automatic kernel lookup cases (ADR-021 stage 7)
+    from triage_agent.benchmark_kernel import run_kernel_auto_cases
+
+    for r in run_kernel_auto_cases(manifest):
+        if r["polarity"] == "negative":
+            neg_total += 1
+            neg_safe += int(r["passed"])
+        else:
+            pos_total += 1
+            pos_detected += int(r["passed"])
+        results.append(r)
+
     # Calculate overall metrics
     total_cases = len(results)
     passed_cases = sum(1 for r in results if r["passed"])
