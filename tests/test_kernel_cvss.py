@@ -8,6 +8,7 @@ import os
 import tempfile
 import time
 import unittest
+import urllib.parse
 from pathlib import Path
 from unittest import mock
 
@@ -29,7 +30,9 @@ class FakeRedHat(RedHatCvssSource):
         self.urls.append(url)
         if self.fail:
             raise RuntimeError("network down")
-        page = int(url.rsplit("page=", 1)[1])
+        query = urllib.parse.parse_qs(urllib.parse.urlparse(url).query)
+        assert query["include_package_state"] == ["true"]
+        page = int(query["page"][0])
         size = cvss_redhat.PER_PAGE
         return self.rows[(page - 1) * size: page * size]
 
@@ -71,7 +74,7 @@ class TestRedHatCvssSource(unittest.TestCase):
         self.assertIn("CVE-2026-0001", again.lookup(["CVE-2026-0001"]))
         self.assertEqual(again.urls, [])
         # Older than 24 hours: fetched again.
-        path = Path(self.cache) / "cvss" / "redhat_kernel.json"
+        path = Path(self.cache) / "redhat" / "kernel_cves.json"
         old = time.time() - 25 * 3600
         os.utime(path, (old, old))
         third = FakeRedHat(ROWS, self.cache)
@@ -84,7 +87,7 @@ class TestRedHatCvssSource(unittest.TestCase):
         with self.assertRaises(RuntimeError):
             FakeRedHat(ROWS, self.cache, fail=True).lookup(["CVE-2026-0001"])
         FakeRedHat(ROWS, self.cache).lookup(["CVE-2026-0001"])
-        path = Path(self.cache) / "cvss" / "redhat_kernel.json"
+        path = Path(self.cache) / "redhat" / "kernel_cves.json"
         old = time.time() - 25 * 3600
         os.utime(path, (old, old))
         down = FakeRedHat(ROWS, self.cache, fail=True)

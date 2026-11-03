@@ -198,7 +198,7 @@ class OsvAdapter(KernelAdvisoryAdapter):
             versions = sorted({self.query_version(p) for p in pools})
             ident = pools[0]
             ecosystem, package = self.ecosystem_for(ident), self.package_for(ident)
-            ok_versions = 0
+            ok_versions, seen = 0, 0
             for version in versions:
                 try:
                     vulns, retrieved_at = self._query_ids(ecosystem, package, version, offline)
@@ -206,6 +206,7 @@ class OsvAdapter(KernelAdvisoryAdapter):
                     result.errors.append(f"OSV {ecosystem} {package} {version}: 照会できませんでした（{e}）")
                     continue
                 ok_versions += 1
+                seen += len(vulns)
                 for v in vulns:
                     vid, modified = v["id"], v.get("modified", "")
                     m = PER_CVE_ID_RE.match(vid)
@@ -235,9 +236,24 @@ class OsvAdapter(KernelAdvisoryAdapter):
                             source_url=f"https://osv.dev/vulnerability/{vid}", retrieved_at=retrieved_at,
                             affected_confirmed=True, applies_to_versions={version},
                         ))
+            if ok_versions == len(versions) and seen == 0 and not self._package_known(ecosystem, package, offline, result):
+                result.errors.append(
+                    f"OSV {ecosystem} にパッケージ {package} の記録がありません。照会できていないため、未修正なしとは扱いません"
+                )
+                continue
             if ok_versions == len(versions):
                 result.lineages_covered.add(lineage)
         return result
+
+    def _package_known(self, ecosystem: str, package: str, offline: bool, result: SourceResult) -> bool:
+        """An empty answer is only 'nothing affects this build' if OSV has records for the package at all
+        (a misspelled or unsupported package, e.g. 'kernel-rt' in the baseos ecosystem, also answers empty)."""
+        try:
+            vulns, _ = self._query_ids(ecosystem, package, "0", offline)
+        except Exception as e:  # noqa: BLE001
+            result.errors.append(f"OSV {ecosystem} {package}: 記録の有無を確認できませんでした（{e}）")
+            return False
+        return bool(vulns)
 
     def enrich(self, fixes: List[KernelAdvisoryFix], offline: bool = False) -> List[str]:
         errors: List[str] = []

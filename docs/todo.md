@@ -306,7 +306,13 @@ v0.4.0 の連鎖評価を、複数マシンからの収集を前提とした運�
   - [ ] NVD を CVSS の別の照会元として選べるようにする（API キーと `lastModStartDate` による差分取得が前提）。
 - [x] **④ スナップショットと昇格ルール、`--fail-on promoted`、`--promote`**
   - `chain/kernel_history.py`。EPSS 急上昇・CVSS の引き上げ・手動昇格（`promotions.json`、出典 URL 必須）。昇格は露出が続く限り維持。レポートに「前回の実行からの変化」と昇格の一覧。
-- [ ] **⑤ RHEL 対応**（OSV の `Red Hat` ecosystem で足りるか、CSAF/VEX が要るかの検証から）
+- [x] **⑤ RHEL 対応**（`chain/sources/rhel.py`）
+  - 事前検証（2026-11-03）: OSV の `Red Hat:enterprise_linux:<major>::baseos` で RHEL 9.4 の版に 117 件、8.10 に 94 件の勧告が返る（`Red Hat` だけを指定すると EUS などの系列が混ざり 392 件・651 件）。Red Hat Security Data API の `include_package_state` で、CVE ごとの未修正の状態が一括で取れる。
+  - 修正版は OSV、修正版がまだない CVE（Affected・Fix deferred・Will not fix・New）と CVE ごとの重大度は Red Hat API から。CVSS と同じ一括取得を使い回す。
+  - OSV が知らないパッケージにも空で答える問題に対処（全ディストリ共通）: 1 件も返らなければ記録の有無を確かめ、なければ照会不全。
+  - [ ] EUS / AUS の系列を選べるようにする（環境定義で系列を指定し、`enterprise_linux_eus:<minor>` の ecosystem を照会）。
+  - [ ] RHEL の kpatch（`kpatch-patch-*`）による解消の対応付け。
+  - [ ] `kernel-rt`（`::realtime` / `::nfv` の ecosystem）。
 - [ ] **⑥ ディストリ対応表の公開とアダプタ寄稿の手引き**
 - [ ] **⑦ ベンチマークへの追加**（層の昇格、収集の欠けたプール、系統違い、livepatch、照会元の無いディストリ）
 

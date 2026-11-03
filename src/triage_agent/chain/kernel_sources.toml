@@ -38,6 +38,17 @@ debian = "Debian:{major}"
 almalinux = "AlmaLinux:{major}"
 rocky = "Rocky Linux:{major}"
 
+[adapters.rhel]
+class = "triage_agent.chain.sources.rhel:RhelAdapter"
+description = "RHEL: OSV.dev Red Hat ecosystem (RHSA / RHBA, main stream) + Red Hat fix states for unfixed CVEs"
+distros = ["rhel"]
+verified_at = "2026-11-03"
+redhat_packages = ["kernel"]
+
+# Main stream of each major release (EUS / AUS streams are not queried; see sources/rhel.py).
+[adapters.rhel.ecosystems]
+rhel = "Red Hat:enterprise_linux:{major}::baseos"
+
 # Threat signal sources used to order and promote automatically found kernel CVEs. They are looked up
 # in bulk for every exposed CVE; nothing about the environment is sent.
 [signals.cvss]

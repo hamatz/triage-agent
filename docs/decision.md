@@ -283,6 +283,7 @@
        - `--fail-on promoted` は「前回から新たに層 1 になったもの」があるときに発火する変化の通知とし、状態として止め続ける役は `critical_chain` が担う。オフライン実行（`--dry-run`）ではスナップショットを更新しない。
   3. **照会元アダプタ:**
      - 既定は対応範囲が最も広い OSV とする。OSV に ecosystem が無い Amazon Linux 向けに ALAS アダプタ（リポジトリメタデータ `updateinfo.xml` を中央で取得・解析、`latest` に対して判定）を用意する。RHEL は OSV の `Red Hat` ecosystem で足りるかを検証して決める。
+     - **実装時の補足（段階⑤）:** RHEL は OSV の `Red Hat:enterprise_linux:<major>::baseos`（本流）を照会し、Red Hat Security Data API の CVE ごとの状態から「修正版がまだない CVE」（Affected・Fix deferred・Will not fix・New）を加える。勧告だけを見る照会元では、修正版のない CVE が見えないためである。ecosystem を `Red Hat` だけにすると EUS / AUS の系列の勧告が混ざり、本流の利用者の判定を誤るため使わない。EUS の利用者は本流と比べることになり、延長サポートで直った CVE も露出と出る（安全側）。系列の指定は今後の課題とする。また OSV は知らないパッケージにも空で答えるため、1 件も返らない場合はパッケージの記録の有無を確かめ、なければ照会不全とする（全ディストリ共通）。
      - すべてのアダプタは、系統が一致しない修正版を返さないこと、照会不全を件数で返すこと、出典 URL と取得日時を付けること（`provenance: auto`）を契約とし、同じ CVE が手動台帳にあれば手動を優先する。
      - livepatch は「適用中の livepatch がどの CVE を解消するか」という共通の形だけを中核で扱い、対応付けを返せないアダプタでは livepatch の存在だけで解消扱いにしない。
   4. **複数マシンからの収集を手順と仕組みの両方で支える:**
