@@ -332,6 +332,7 @@ triage-agent/
         │   ├── engine.py     # 連鎖判定コア＆レポート生成
         │   ├── kernel_exposure.py # カーネル脆弱性の自動照会と 3 層分類 (v0.5.0 / ADR-021)
         │   ├── kernel_history.py  # 前回の実行との比較と昇格 (v0.5.0)
+        │   ├── kernel_inquiry.py  # ベンダーへのカーネルの版の問い合わせと突き合わせ (v0.5.1 / ADR-022)
         │   ├── kernel_sources.toml # 照会元アダプタの登録表 (v0.5.0)
         │   ├── sources/      # 照会元アダプタ（ALAS / OSV / RHEL、Red Hat の CVSS）(v0.5.0)
         │   ├── foothold.py   # アプリ層侵入足場（RCE）多層判定

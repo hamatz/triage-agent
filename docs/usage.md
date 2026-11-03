@@ -70,6 +70,34 @@ python -m triage_agent.cli --record-remediation DIST-xxxxxxxx-xxxxxx \
   --remediated-at 2026-12-02T10:30:00+09:00
 ```
 
+### カーネル脆弱性の問い合わせ（`--kernel-inquiry`）
+
+「他のサーバーでカーネルの脆弱性を突かれて乗っ取られたらしい。うちのサーバーにも、同じような脆弱性が残っていないか」を、開発ベンダーへの問い合わせで確かめます。テレメトリの収集や環境定義は要りません（ADR-022）。
+
+ベンダーに聞くのは、**各サーバーで動いているカーネルの版だけ** です。どの脆弱性が残っているかは、返ってきた版をこのツールが各ディストリの勧告と突き合わせて割り出します。
+
+```bash
+# 1. ベンダーに送る記入表（CSV）と、依頼文つきの説明（Markdown）を作る
+python -m triage_agent.cli --kernel-inquiry --kernel-inquiry-target "受注システム 本番"
+
+# 2. 返ってきた記入表から、残っている脆弱性と、更新してほしい版を割り出す
+python -m triage_agent.cli --kernel-inquiry-answers kernel_inquiry_answered.csv \
+  --kernel-inquiry-target "受注システム 本番"
+```
+
+| オプション | 既定値 | 説明 |
+| :--- | :--- | :--- |
+| `--kernel-inquiry` | 無効 | 記入表と説明を書き出します。記入表には、各サーバーで実行してもらう読み取りのみのコマンド（1 行を出力）が入っています |
+| `--kernel-inquiry-answers CSV` | なし | 返ってきた記入表を読み、カーネルの版ごとに、残っている脆弱性と更新してほしい版を出します。ベンダーへの依頼文も出ます |
+| `--kernel-inquiry-target NAME` | なし | 記入表と結果に書くシステム名 |
+| `--kernel-inquiry-output PATH` | `triage-output/kernel_inquiry_<日付>.csv`（記入表）、`triage-output/kernel_inquiry_result_<日付>.md`（結果） | 書き出し先 |
+
+- **対象:** CISA KEV に載っている Linux カーネルの脆弱性（悪用確認済み）と、`--kernel-auto` や `--promote` で層 1 に昇格させたもの（`--kernel-auto-state` の場所から読みます）です。悪用の確認されていないものは件数と、すべて解消する版だけを示します。
+- **照会元:** `--kernel-auto` と同じです（Amazon Linux、RHEL、Ubuntu、Debian、AlmaLinux、Rocky Linux。[対応表](kernel-sources.md)）。照会できなかった版は「判定できませんでした」と出し、「残っていない」とは扱いません。
+- **再起動待ち:** 新しいカーネルが入っているのに再起動されていないサーバーは、動いている古い版で判定し、そのことを明記します。
+- **更新の確認:** 更新のあとで同じ記入表をもう一度返してもらい、`--kernel-inquiry-answers` を実行すれば、解消したかを確かめられます。
+- 同じ出力の行は 1 種類にまとめ、台数を足します。`--dry-run` ではキャッシュ済みのデータだけを使います。定期実行の `--kernel-auto` のスナップショットは書き換えません。
+
 ### 自社コードベース同時自動検証
 ```bash
 # トリアージと同時に自社コード・設定を自動検証

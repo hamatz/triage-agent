@@ -432,9 +432,10 @@ def run_chain_audit_flow(args, console: Console, triage_report: Optional[Any] = 
     if critical_chains:
         console.print(
             Panel(
-                f"[bold red]🚨 【CRITICAL ALERT: 連鎖エクスプロイト（Exploit Chain）を検知しました】[/bold red]\n"
+                f"[bold red]🚨 【CRITICAL ALERT: 連鎖エクスプロイト（Exploit Chain）の条件がそろった構成があります】[/bold red]\n"
                 f"単体のCVSSスコアではMedium/Highに留まる脆弱性が、公開ワークロードのRCE足場と同一ホスト上のカーネルLPEにより\n"
-                f"結合し、ホスト全体の完全掌握および同居マイクロサービスへの水平展開が可能な状態です。\n\n"
+                f"結合し、ホスト全体の完全掌握および同居マイクロサービスへの水平展開が可能な状態です。\n"
+                f"（構成と版から見た判定です。実際に攻撃・侵入されたことを示すものではありません）\n\n"
                 + "\n".join([
                     f"• [bold red]ワークロード: {i.workload_name}[/bold red] (ノード: {i.node_pool_id})\n"
                     f"  - 足場RCE: {i.foothold_detail or i.app_cve or '未知/疑義'}\n"
@@ -451,6 +452,76 @@ def run_chain_audit_flow(args, console: Console, triage_report: Optional[Any] = 
         console.print("[bold green]✓ Critical な連鎖エクスプロイト（RCE足場＋未緩和LPE）は検出されませんでした。[/bold green]")
 
     return audit_items
+
+
+def run_kernel_inquiry_flow(args, console) -> None:
+    """--kernel-inquiry / --kernel-inquiry-answers: ask the vendor for kernel versions, then work out what is left (ADR-022)."""
+    import time as _time
+    from triage_agent.chain import kernel_inquiry as ki
+
+    today = _time.strftime("%Y%m%d")
+    target = args.kernel_inquiry_target or ""
+    if not args.kernel_inquiry_answers:
+        out = Path(args.kernel_inquiry_output) if args.kernel_inquiry_output else Path("triage-output") / f"kernel_inquiry_{today}.csv"
+        csv_path, md_path, dist_id = ki.write_request(target, out)
+        console.print(f"[bold green]✓ カーネルの版を問い合わせる記入表を書き出しました（配布 ID {dist_id}）[/bold green]")
+        console.print(f"  ベンダーに送る記入表: {csv_path}")
+        console.print(f"  依頼文と次の手順（送る前に読んでください）: {md_path}")
+        return
+
+    from triage_agent.chain.feeds import ThreatFeedClient
+    from triage_agent.chain.kernel_exposure import run_kernel_auto
+    from triage_agent.chain.kernel_history import load_manual_promotions, load_snapshot
+    from triage_agent.chain.sources import build_adapters, build_cvss_source, load_registry, load_signal_registry
+
+    answers = Path(args.kernel_inquiry_answers)
+    if not answers.exists():
+        console.print(f"[bold red]❌ 記入表が見つかりません: {answers}[/bold red]")
+        sys.exit(1)
+    lines, problems, dist_id = ki.read_answers(answers)
+    for p in problems:
+        console.print(f"[yellow]⚠️ {p}[/yellow]")
+    if not lines:
+        console.print("[bold red]❌ 記入表に、読み込めるコマンドの出力が 1 行もありません。[/bold red]")
+        sys.exit(1)
+
+    offline = bool(args.dry_run or args.demo)   # --demo never talks to the network
+    feed = ThreatFeedClient(epss_jump_threshold=args.epss_threshold)
+    try:
+        kev = feed.load_cached_kev_catalog() if offline else feed.fetch_cisa_kev_catalog()
+    except Exception as e:  # noqa: BLE001
+        console.print(f"[bold red]❌ CISA KEV カタログを取得できませんでした: {e}[/bold red]")
+        sys.exit(1)
+    state_dir = args.kernel_auto_state
+    snapshot, snapshot_problem = load_snapshot(state_dir)
+    if snapshot_problem:
+        console.print(f"[bold yellow]⚠️ {snapshot_problem}[/bold yellow]")
+    try:
+        manual = load_manual_promotions(state_dir)
+    except Exception as e:  # noqa: BLE001
+        console.print(f"[bold red]❌ 手動昇格の台帳（{state_dir}/promotions.json）を読めません: {e}[/bold red]")
+        sys.exit(1)
+
+    env, tels = ki.to_environment(lines)
+    cache_dir = str(feed.cache_dir)
+    cvss_source = build_cvss_source(load_signal_registry(), cache_dir=cache_dir)
+    console.print(f"ℹ️ {len(lines)} 種類のカーネルを、ディストリの勧告と突き合わせています...")
+    auto = run_kernel_auto(
+        environment=env, telemetries=tels, adapters=build_adapters(load_registry(), cache_dir=cache_dir),
+        kev_lookup=lambda: kev, epss_lookup=feed.fetch_epss_scores, offline=offline,
+        epss_threshold=args.kernel_auto_epss, previous_snapshot=snapshot, manual_promotions=manual,
+        epss_jump=args.epss_threshold,
+        cvss_lookup=(lambda ids: cvss_source.lookup(ids, offline=offline)) if cvss_source else None,
+    )
+    # The snapshot of the scheduled --kernel-auto runs is not overwritten: this is a one-off lookup.
+    out = Path(args.kernel_inquiry_output) if args.kernel_inquiry_output else Path("triage-output") / f"kernel_inquiry_result_{today}.md"
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_text(ki.render_result(target, lines, auto, kev, problems, dist_id, answers), encoding="utf-8")
+    ki.record_answers_imported(dist_id, answers, lines)
+    left = sum(1 for ln in lines if (s := auto.pools.get(ln.group_id)) and s.status == "ok" and any(x.tier == 1 for x in s.exposed))
+    unknown = sum(1 for ln in lines if (s := auto.pools.get(ln.group_id)) is None or s.status != "ok")
+    console.print(f"[bold green]✓ 照会結果を書き出しました: {out}[/bold green]")
+    console.print(f"  {len(lines)} 種類のカーネルのうち、悪用確認済み・警戒引き上げの脆弱性が残っているもの {left} 種類、判定できなかったもの {unknown} 種類")
 
 
 def _kernel_promotion_reason(args) -> Optional[str]:
@@ -663,6 +734,33 @@ def main():
         help="Remove a CVE from the manual promotion ledger",
     )
     parser.add_argument(
+        "--kernel-inquiry",
+        action="store_true",
+        help="Write a form asking the development vendor which kernel each server runs (CSV) and a note with a "
+             "ready-to-send request (Markdown). Read the returned form with --kernel-inquiry-answers (ADR-022)",
+    )
+    parser.add_argument(
+        "--kernel-inquiry-answers",
+        type=str,
+        default=None,
+        metavar="CSV",
+        help="Read the form returned by the vendor, look the kernels up in the distribution advisories and list the "
+             "exploited (CISA KEV) and promoted kernel CVEs still unfixed, with the version to update to",
+    )
+    parser.add_argument(
+        "--kernel-inquiry-target",
+        type=str,
+        default=None,
+        help="System name written in the inquiry (e.g. 'Order system production')",
+    )
+    parser.add_argument(
+        "--kernel-inquiry-output",
+        type=str,
+        default=None,
+        help="Output path (default: triage-output/kernel_inquiry_<date>.csv for the form, "
+             "triage-output/kernel_inquiry_result_<date>.md for the result)",
+    )
+    parser.add_argument(
         "--telemetry-max-age",
         type=int,
         default=7,
@@ -764,6 +862,12 @@ def main():
         except ValueError as e:
             console.print(f"[bold red]❌ {e}[/bold red]")
             sys.exit(1)
+        if not args.chain_audit and args.verify_code is None and not args.self_triage and args.sbom == "sample_sbom.json" and not args.output:
+            return
+
+    # Kernel vulnerability inquiry list for the development vendor (ADR-022)
+    if args.kernel_inquiry or args.kernel_inquiry_answers:
+        run_kernel_inquiry_flow(args, console)
         if not args.chain_audit and args.verify_code is None and not args.self_triage and args.sbom == "sample_sbom.json" and not args.output:
             return
 
