@@ -15,7 +15,7 @@ dependencies = [
 [project.optional-dependencies]
 # Development: pip install -e ".[dev]"
 dev = [
-    "pytest>=8.0",
+    "pytest>=9.2.0",
 ]
 
 [project.scripts]
