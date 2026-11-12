@@ -60,7 +60,11 @@ def os_label(distro: str, release: str) -> str:
 
 
 # -- step 1: the request ---------------------------------------------------------------------------
-def write_request(target: str, csv_path: Path) -> Tuple[Path, Path, str]:
+def build_request(target: str, csv_name: str = "") -> Tuple[str, str, str]:
+    """The request form (CSV text with BOM), the note for the system owner (Markdown) and the distribution ID.
+
+    Nothing is written to disk; the CLI writes both files, the web UI offers them as downloads.
+    """
     from triage_agent.tools.vendor_workflow import generate_distribution_id, record_workflow_event, sanitize_csv_cell as s
 
     distribution_id = generate_distribution_id(target or "kernel")
@@ -80,23 +84,33 @@ def write_request(target: str, csv_path: Path) -> Tuple[Path, Path, str]:
     w = csv.DictWriter(buf, fieldnames=REQUEST_HEADERS)
     w.writeheader()
     w.writerows(rows)
-    csv_path.parent.mkdir(parents=True, exist_ok=True)
-    csv_path.write_text(buf.getvalue(), encoding="utf-8")
-    md_path = csv_path.with_suffix(".md")
-    md_path.write_text(render_request_markdown(target, csv_path, distribution_id), encoding="utf-8")
+    csv_name = csv_name or request_file_name(distribution_id)
     record_workflow_event("vendor_checklist_exported", {
-        "distribution_id": distribution_id, "file_path": str(csv_path), "target_product": target or None,
+        "distribution_id": distribution_id, "file_path": csv_name, "target_product": target or None,
         "check_points_count": 0, "report_title": "kernel_inquiry", "announced_at": None,
     })
+    return buf.getvalue(), render_request_markdown(target, csv_name, distribution_id), distribution_id
+
+
+def request_file_name(distribution_id: str) -> str:
+    return f"kernel_inquiry_{distribution_id}.csv"
+
+
+def write_request(target: str, csv_path: Path) -> Tuple[Path, Path, str]:
+    csv_text, md_text, distribution_id = build_request(target, csv_path.name)
+    csv_path.parent.mkdir(parents=True, exist_ok=True)
+    csv_path.write_text(csv_text, encoding="utf-8")
+    md_path = csv_path.with_suffix(".md")
+    md_path.write_text(md_text, encoding="utf-8")
     return csv_path, md_path, distribution_id
 
 
-def render_request_markdown(target: str, csv_path: Path, distribution_id: str) -> str:
+def render_request_markdown(target: str, csv_name: str, distribution_id: str) -> str:
     name = target or "本番環境"
     return "\n".join([
         f"# カーネル脆弱性の問い合わせ（{name}）",
         "",
-        f"配布 ID: `{distribution_id}` ／ ベンダーに送る記入表: `{csv_path.name}`",
+        f"配布 ID: `{distribution_id}` ／ ベンダーに送る記入表: `{csv_name}`",
         "",
         "## なぜ問い合わせるのか",
         "",
@@ -109,16 +123,15 @@ def render_request_markdown(target: str, csv_path: Path, distribution_id: str) -
         "",
         "## ベンダーへの依頼文（そのまま送れます）",
         "",
-        "> 本番環境のサーバーで動いているカーネルの版を確認させてください。",
-        "> 各サーバーで次のコマンドを実行し、出力された 1 行を、添付の記入表に貼り付けてご返送ください。"
-        "同じ出力のサーバーは 1 行にまとめ、台数をご記入ください。",
-        "> コマンドは読み取りのみで、設定は変更しません。ホスト名や IP アドレスは不要です。",
+    ] + [f"> {m}" for m in request_message().split("\n")[:3]] + [
         "",
         "```sh",
         COLLECT_COMMAND,
         "```",
         "",
         "## 返ってきたら",
+        "",
+        "画面（`python -m triage_agent.cli --gui`）の「カーネルの問い合わせ」で返送された記入表を読み込むか、次のコマンドを実行します。",
         "",
         f"```sh\npython -m triage_agent.cli --kernel-inquiry-answers <返送された記入表.csv> --kernel-inquiry-target \"{name}\"\n```",
         "",
@@ -180,7 +193,15 @@ def parse_line(text: str) -> Tuple[Optional[dict], str]:
 
 def read_answers(csv_path: Path) -> Tuple[List[KernelLine], List[str], Optional[str]]:
     """Kernel lines from a returned form (identical kernels merged), problems, and the distribution ID."""
-    content = Path(csv_path).read_text(encoding="utf-8-sig")
+    from triage_agent.tools.vendor_workflow import decode_csv_bytes
+
+    return read_answers_text(decode_csv_bytes(Path(csv_path).read_bytes()))
+
+
+def read_answers_text(content: str) -> Tuple[List[KernelLine], List[str], Optional[str]]:
+    content = content.lstrip("\ufeff")
+    if "コマンドの出力（1 行をそのまま貼り付け）" not in content.split("\n", 1)[0]:
+        raise ValueError("カーネルの問い合わせの記入表ではありません（見出しの行が違います）")
     groups: Dict[Tuple[str, str, str, str], KernelLine] = {}
     problems: List[str] = []
     dist_ids = set()
@@ -278,13 +299,74 @@ def _reason(x, kev: Dict[str, dict]) -> str:
     return ""
 
 
+def _reboot_fixes(ln: KernelLine, s) -> Tuple[Optional[str], bool]:
+    """(pending newer build or 'yes', whether rebooting into it clears every exploited CVE that has a fix)."""
+    reboot = ln.reboot_pending()
+    if not reboot or reboot == "yes":
+        return reboot, False
+    raw_target = _tier1_target(ln.distro, s.exposed)
+    cmp = compare_kernel_versions(ln.distro, reboot, raw_target) if raw_target else None
+    return reboot, cmp is not None and cmp >= 0
+
+
+def vendor_requests(lines: List[KernelLine], auto) -> List[str]:
+    """One plain-text request per kernel line that needs action (shared by the Markdown report and the screen)."""
+    out = []
+    for ln in lines:
+        s = auto.pools.get(ln.group_id)
+        head = f"{ln.label or ln.group_id}（{os_label(ln.distro, ln.release)}、現在 {ln.uname}、{f'{ln.count} 台' if ln.count else '台数不明'}）: "
+        if s is None or s.status != "ok":
+            out.append(head + "こちらでは判定できませんでした。CISA KEV に載っている Linux カーネルの脆弱性が残っていないか、ディストリの勧告でご確認ください。")
+            continue
+        t1 = [x for x in s.exposed if x.tier == 1]
+        if not t1:
+            continue
+        target_v = _show(ln, _tier1_target(ln.distro, s.exposed))
+        reboot, fixes_reboot = _reboot_fixes(ln, s)
+        req = head
+        if target_v and fixes_reboot:
+            req += f"インストール済みの新しいカーネル（{_show(ln, reboot)}）で再起動してください（{target_v} 以上であれば解消します）。"
+        elif target_v:
+            req += f"カーネルを {target_v} 以上に更新し、再起動してください。"
+        no_fix = [x.cve_id for x in t1 if not x.fixed_evr]
+        if no_fix:
+            req += f" 修正版のまだない {', '.join(no_fix)} は、緩和策の適用状況を教えてください。"
+        out.append(req)
+    return out
+
+
+def result_message(lines: List[KernelLine], auto) -> str:
+    """The follow-up request to the vendor as plain text ('' when nothing needs to be asked)."""
+    reqs = vendor_requests(lines, auto)
+    if not reqs:
+        return ""
+    return "\n".join([
+        "ご回答いただいたカーネルの版を確認したところ、悪用が確認されているカーネルの脆弱性が残っているサーバー"
+        "（または、こちらで判定できなかったサーバー）がありました。",
+        "以下の対応をお願いします。対応後、前回と同じコマンドの出力を、記入表でもう一度ご返送ください。こちらで解消を確認します。",
+        "",
+    ] + [f"- {r}" for r in reqs])
+
+
+def request_message() -> str:
+    """The first request to the vendor as plain text (asks only for kernel versions)."""
+    return "\n".join([
+        "本番環境のサーバーで動いているカーネルの版を確認させてください。",
+        "各サーバーで次のコマンドを実行し、出力された 1 行を、添付の記入表に貼り付けてご返送ください。"
+        "同じ出力のサーバーは 1 行にまとめ、台数をご記入ください。",
+        "コマンドは読み取りのみで、設定は変更しません。ホスト名や IP アドレスは不要です。",
+        "",
+        COLLECT_COMMAND,
+    ])
+
+
 def render_result(target: str, lines: List[KernelLine], auto, kev: Dict[str, dict], problems: List[str],
-                  distribution_id: Optional[str], answers_path: Path) -> str:
+                  distribution_id: Optional[str], answers_path) -> str:
     name = target or "本番環境"
     out = [
         f"# カーネル脆弱性の照会結果（{name}）",
         "",
-        f"記入表: `{answers_path.name}`" + (f" ／ 配布 ID: `{distribution_id}`" if distribution_id else ""),
+        f"記入表: `{Path(answers_path).name}`" + (f" ／ 配布 ID: `{distribution_id}`" if distribution_id else ""),
         "",
         "ベンダーから返ってきたカーネルの版を、各ディストリの勧告と突き合わせました。対象は、**悪用が確認されている脆弱性**（CISA KEV）と、"
         "**このツールが警戒を引き上げたもの** です。",
@@ -294,7 +376,6 @@ def render_result(target: str, lines: List[KernelLine], auto, kev: Dict[str, dic
         "| サーバー群 | OS | 動いているカーネル | 台数 | 残っている脆弱性（悪用確認済み・警戒引き上げ） | 更新してほしい版 |",
         "| :--- | :--- | :--- | :--- | :--- | :--- |",
     ]
-    requests: List[str] = []
     details: List[str] = []
     for ln in lines:
         s = auto.pools.get(ln.group_id)
@@ -305,14 +386,11 @@ def render_result(target: str, lines: List[KernelLine], auto, kev: Dict[str, dic
             out.append(f"| {label} | {os_label(ln.distro, ln.release)} | `{ln.uname}` | {count} | ❓ 判定できませんでした | — |")
             details += [f"### {label}（`{ln.uname}`、{count}）", "", f"❓ **判定できませんでした**: {reason}", "",
                         "この版は、残っている脆弱性がないという意味ではありません。ベンダーに、ディストリの勧告での確認をお願いしてください。", ""]
-            requests.append(f"- {label}（{os_label(ln.distro, ln.release)}、現在 `{ln.uname}`、{count}）: こちらでは判定できませんでした。"
-                            "CISA KEV に載っている Linux カーネルの脆弱性が残っていないか、ディストリの勧告でご確認ください。")
             continue
         t1 = [x for x in s.exposed if x.tier == 1]
         target_v = _show(ln, _tier1_target(ln.distro, s.exposed))
         no_fix = [x for x in t1 if not x.fixed_evr]
-        reboot = ln.reboot_pending()
-        fixes_reboot = False
+        reboot, fixes_all = _reboot_fixes(ln, s)
         if not t1:
             out.append(f"| {label} | {os_label(ln.distro, ln.release)} | `{ln.uname}` | {count} | ✅ なし | — |")
         else:
@@ -321,9 +399,6 @@ def render_result(target: str, lines: List[KernelLine], auto, kev: Dict[str, dic
         details += [f"### {label}（`{ln.uname}`、{count}）", ""]
         if reboot:
             newer = "新しいカーネル" + (f"（{_show(ln, reboot)}）" if reboot != "yes" else "")
-            raw_target = _tier1_target(ln.distro, s.exposed)
-            cmp = compare_kernel_versions(ln.distro, reboot, raw_target) if reboot != "yes" and raw_target else None
-            fixes_all = fixes_reboot = cmp is not None and cmp >= 0
             details += [f"⚠️ {newer}はインストールされていますが、**再起動されておらず、古いカーネルのまま動いています**。"
                         + ("再起動すれば、下の脆弱性のうち修正版のあるものは解消します。" if fixes_all else "再起動してから、もう一度確かめてください。"), ""]
         if not t1:
@@ -343,24 +418,10 @@ def render_result(target: str, lines: List[KernelLine], auto, kev: Dict[str, dic
             details += [f"livepatch で解消済みのものが {s.livepatched} 件あります（数に含めていません）。", ""]
         if s.indeterminate:
             details += [f"版の比べ方が確定できず、残っているものとして数えたものが {s.indeterminate} 件あります。", ""]
-        if t1:
-            req = f"- {label}（{os_label(ln.distro, ln.release)}、現在 `{ln.uname}`、{count}）: "
-            if target_v and fixes_reboot:
-                req += f"インストール済みの新しいカーネル（{_show(ln, reboot)}）で再起動してください（{target_v} 以上であれば解消します）。"
-            elif target_v:
-                req += f"カーネルを **{target_v} 以上** に更新し、再起動してください。"
-            if no_fix:
-                req += f" 修正版のまだない {', '.join(x.cve_id for x in no_fix)} は、緩和策の適用状況を教えてください。"
-            requests.append(req)
     out += [""]
-    if requests:
-        out += [
-            "## ベンダーへの依頼文（そのまま送れます）",
-            "",
-            "> ご回答いただいたカーネルの版を確認したところ、悪用が確認されているカーネルの脆弱性が残っているサーバーがありました。",
-            "> 以下の対応をお願いします。対応後、前回と同じコマンドの出力を、記入表でもう一度ご返送ください。こちらで解消を確認します。",
-            ">",
-        ] + [f"> {r}" for r in requests] + [""]
+    message = result_message(lines, auto)
+    if message:
+        out += ["## ベンダーへの依頼文（そのまま送れます）", ""] + [f"> {m}" if m else ">" for m in message.split("\n")] + [""]
     out += ["## サーバー群ごとの詳細", ""] + details
     notes = list(problems) + list(auto.errors)
     if notes:
@@ -374,6 +435,77 @@ def render_result(target: str, lines: List[KernelLine], auto, kev: Dict[str, dic
         "",
     ]
     return "\n".join(out)
+
+
+class InquiryLookupError(Exception):
+    """The lookup could not start (no KEV catalog, unreadable promotion ledger)."""
+
+
+def lookup(lines: List[KernelLine], state_dir: str = "triage-output/kernel_auto", offline: bool = False,
+           epss_threshold: float = 0.1, epss_jump: float = 0.15, cache_dir: Optional[str] = None):
+    """Look the returned kernels up with the --kernel-auto sources. Shared by the CLI and the web UI.
+
+    Returns (KernelAutoResult, KEV catalog, notes). The --kernel-auto snapshot is read (for promotions in
+    force) but never written: this is a one-off lookup.
+    """
+    from triage_agent.chain.feeds import ThreatFeedClient
+    from triage_agent.chain.kernel_exposure import run_kernel_auto
+    from triage_agent.chain.kernel_history import load_manual_promotions, load_snapshot
+    from triage_agent.chain.sources import build_adapters, build_cvss_source, load_registry, load_signal_registry
+
+    notes: List[str] = []
+    feed = ThreatFeedClient(cache_dir=Path(cache_dir) if cache_dir else None, epss_jump_threshold=epss_jump)
+    try:
+        kev = feed.load_cached_kev_catalog() if offline else feed.fetch_cisa_kev_catalog()
+    except Exception as e:  # noqa: BLE001
+        raise InquiryLookupError(f"CISA KEV カタログを取得できませんでした: {e}") from e
+    snapshot, snapshot_problem = load_snapshot(state_dir)
+    if snapshot_problem:
+        notes.append(snapshot_problem)
+    try:
+        manual = load_manual_promotions(state_dir)
+    except Exception as e:  # noqa: BLE001
+        raise InquiryLookupError(f"手動昇格の台帳（{state_dir}/promotions.json）を読めません: {e}") from e
+    env, tels = to_environment(lines)
+    cache = str(feed.cache_dir)
+    cvss_source = build_cvss_source(load_signal_registry(), cache_dir=cache)
+    auto = run_kernel_auto(
+        environment=env, telemetries=tels, adapters=build_adapters(load_registry(), cache_dir=cache),
+        kev_lookup=lambda: kev, epss_lookup=feed.fetch_epss_scores, offline=offline,
+        epss_threshold=epss_threshold, previous_snapshot=snapshot, manual_promotions=manual, epss_jump=epss_jump,
+        cvss_lookup=(lambda ids: cvss_source.lookup(ids, offline=offline)) if cvss_source else None,
+    )
+    auto.kev_catalog_info = feed.kev_catalog_info
+    return auto, kev, notes
+
+
+def summarize(lines: List[KernelLine], auto, kev: Dict[str, dict]) -> List[dict]:
+    """One entry per kernel line for the screen (the Markdown report says the same in prose)."""
+    out = []
+    for ln in lines:
+        s = auto.pools.get(ln.group_id)
+        item = {
+            "label": ln.label or ln.group_id, "os": os_label(ln.distro, ln.release), "uname": ln.uname,
+            "count": ln.count, "status": "unknown", "reason": "", "remaining": [], "target": None,
+            "reboot_pending": None, "others": 0, "all_fixes_target": None,
+        }
+        if s is None or s.status != "ok":
+            item["reason"] = s.reason if s else "照会できませんでした"
+            out.append(item)
+            continue
+        t1 = [x for x in s.exposed if x.tier == 1]
+        item["status"] = "remaining" if t1 else "clear"
+        item["target"] = _show(ln, _tier1_target(ln.distro, s.exposed))
+        reboot = ln.reboot_pending()
+        item["reboot_pending"] = (_show(ln, reboot) if reboot and reboot != "yes" else reboot)
+        item["remaining"] = [{
+            "cve": x.cve_id, "name": (kev.get(x.cve_id) or {}).get("vulnerabilityName") or "",
+            "reason": _reason(x, kev), "fixed": _show(ln, x.fixed_evr), "url": x.source_url,
+        } for x in t1]
+        item["others"] = s.tier_counts.get(2, 0) + s.tier_counts.get(3, 0)
+        item["all_fixes_target"] = _show(ln, s.all_fixes_target)
+        out.append(item)
+    return out
 
 
 def record_answers_imported(distribution_id: Optional[str], answers_path: Path, lines: List[KernelLine]) -> None:

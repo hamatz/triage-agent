@@ -32,6 +32,8 @@ console = Console()
 SERVER_CSRF_TOKEN = secrets.token_hex(24)
 
 DEFAULT_OUTPUT_DIR = Path.cwd().resolve() / "triage-output"
+MAX_POST_BYTES = 20 * 1024 * 1024
+MAX_UPLOAD_CSV_BYTES = 2 * 1024 * 1024
 
 
 def resolve_safe_path(path_str: str, base_dir: Optional[Path] = None) -> Path:
@@ -170,6 +172,8 @@ def get_bundled_html() -> str:
     js_bytes = load_static_asset("app.js")
     css_text = css_bytes.decode("utf-8") if css_bytes else ""
     js_text = js_bytes.decode("utf-8") if js_bytes else ""
+    views_bytes = load_static_asset("views.js")
+    views_text = views_bytes.decode("utf-8") if views_bytes else ""
 
     bundled = html.replace(
         '<link rel="stylesheet" href="/static/style.css">',
@@ -177,6 +181,9 @@ def get_bundled_html() -> str:
     ).replace(
         '<script src="/static/app.js"></script>',
         f"<script>\n{js_text}\n</script>"
+    ).replace(
+        '<script src="/static/views.js"></script>',
+        f"<script>\n{views_text}\n</script>"
     )
     return bundled
 
@@ -198,6 +205,66 @@ class TriageDashboardHandler(BaseHTTPRequestHandler):
         self.send_header("X-Content-Type-Options", "nosniff")
         self.send_header("X-Frame-Options", "DENY")
         super().end_headers()
+
+    def _send_json(self, code: int, payload: Dict[str, Any]) -> None:
+        self.send_response(code)
+        self.send_header("Content-Type", "application/json; charset=utf-8")
+        self.end_headers()
+        self.wfile.write(json.dumps(payload, ensure_ascii=False).encode("utf-8"))
+
+    def _handle_kernel_inquiry(self, clean_path: str, req_data: Dict[str, Any]) -> None:
+        """Kernel inquiry (v0.5.1 / ADR-022): ask the vendor for kernel versions, then work out what is left."""
+        from triage_agent.chain import kernel_inquiry as ki
+
+        target = str(req_data.get("target") or "").strip()[:200]
+        if clean_path == "/api/kernel-inquiry/request":
+            csv_text, md_text, dist_id = ki.build_request(target)
+            self._send_json(200, {
+                "success": True, "distribution_id": dist_id, "filename": ki.request_file_name(dist_id),
+                "csv": csv_text, "markdown": md_text, "message": ki.request_message(), "command": ki.COLLECT_COMMAND,
+            })
+            return
+
+        # /api/kernel-inquiry/answers
+        import base64
+        import binascii
+        from triage_agent.tools.vendor_workflow import decode_csv_bytes
+
+        filename = Path(str(req_data.get("filename") or "answers.csv")).name[:200]
+        try:
+            raw = base64.b64decode(str(req_data.get("content_b64") or ""), validate=True)
+        except (binascii.Error, ValueError):
+            self._send_json(400, {"success": False, "error": "ファイルを読み取れませんでした。"})
+            return
+        if not raw:
+            self._send_json(400, {"success": False, "error": "ファイルが空です。"})
+            return
+        if len(raw) > MAX_UPLOAD_CSV_BYTES:
+            self._send_json(413, {"success": False, "error": "記入表が大きすぎます（上限 2 MB）。"})
+            return
+        try:
+            lines, problems, dist_id = ki.read_answers_text(decode_csv_bytes(raw))
+        except ValueError as e:
+            self._send_json(400, {"success": False, "error": str(e)})
+            return
+        if not lines:
+            self._send_json(400, {"success": False, "problems": problems,
+                                  "error": "記入表に、読み込めるコマンドの出力が 1 行もありません。"})
+            return
+        try:
+            auto, kev, notes = ki.lookup(lines, offline=bool(req_data.get("offline")))
+        except ki.InquiryLookupError as e:
+            self._send_json(502, {"success": False, "error": str(e)})
+            return
+        ki.record_answers_imported(dist_id, Path(filename), lines)
+        self._send_json(200, {
+            "success": True, "distribution_id": dist_id, "target": target,
+            "groups": ki.summarize(lines, auto, kev),
+            "message": ki.result_message(lines, auto),
+            "markdown": ki.render_result(target, lines, auto, kev, problems, dist_id, filename),
+            "problems": problems, "errors": list(notes) + list(auto.errors),
+            "kev_version": (getattr(auto, "kev_catalog_info", None) or {}).get("catalogVersion"),
+        })
 
     def _is_host_allowed(self) -> bool:
         """Validate Host header against allowed local addresses to prevent DNS rebinding."""
@@ -315,8 +382,11 @@ class TriageDashboardHandler(BaseHTTPRequestHandler):
                 )
                 return
 
-        # 3. Read body safely
-        content_length = int(self.headers.get("Content-Length", 0))
+        # 3. Read body safely (bounded: forms and SBOMs are small; refuse anything absurd)
+        content_length = int(self.headers.get("Content-Length", 0) or 0)
+        if content_length > MAX_POST_BYTES:
+            self._send_json(413, {"error": f"送信データが大きすぎます（上限 {MAX_POST_BYTES // (1024 * 1024)} MB）"})
+            return
         post_body = self.rfile.read(content_length)
         try:
             req_data = json.loads(post_body.decode("utf-8"))
@@ -617,6 +687,10 @@ class TriageDashboardHandler(BaseHTTPRequestHandler):
 
         elif clean_path == "/api/import-checklist":
             csv_content = req_data.get("csv_content")
+            if req_data.get("content_b64"):
+                import base64
+                from triage_agent.tools.vendor_workflow import decode_csv_bytes
+                csv_content = decode_csv_bytes(base64.b64decode(str(req_data["content_b64"])))
             csv_path_str = req_data.get("csv_path")
             audit_file_str = req_data.get("audit_file", "sample_audit_signoff.json")
 
@@ -686,6 +760,12 @@ class TriageDashboardHandler(BaseHTTPRequestHandler):
                 self.end_headers()
                 self.wfile.write(json.dumps({"success": False, "error": str(e)}, ensure_ascii=False).encode("utf-8"))
 
+        elif clean_path in ("/api/kernel-inquiry/request", "/api/kernel-inquiry/answers"):
+            try:
+                self._handle_kernel_inquiry(clean_path, req_data)
+            except Exception as e:  # noqa: BLE001 - shown to the local user
+                self._send_json(500, {"success": False, "error": str(e)})
+
         elif clean_path == "/api/workflow-metrics":
             try:
                 from triage_agent.tools.vendor_workflow import get_workflow_metrics
@@ -709,7 +789,13 @@ class TriageDashboardHandler(BaseHTTPRequestHandler):
 
 
 def run_gui(host: str = "127.0.0.1", port: int = 8080, open_browser: bool = True):
-    """Launch the Web GUI dashboard server."""
+    """Launch the Web GUI dashboard server (local mode: this computer only, ADR-023)."""
+    if host not in ("127.0.0.1", "localhost", "::1"):
+        console.print(
+            "[bold red]❌ この画面（手元モード）は、このコンピューターからの接続だけを受けます。[/bold red]\n"
+            "認証がないため、127.0.0.1 以外では待ち受けません。社内で共有する場合は、共有モード（ADR-023・準備中）を使ってください。"
+        )
+        raise SystemExit(2)
     server_address = (host, port)
     httpd = ThreadedHTTPServer(server_address, TriageDashboardHandler)
     url = f"http://{host}:{port}"

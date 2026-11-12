@@ -129,7 +129,7 @@ class TestAnswers(unittest.TestCase):
         self.assertIn("| Web | Amazon Linux 2023 | `6.1.170-1.amzn2023.x86_64` | 4 台 | 🚨 2 件 | 6.1.189-236.399.amzn2023 以上 |", md)
         self.assertIn("| API | Amazon Linux 2023 | `6.1.189-236.400.amzn2023.x86_64` | 2 台 | ✅ なし | — |", md)
         self.assertIn("ランサムウェアでの悪用あり", md)
-        self.assertIn("**6.1.189-236.399.amzn2023 以上** に更新し、再起動してください", md)
+        self.assertIn("カーネルを 6.1.189-236.399.amzn2023 以上に更新し、再起動してください", md)
 
     def test_pending_reboot_is_called_out(self):
         _, _, md = self._result([("1", "Web", PENDING, "1")])

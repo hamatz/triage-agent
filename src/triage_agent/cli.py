@@ -469,16 +469,15 @@ def run_kernel_inquiry_flow(args, console) -> None:
         console.print(f"  依頼文と次の手順（送る前に読んでください）: {md_path}")
         return
 
-    from triage_agent.chain.feeds import ThreatFeedClient
-    from triage_agent.chain.kernel_exposure import run_kernel_auto
-    from triage_agent.chain.kernel_history import load_manual_promotions, load_snapshot
-    from triage_agent.chain.sources import build_adapters, build_cvss_source, load_registry, load_signal_registry
-
     answers = Path(args.kernel_inquiry_answers)
     if not answers.exists():
         console.print(f"[bold red]❌ 記入表が見つかりません: {answers}[/bold red]")
         sys.exit(1)
-    lines, problems, dist_id = ki.read_answers(answers)
+    try:
+        lines, problems, dist_id = ki.read_answers(answers)
+    except ValueError as e:
+        console.print(f"[bold red]❌ {e}[/bold red]")
+        sys.exit(1)
     for p in problems:
         console.print(f"[yellow]⚠️ {p}[/yellow]")
     if not lines:
@@ -486,33 +485,15 @@ def run_kernel_inquiry_flow(args, console) -> None:
         sys.exit(1)
 
     offline = bool(args.dry_run or args.demo)   # --demo never talks to the network
-    feed = ThreatFeedClient(epss_jump_threshold=args.epss_threshold)
-    try:
-        kev = feed.load_cached_kev_catalog() if offline else feed.fetch_cisa_kev_catalog()
-    except Exception as e:  # noqa: BLE001
-        console.print(f"[bold red]❌ CISA KEV カタログを取得できませんでした: {e}[/bold red]")
-        sys.exit(1)
-    state_dir = args.kernel_auto_state
-    snapshot, snapshot_problem = load_snapshot(state_dir)
-    if snapshot_problem:
-        console.print(f"[bold yellow]⚠️ {snapshot_problem}[/bold yellow]")
-    try:
-        manual = load_manual_promotions(state_dir)
-    except Exception as e:  # noqa: BLE001
-        console.print(f"[bold red]❌ 手動昇格の台帳（{state_dir}/promotions.json）を読めません: {e}[/bold red]")
-        sys.exit(1)
-
-    env, tels = ki.to_environment(lines)
-    cache_dir = str(feed.cache_dir)
-    cvss_source = build_cvss_source(load_signal_registry(), cache_dir=cache_dir)
     console.print(f"ℹ️ {len(lines)} 種類のカーネルを、ディストリの勧告と突き合わせています...")
-    auto = run_kernel_auto(
-        environment=env, telemetries=tels, adapters=build_adapters(load_registry(), cache_dir=cache_dir),
-        kev_lookup=lambda: kev, epss_lookup=feed.fetch_epss_scores, offline=offline,
-        epss_threshold=args.kernel_auto_epss, previous_snapshot=snapshot, manual_promotions=manual,
-        epss_jump=args.epss_threshold,
-        cvss_lookup=(lambda ids: cvss_source.lookup(ids, offline=offline)) if cvss_source else None,
-    )
+    try:
+        auto, kev, notes = ki.lookup(lines, state_dir=args.kernel_auto_state, offline=offline,
+                                     epss_threshold=args.kernel_auto_epss, epss_jump=args.epss_threshold)
+    except ki.InquiryLookupError as e:
+        console.print(f"[bold red]❌ {e}[/bold red]")
+        sys.exit(1)
+    for n in notes:
+        console.print(f"[bold yellow]⚠️ {n}[/bold yellow]")
     # The snapshot of the scheduled --kernel-auto runs is not overwritten: this is a one-off lookup.
     out = Path(args.kernel_inquiry_output) if args.kernel_inquiry_output else Path("triage-output") / f"kernel_inquiry_result_{today}.md"
     out.parent.mkdir(parents=True, exist_ok=True)
