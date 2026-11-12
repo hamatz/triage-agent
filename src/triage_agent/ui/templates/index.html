@@ -32,8 +32,136 @@
     </div>
   </header>
 
+  <!-- View navigation (tasks for the system owner, ADR-022 / ADR-023 local mode) -->
+  <nav class="app-nav" aria-label="画面の切り替え">
+    <a href="#home" class="app-nav-link" data-view="home">はじめに</a>
+    <a href="#kernel" class="app-nav-link" data-view="kernel">カーネルの問い合わせ</a>
+    <a href="#sbom" class="app-nav-link" data-view="sbom">SBOM から影響を調べる</a>
+  </nav>
+
   <!-- Main Container -->
   <main class="w-full max-w-7xl mx-auto px-6 py-8 flex-1">
+
+    <!-- ========== Home: what do you want to do? ========== -->
+    <div id="view-home" class="app-view hidden">
+      <div class="mb-6">
+        <h1 class="serif-title" style="font-size: 26px; font-weight: normal;">やりたいことを選んでください</h1>
+        <p class="text-xs mt-2" style="color: var(--text-muted); line-height: 1.7; max-width: 720px;">
+          このツールは、脆弱性が公表されたときに「うちのシステムは大丈夫か」をベンダーに確かめる手間を減らすための道具です。
+          分からないものを「安全」とは言いません。調べられなかったものは、調べられなかったと表示します。
+        </p>
+      </div>
+      <div class="task-grid">
+        <a href="#kernel" class="task-card">
+          <div class="task-icon">🐧</div>
+          <div class="task-title">カーネルの脆弱性が残っていないか、ベンダーに問い合わせる</div>
+          <div class="task-body">「他社のサーバーがカーネルの脆弱性で乗っ取られたらしい。うちは大丈夫か」を確かめます。ベンダーにはカーネルの版だけを聞き、残っている危ない脆弱性と、更新してほしい版はこの画面が割り出します。</div>
+          <div class="task-meta">用意するもの: なし（システム名だけ）</div>
+        </a>
+        <a href="#sbom" class="task-card">
+          <div class="task-icon">📦</div>
+          <div class="task-title">公表された脆弱性の影響を、SBOM から調べる</div>
+          <div class="task-body">システムの部品表（SBOM）から影響しうる脆弱性を洗い出し、ベンダーに「はい／いいえ」で答えてもらう確認表を作ります。返ってきた回答の取り込みと、パッチ予定のカレンダー書き出しもここで行います。</div>
+          <div class="task-meta">用意するもの: SBOM（ベンダーから受け取った CycloneDX / SPDX の JSON）</div>
+        </a>
+        <div class="task-card task-card-planned">
+          <div class="task-icon">🗂️</div>
+          <div class="task-title">システムの構成情報を残し、次の問い合わせを減らす</div>
+          <div class="task-body">ベンダーの回答で分かった構成（「HTTP/2 は無効」など）を期限付きで残し、次に同じことを聞かなくて済むようにします。</div>
+          <div class="task-meta">準備中（v0.6.0・柱 A）</div>
+        </div>
+        <div class="task-card task-card-planned">
+          <div class="task-icon">📤</div>
+          <div class="task-title">判定と根拠を、他のツールが読める形で書き出す</div>
+          <div class="task-body">「影響なし」の判断と根拠を OpenVEX で書き出し、Dependency-Track などに渡せるようにします。</div>
+          <div class="task-meta">準備中（v0.6.0・柱 G）</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ========== Kernel inquiry (v0.5.1) ========== -->
+    <div id="view-kernel" class="app-view hidden">
+      <div class="mb-6">
+        <h1 class="serif-title" style="font-size: 26px; font-weight: normal;">カーネルの脆弱性の問い合わせ</h1>
+        <p class="text-xs mt-2" style="color: var(--text-muted); line-height: 1.7; max-width: 760px;">
+          ベンダーに聞くのは、各サーバーで動いているカーネルの版だけです。返ってきた版を各ディストリの勧告と突き合わせて、
+          <strong>悪用が確認されている脆弱性</strong>（米国 CISA の KEV カタログ）と、このツールが警戒を引き上げたもののうち、まだ直っていないものを割り出します。
+        </p>
+      </div>
+
+      <div class="step-list">
+        <section class="surface p-6 step">
+          <div class="step-head"><span class="step-no">1</span><h2 class="serif-title step-title">ベンダーに送る記入表を作る</h2></div>
+          <div class="step-body space-y-4">
+            <div>
+              <label class="block text-xs font-semibold mb-1" for="ki-target">システム名（記入表と結果に書きます）</label>
+              <input type="text" id="ki-target" class="dawn-input" placeholder="例: 受注システム 本番" maxlength="200" style="max-width: 420px;">
+            </div>
+            <button type="button" id="ki-btn-request" class="btn-dawn-primary">記入表を作る</button>
+            <div id="ki-request-result" class="hidden space-y-3">
+              <p class="text-xs" style="color: var(--text-muted);">記入表をダウンロードしました（<span id="ki-request-file" class="font-mono"></span>）。次の依頼文を添えて、ベンダーに送ってください。</p>
+              <div class="copy-block">
+                <div class="copy-head"><span class="eyeb">ベンダーへの依頼文</span><button type="button" class="btn-dawn-outline copy-btn" data-copy-target="ki-request-message">コピー</button></div>
+                <pre id="ki-request-message" class="copy-text"></pre>
+              </div>
+              <div class="flex flex-wrap gap-2">
+                <button type="button" id="ki-btn-request-csv" class="btn-dawn-outline">記入表をもう一度ダウンロード</button>
+                <button type="button" id="ki-btn-request-md" class="btn-dawn-outline">説明（Markdown）をダウンロード</button>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <section class="surface p-6 step">
+          <div class="step-head"><span class="step-no">2</span><h2 class="serif-title step-title">返ってきた記入表を読み込む</h2></div>
+          <div class="step-body space-y-4">
+            <label id="ki-drop" class="drop-zone" for="ki-file">
+              <input type="file" id="ki-file" accept=".csv,text/csv" class="hidden">
+              <span class="drop-icon">📄</span>
+              <span id="ki-file-label">ここに記入表（CSV）をドラッグするか、クリックして選んでください</span>
+              <span class="text-xs" style="color: var(--text-dim);">Excel で保存し直したもの（Shift_JIS）でも読めます</span>
+            </label>
+            <label class="flex items-center text-xs gap-2" style="color: var(--text-muted);">
+              <input type="checkbox" id="ki-offline">
+              インターネットに接続しない（前回取得したデータだけで突き合わせる）
+            </label>
+            <button type="button" id="ki-btn-answers" class="btn-dawn-primary" disabled>突き合わせる</button>
+            <p id="ki-busy" class="hidden text-xs" style="color: var(--accent-gold-dark);">◈ ディストリの勧告と突き合わせています。初回は 1 分ほどかかることがあります…</p>
+            <div id="ki-error" class="hidden alert-error"></div>
+          </div>
+        </section>
+
+        <section id="ki-result" class="surface p-6 step hidden">
+          <div class="step-head"><span class="step-no">3</span><h2 class="serif-title step-title">結果</h2></div>
+          <div class="step-body space-y-5">
+            <div id="ki-summary-cards" class="result-cards"></div>
+            <div class="table-wrap">
+              <table class="result-table">
+                <thead><tr><th>サーバー群</th><th>OS</th><th>動いているカーネル</th><th>台数</th><th>残っている脆弱性</th><th>更新してほしい版</th></tr></thead>
+                <tbody id="ki-table"></tbody>
+              </table>
+            </div>
+            <div id="ki-message-block" class="copy-block hidden">
+              <div class="copy-head"><span class="eyeb">ベンダーへの依頼文（そのまま送れます）</span><button type="button" class="btn-dawn-outline copy-btn" data-copy-target="ki-result-message">コピー</button></div>
+              <pre id="ki-result-message" class="copy-text"></pre>
+            </div>
+            <div id="ki-details" class="space-y-4"></div>
+            <div id="ki-notes" class="hidden alert-warn"></div>
+            <div class="flex flex-wrap gap-2">
+              <button type="button" id="ki-btn-result-md" class="btn-dawn-outline">結果（Markdown）をダウンロード</button>
+            </div>
+            <ul class="text-xs space-y-1" style="color: var(--text-muted); line-height: 1.6; list-style: disc; padding-left: 18px;">
+              <li>これは「悪用が確認されたもの」と「警戒を引き上げたもの」に絞った結果です。✅ は、ほかの脆弱性がないという意味ではありません。</li>
+              <li>判定は、返ってきた版と各ディストリの勧告の突き合わせです。記入表に載っていないサーバーについては何も言えません。</li>
+              <li>更新のあとで、同じ記入表をもう一度返してもらって読み込めば、解消したかを確かめられます。</li>
+            </ul>
+          </div>
+        </section>
+      </div>
+    </div>
+
+    <!-- ========== SBOM triage (existing screen) ========== -->
+    <div id="view-sbom" class="app-view hidden">
     <div class="main-grid">
 
       <!-- Left Controls Panel -->
@@ -349,6 +477,7 @@
 
       </section>
     </div>
+    </div>
   </main>
 
   <!-- Signoff Modal (DAWN Style, XSS-proof, Vendor-friendly) -->
@@ -492,5 +621,6 @@
   </footer>
 
   <script src="/static/app.js"></script>
+  <script src="/static/views.js"></script>
 </body>
 </html>

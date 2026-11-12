@@ -42,6 +42,16 @@ ALLOWED_YES_ANSWERS: Set[str] = {
 }
 
 
+def decode_csv_bytes(raw: bytes) -> str:
+    """CSV bytes as text. Japanese Excel saves "CSV" as Shift_JIS (cp932); UTF-8 (with or without BOM) comes first."""
+    for enc in ("utf-8-sig", "cp932"):
+        try:
+            return raw.decode(enc)
+        except UnicodeDecodeError:
+            continue
+    raise ValueError("CSV の文字コードを読み取れません（UTF-8 か Shift_JIS で保存してください）")
+
+
 def sanitize_csv_cell(val: Any) -> str:
     """Sanitize cell value to prevent CSV Formula Injection in Microsoft Excel."""
     s = str(val) if val is not None else ""
@@ -175,7 +185,7 @@ def import_vendor_checklist(
     if not p.exists():
         raise FileNotFoundError(f"Checklist CSV not found: {csv_path}")
 
-    content = p.read_text(encoding="utf-8-sig")
+    content = decode_csv_bytes(p.read_bytes())
     reader = csv.DictReader(io.StringIO(content))
 
     new_attestations: List[AuditAttestation] = []
