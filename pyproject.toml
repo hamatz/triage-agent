@@ -5,7 +5,7 @@ description = "Autonomous SBOM Vulnerability Intelligence and Triage Multi-Agent
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
-    "google-genai>=3.3.0",
+    "google-genai>=3.6.1",
     "pydantic>=2.14.2",
     "httpx>=0.28.0",
     "python-dotenv>=1.2.4",
